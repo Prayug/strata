@@ -1,0 +1,18 @@
+services:
+  strata:
+    build: .
+    image: strata:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      STRATA_DATA_DIR: /app/data
+      # Theta Terminal runs on the host; reach it from the container:
+      THETADATA_BASE_URL: ${THETADATA_BASE_URL:-http://host.docker.internal:25510}
+    volumes:
+      - ./data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

@@ -1,0 +1,84 @@
+@import "tailwindcss";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --color-bg-0: #090b0f;
+  --color-bg-1: #0e1117;
+  --color-bg-2: #141922;
+  --color-bg-3: #1a202b;
+  --color-bg-4: #222a37;
+  --color-line: #1f2631;
+  --color-line-2: #2b3442;
+  --color-fg: #d6dce5;
+  --color-fg-2: #a7b0bf;
+  --color-muted: #7a8496;
+  --color-faint: #535d6e;
+  --color-accent: #e8a33d;
+  --color-accent-2: #f5c46b;
+  --color-info: #4c8dff;
+  --color-up: #26a69a;
+  --color-down: #ef5350;
+  --color-warn: #e2b93b;
+  --color-synth: #b980ff;
+
+  --text-2xs: 10.5px;
+  --text-xs: 11.5px;
+  --text-sm: 12.5px;
+  --text-base: 13px;
+  --radius-sm: 2px;
+  --radius: 3px;
+  --radius-md: 4px;
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-bg-0 text-fg font-sans antialiased;
+    font-size: 13px;
+    line-height: 1.35;
+    font-feature-settings: "cv11", "ss01";
+  }
+  * { border-color: var(--color-line); }
+  ::selection { background: color-mix(in srgb, var(--color-accent) 35%, transparent); }
+  input, select, textarea, button { font: inherit; color: inherit; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: #262e3b; border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #313b4b; background-clip: content-box; border: 2px solid transparent; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  :focus-visible { outline: 1px solid var(--color-accent); outline-offset: 1px; }
+}
+
+@layer components {
+  .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .label { @apply text-2xs uppercase tracking-[0.06em] text-muted font-medium; }
+  .panel { @apply bg-bg-1 border border-line; }
+  .hairline { @apply border-line; }
+  .pos { color: var(--color-up); }
+  .neg { color: var(--color-down); }
+  .tbl { @apply w-full text-xs; border-collapse: separate; border-spacing: 0; }
+  .tbl th { @apply text-2xs uppercase tracking-wide text-muted font-medium text-left px-2 py-1.5 border-b border-line bg-bg-1 sticky top-0 z-10 whitespace-nowrap select-none; }
+  .tbl td { @apply px-2 py-[5px] border-b border-line/60 whitespace-nowrap; }
+  .tbl tr:hover td { @apply bg-bg-2; }
+  .tbl td.r, .tbl th.r { text-align: right; }
+  .field { @apply h-7 px-2 rounded-sm bg-bg-2 border border-line-2 text-sm outline-none transition-colors hover:border-faint focus:border-accent/70 w-full; }
+  .field-sm { @apply h-6 px-1.5 text-xs; }
+}
+
+/* Separator handles for react-resizable-panels v4 */
+[data-separator] { background: var(--color-line); transition: background 120ms; }
+[data-separator]:hover, [data-separator][data-separator-state="drag"] { background: var(--color-accent); }
+[data-separator][aria-orientation="vertical"] { width: 1px; }
+[data-separator][aria-orientation="horizontal"] { height: 1px; }
+
+.cmdk-overlay { position: fixed; inset: 0; background: rgba(4, 6, 9, 0.6); z-index: 60; }
+@keyframes stripes { from { background-position: 0 0; } to { background-position: 24px 0; } }
+.progress-indeterminate { background-image: linear-gradient(90deg, transparent 0, rgba(232,163,61,.5) 50%, transparent 100%); background-size: 24px 100%; animation: stripes 0.8s linear infinite; }
