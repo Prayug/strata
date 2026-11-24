@@ -9,7 +9,7 @@ import { cancelJob, DataTable, Empty, ErrorBox, JobBar, Loading, PageHeader, Pan
 import { Button, Field, NumInput, Segmented, Select, Switch, Tabs, TabsContent, TabsList, TabsTrigger, Tip } from "@/components/ui";
 import { api, queryClient, useJob, useMeta, useRun } from "@/lib/api";
 import { ago, cn, money, num, pct } from "@/lib/format";
-import { useBuilder } from "@/lib/store";
+import { useBuilder, usesSandbox } from "@/lib/store";
 import type { RunRow } from "@/lib/types";
 
 export default function Optimize() {
@@ -88,7 +88,7 @@ function NewStudy() {
   const perEval = validation === "walk_forward" ? folds + 1 : 1;
   const submit = useMutation({
     mutationFn: () => {
-      const base = { ...b.backtestConfig(), strategies: [strat] };
+      const base = { ...b.backtestConfig(), strategies: [strat], allow_synthetic: usesSandbox([strat]) };
       const params = active.map((p) => p.kind === "time"
         ? { path: p.path, label: p.label, kind: "time", min: p.min, max: p.max, step: p.step }
         : { path: p.path, label: p.label, kind: p.kind === "int" ? "int" : "float", min: p.min, max: p.max, step: p.step });

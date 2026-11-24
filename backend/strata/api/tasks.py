@@ -57,6 +57,28 @@ def execute(rid: str, kind: str, payload: dict, progress, should_cancel) -> dict
         d.mkdir(parents=True, exist_ok=True)
         (d / "entry_timing.json").write_text(dumps(out))
         return {"times": len(times)}
+    if kind == "study":
+        from strata.api.results import save_study
+        from strata.research.study import run_study
+        progress(0.05, "evaluating sessions")
+        res = run_study(payload["config"])
+        progress(0.95, "saving")
+        return save_study(rid, res)
+    if kind == "source_ingest":
+        from strata.data.providers.sources import get_source
+        src = get_source(payload["source"])
+        start = date.fromisoformat(payload["start"]) if payload.get("start") else None
+        end = date.fromisoformat(payload["end"]) if payload.get("end") else None
+        out = src.ingest(payload["dataset"], [x.upper() for x in payload.get("symbols") or []], start, end, progress=progress, should_cancel=should_cancel, force=bool(payload.get("force")))
+        from strata.data.catalog import invalidate
+        invalidate()
+        return out
+    if kind == "quickstart":
+        from strata.data.providers.sources import quickstart
+        out = quickstart([x.upper() for x in payload.get("symbols") or []] or None, progress=progress, should_cancel=should_cancel, intraday=bool(payload.get("intraday", True)))
+        from strata.data.catalog import invalidate
+        invalidate()
+        return out
     if kind == "demo_data":
         from strata.data.store import MarketStore
         from strata.data.synthetic import SyntheticConfig, generate_demo_dataset

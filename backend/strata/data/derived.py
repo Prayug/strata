@@ -60,30 +60,39 @@ def constant_maturity_iv(points: list[tuple[float, float]], target_days: float =
     return None
 
 
-def derive_iv_history(store: MarketStore, sym: str) -> pl.DataFrame:
+def derive_iv_history(store: MarketStore, sym: str, full: bool = False) -> pl.DataFrame:
+    """Daily constant-maturity ATM IV from each session's last stored snapshot.
+    Incremental: sessions already derived are kept unless `full`."""
+    schema = {"date": pl.Date, "atm_iv_30d": pl.Float64, "atm_iv_front": pl.Float64, "close": pl.Float64}
+    p = store.iv_path(sym)
+    prev = pl.read_parquet(p) if p.exists() and not full else pl.DataFrame(schema=schema)
+    have = set(prev["date"].to_list())
     rows = []
     for d in store.option_days(sym):
+        if d in have:
+            continue
         df = store.read_option_day(sym, d)
         if df is None or df.is_empty():
             continue
         last_ts = df["ts"].max()
         snap = df.filter(pl.col("ts") == last_ts)
-        if snap["underlying_price"].null_count() == snap.height:
+        und = snap["underlying_price"].drop_nulls()
+        if und.is_empty() or "bid" not in snap.columns or snap["bid"].null_count() == snap.height:
             continue
-        spot = float(snap["underlying_price"].drop_nulls()[0])
-        snap = ensure_iv(snap)
+        spot = float(und[0])
+        ks = snap["strike"].unique().sort()
+        near = ks.filter((ks > spot * 0.9) & (ks < spot * 1.1))
+        snap = ensure_iv(snap.filter(pl.col("strike").is_in(near)))
         pts = atm_iv_by_expiration(snap, spot)
         if not pts:
             continue
-        ts_close = last_ts
         dpts = []
         for exp, v in pts:
-            secs = (pl.Series([exp]).cast(pl.Datetime("us")).dt.replace_time_zone("America/New_York").dt.offset_by("16h").dt.convert_time_zone("UTC")[0] - ts_close).total_seconds()
+            secs = (pl.Series([exp]).cast(pl.Datetime("us")).dt.replace_time_zone("America/New_York").dt.offset_by("16h").dt.convert_time_zone("UTC")[0] - last_ts).total_seconds()
             dpts.append((secs / 86400.0, v))
         front = next((v for dd, v in dpts if dd > 0.05), None)
         rows.append({"date": d, "atm_iv_30d": constant_maturity_iv(dpts, 30.0), "atm_iv_front": front, "close": spot})
-    out = pl.DataFrame(rows, schema={"date": pl.Date, "atm_iv_30d": pl.Float64, "atm_iv_front": pl.Float64, "close": pl.Float64})
-    p = store.iv_path(sym)
+    out = pl.concat([prev.select(list(schema)), pl.DataFrame(rows, schema=schema)]).unique("date", keep="last").sort("date") if rows else prev
     p.parent.mkdir(parents=True, exist_ok=True)
     out.write_parquet(p)
     return out

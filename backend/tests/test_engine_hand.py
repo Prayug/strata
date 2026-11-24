@@ -12,7 +12,7 @@ from datetime import date
 import pytest
 
 from strata.engine.engine import run_backtest
-from tests.helpers import chain, make_store, put_spread_strategy, write_minutes, write_options
+from tests.helpers import chain, make_store, put_spread_strategy, write_minutes, write_options  # noqa: E402
 
 D1, D2, D3 = date(2024, 3, 4), date(2024, 3, 5), date(2024, 3, 6)
 
@@ -76,12 +76,82 @@ def test_cash_settlement_itm(tmp_path):
 
 
 def test_stop_and_target_same_snapshot_is_resolved_conservatively(tmp_path):
-    st = setup(tmp_path, price=lambda d, i: 94.0 if (d == D1 and 330 <= i) else 100.0)
+    # the drop prints in the 15:29 bar, so the first tick that sees it is the 15:30 quote
+    st = setup(tmp_path, price=lambda d, i: 94.0 if (d == D1 and i >= 359) else 100.0)
     s = put_spread_strategy(exits={"profit_target": {"enabled": True, "value": 50}, "stop_loss": {"enabled": False},
                                    "underlying": {"enabled": True, "move_against_pct": 5}})
     t = bt(st, s).trades[0]
     assert t["exit_reason"] == "underlying_stop"
     assert "ambiguous_exit" in t["flags"]
+
+
+def test_underlying_exit_signal_fills_at_next_option_quote(tmp_path):
+    """The underlying breaches the stop at 15:00; the next option quote is 15:30.
+    The exit is requested at the 15:05 signal tick and filled at the 15:30 quote."""
+    st = setup(tmp_path, price=lambda d, i: 94.0 if (d == D1 and i >= 330) else 100.0)
+    s = put_spread_strategy(exits={"profit_target": {"enabled": False}, "stop_loss": {"enabled": False}, "underlying": {"enabled": True, "move_against_pct": 5}})
+    t = bt(st, s).trades[0]
+    assert t["exit_reason"] == "underlying_stop"
+    assert t["exit_time"].startswith("2024-03-04T15:30")
+    assert t["exit_delay_seconds"] == 25 * 60  # requested 15:05, filled 15:30
+    assert t["pnl"] == pytest.approx(50 - 10 - 2.60)  # filled at the observed 15:30 quotes
+    assert t["signal_ts"] == t["entry_ts"] and t["fill_delay_seconds"] == 0
+
+
+def test_signal_between_quotes_expires_instead_of_filling_late(tmp_path):
+    """Entry signal at 10:30 but option quotes exist only at 10:00 and 12:00: with a 5-minute
+    maximum signal-to-fill delay the order expires and is reported; raising the limit fills
+    it at 12:00 with both timestamps recorded."""
+    s = put_spread_strategy(entry={"conditions": {"kind": "group", "children": [{"kind": "cond", "type": "entry_times", "params": {"times": "10:30"}}]}})
+    res = bt(setup(tmp_path), s)
+    assert res.trades == [] and res.diagnostics["expired_orders"] == 2  # both sessions
+    assert any("no option quote within 5 min" in k for k in res.diagnostics["skipped_entries"]), res.diagnostics["skipped_entries"]
+    res = bt(setup(tmp_path), s, execution={"max_fill_delay_minutes": 120})
+    t = res.trades[0]
+    assert t["entry_time"].startswith("2024-03-04T12:00") and t["fill_delay_seconds"] == 90 * 60
+    assert [l["entry_price"] for l in t["legs"]] == [0.50, 0.30]  # the 12:00 bid / ask, not the 10:00 ones
+
+
+def test_exact_dte_never_falls_through_to_a_later_expiration(tmp_path):
+    st = make_store(tmp_path)
+    write_minutes(st, "TST", [D1, D2], lambda d, i: 100.0)
+    write_options(st, "TST", D1, chain("10:00", {(95, "P"): (1.0, 1.1, -0.2), (90, "P"): (0.4, 0.5, -0.1)}, D3))  # only a 2DTE expiration is listed
+    write_options(st, "TST", D2, chain("10:00", {(95, "P"): (1.0, 1.1, -0.2), (90, "P"): (0.4, 0.5, -0.1)}, D3))
+    res = bt(st)  # legs ask for 0DTE
+    assert res.trades == []
+    assert any("0DTE expiration" in k for k in res.diagnostics["skipped_entries"]), res.diagnostics["skipped_entries"]
+
+
+def test_missing_input_excludes_the_session_instead_of_counting_as_no_signal(tmp_path):
+    s = put_spread_strategy(entry={"conditions": {"kind": "group", "children": [
+        {"kind": "cond", "type": "entry_times", "params": {"times": "10:00"}},
+        {"kind": "cond", "type": "expr", "params": {"expr": "vix < 30"}}]}})  # no VIX data is stored
+    res = bt(setup(tmp_path), s)
+    assert res.trades == []
+    assert res.diagnostics["signals"] == 0
+    ex = res.diagnostics["excluded_sessions"]
+    assert any("VIX" in k for k in ex) and sum(len(v) for v in ex.values()) == 2, ex
+
+
+def test_expression_rules(tmp_path):
+    """Day 2 opens 3% below day 1's close: an expression-based entry and exit."""
+    st = make_store(tmp_path)
+    write_minutes(st, "TST", [D1, D2], lambda d, i: 100.0 if d == D1 else (97.0 if i < 60 else 98.5))
+    for d in (D1, D2):
+        write_options(st, "TST", d, chain("10:00", {(95, "P"): (1.0, 1.1, -0.2), (90, "P"): (0.4, 0.5, -0.1)}, d)
+                      + chain("11:00", {(95, "P"): (0.7, 0.8, -0.2), (90, "P"): (0.3, 0.4, -0.1)}, d)
+                      + chain("15:00", {(95, "P"): (0.1, 0.2, -0.2), (90, "P"): (0.0, 0.1, -0.1)}, d))
+    s = put_spread_strategy(
+        entry={"conditions": {"kind": "group", "children": [
+            {"kind": "cond", "type": "entry_times", "params": {"times": "10:00"}},
+            {"kind": "cond", "type": "expr", "params": {"expr": "gap_pct <= -2 and price < prev_low"}}]}},
+        exits={"profit_target": {"enabled": False}, "stop_loss": {"enabled": False},
+               "custom": {"kind": "group", "children": [{"kind": "cond", "type": "expr", "params": {"expr": "price >= entry.underlying_price * 1.01"}}]}})
+    res = bt(st, s)
+    assert [t["entry_date"] for t in res.trades] == ["2024-03-05"]  # only the gap-down session qualifies
+    t = res.trades[0]
+    assert t["exit_reason"] == "custom_exit" and t["exit_time"].startswith("2024-03-05T11:00")  # +1.5% seen at 10:35, next quote 11:00
+    assert any("gap_pct=-3" in e["text"] for e in t["entry_explain"])
 
 
 def test_missing_quote_defers_exit_instead_of_using_model_price(tmp_path):
@@ -157,7 +227,10 @@ def test_split_adjusts_open_contracts(tmp_path):
     leg = t["legs"][0]
     assert leg["strike"] == 50.0 and leg["contracts"] == 2
     assert "contract_adjusted" in t["flags"]
-    assert t["pnl"] == pytest.approx(-200 + 200 - 0.65 - 1.30)
+    # the 11:00 time exit is requested on day 1 (no option quote after 10:00 that day) and fills at
+    # the next observable quote: day 2 10:00, selling the 2 adjusted contracts at the 0.80 bid
+    assert t["exit_time"].startswith("2024-03-05T10:00")
+    assert t["pnl"] == pytest.approx(-200 + 160 - 0.65 - 1.30)
 
 
 def test_entry_conditions_and_reentry_rules(tmp_path):

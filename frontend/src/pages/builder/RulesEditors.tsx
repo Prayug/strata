@@ -2,7 +2,7 @@ import { Plus, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button, Field, Input, NumInput, Segmented, Select, Switch } from "@/components/ui";
 import { cn } from "@/lib/format";
-import { rootGroup, useBuilder } from "@/lib/store";
+import { rootGroup, useBuilder, DEFAULT_EXECUTION, DEFAULT_PRICING } from "@/lib/store";
 import { ConditionTree } from "./ConditionTree";
 
 function Row({ title, on, onToggle, children, desc }: { title: string; on: boolean; onToggle?: (v: boolean) => void; children?: ReactNode; desc?: string }) {
@@ -149,9 +149,12 @@ export function ExitsEditor() {
 export function RiskEditor() {
   const s = useBuilder((x) => x.strategy);
   const set = useBuilder((x) => x.setStrategy);
-  const { capital, execution: ex, patch } = useBuilder();
+  const { capital, execution: ex0, pricing: pr0, patch } = useBuilder();
+  const ex = { ...DEFAULT_EXECUTION, ...ex0 };
+  const pr = { ...DEFAULT_PRICING, ...(pr0 || {}) };
   const cap = (k: keyof typeof capital, v: any) => patch({ capital: { ...capital, [k]: v } });
   const exe = (k: keyof typeof ex, v: any) => patch({ execution: { ...ex, [k]: v } });
+  const pri = (k: keyof typeof pr, v: any) => patch({ pricing: { ...pr, [k]: v } });
   return (
     <div className="grid grid-cols-2 gap-x-5 gap-y-3">
       <section className="col-span-2">
@@ -207,6 +210,38 @@ export function RiskEditor() {
           <label className="flex items-center gap-2 text-xs text-fg-2"><Switch checked={ex.allow_partial_fills} onChange={(v) => exe("allow_partial_fills", v)} /> Partial fills</label>
           <label className="flex items-center gap-2 text-xs text-fg-2"><Switch checked={ex.early_assignment} onChange={(v) => exe("early_assignment", v)} /> Early assignment</label>
         </div>
+      </section>
+      <section className="col-span-2">
+        <div className="label mb-1.5">Signal and fill timing</div>
+        <div className="grid grid-cols-4 gap-2">
+          <Field label="Check rules every (min)" hint="Entry and exit rules are evaluated on the underlying's bars at this spacing, plus the open, the close and any explicit times."><NumInput value={ex.signal_interval_minutes} min={1} onChange={(v) => exe("signal_interval_minutes", Math.max(1, v ?? 5))} /></Field>
+          <Field label="Order latency (s)" hint="Delay between the signal and the earliest quote the order may fill at."><NumInput value={ex.latency_seconds} min={0} onChange={(v) => exe("latency_seconds", v ?? 0)} /></Field>
+          <Field label="Max wait for a quote (min)" hint="If no fresh option quote arrives within this time the order expires and is reported; it is never filled late."><NumInput value={ex.max_fill_delay_minutes} min={0} onChange={(v) => exe("max_fill_delay_minutes", v ?? 5)} /></Field>
+          <Field label="Trade-print slippage %" hint="Only for option data made of trade prints (no bid/ask). Added against you, since no spread is observed."><NumInput value={ex.trade_bar_slippage_pct} min={0} step={0.5} onChange={(v) => exe("trade_bar_slippage_pct", v ?? 0)} suffix="%" /></Field>
+        </div>
+        <p className="mt-1 text-2xs text-faint">The signal time and the fill time are recorded separately on every trade. Quotes from the future or older than the maximum age are rejected.</p>
+      </section>
+      <section className="col-span-2">
+        <div className="label mb-1.5">Option prices</div>
+        <div className="flex items-center gap-3">
+          <Segmented value={pr.mode} onChange={(v) => pri("mode", v)} options={[{ value: "historical", label: "Historical - observed quotes" }, { value: "modeled", label: "Modeled - estimated premiums" }]} />
+          <span className="text-2xs text-muted">{pr.mode === "historical" ? "Fills use stored option quotes only. If a quote is missing the trade is skipped and reported." : "Real underlying prices, theoretical premiums. Every result is labelled as an estimate."}</span>
+        </div>
+        {pr.mode === "modeled" && (
+          <div className="mt-2 rounded-sm border border-warn/40 bg-warn/[0.05] p-2">
+            <div className="mb-1.5 text-2xs text-warn">Modeled premiums are not market prices. They ignore real skew dynamics, liquidity and event pricing.</div>
+            <div className="grid grid-cols-4 gap-2">
+              <Field label="Pricing model"><Select value={pr.model} onChange={(v) => pri("model", v)} options={[{ value: "american_baw", label: "American (BAW)" }, { value: "black_scholes", label: "Black-Scholes" }]} /></Field>
+              <Field label="Volatility from"><Select value={pr.iv_source} onChange={(v) => pri("iv_source", v)} options={[{ value: "vix", label: "VIX (prior close)" }, { value: "realized", label: "Realised (20d)" }, { value: "fixed", label: "Fixed" }]} /></Field>
+              {pr.iv_source === "fixed" ? <Field label="Fixed volatility"><NumInput value={pr.iv_fixed} step={0.01} onChange={(v) => pri("iv_fixed", v ?? 0.2)} /></Field> : <Field label="Volatility scale"><NumInput value={pr.iv_scale} step={0.05} onChange={(v) => pri("iv_scale", v ?? 1)} /></Field>}
+              <Field label="Skew per 10% OTM" hint="Volatility added per 10% of downside moneyness"><NumInput value={pr.skew_per_10pct} step={0.005} onChange={(v) => pri("skew_per_10pct", v ?? 0)} /></Field>
+              <Field label="Assumed spread % of premium"><NumInput value={pr.spread_pct} step={0.25} onChange={(v) => pri("spread_pct", v ?? 1)} suffix="%" /></Field>
+              <Field label="Rate"><NumInput value={pr.rate} step={0.005} onChange={(v) => pri("rate", v ?? 0.04)} /></Field>
+              <Field label="Dividend yield"><NumInput value={pr.dividend_yield} step={0.001} onChange={(v) => pri("dividend_yield", v ?? 0)} /></Field>
+              <Field label="Reprice every (min)"><NumInput value={pr.snapshot_minutes} min={1} onChange={(v) => pri("snapshot_minutes", Math.max(1, v ?? 5))} /></Field>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );

@@ -76,6 +76,13 @@ class DayChain:
         self.key = key[order]
         self.bid = g("bid")
         self.ask = g("ask")
+        last = df["last"].to_numpy().astype(float)[order] if "last" in df.columns else np.full(len(order), np.nan)
+        # rows with a trade print but no quote: priced at the print, flagged trade-based.
+        # A bid/ask spread is never invented for them.
+        self.trade_based = (~np.isfinite(self.bid) | ~np.isfinite(self.ask)) & np.isfinite(last)
+        if self.trade_based.any():
+            self.bid = np.where(self.trade_based, last, self.bid)
+            self.ask = np.where(self.trade_based, last, self.ask)
         self.bid_size = df["bid_size"].fill_null(-1).to_numpy()[order].astype(np.int64)
         self.ask_size = df["ask_size"].fill_null(-1).to_numpy()[order].astype(np.int64)
         self.volume = df["volume"].fill_null(-1).to_numpy()[order].astype(np.int64)
@@ -144,15 +151,19 @@ def _f(x) -> float | None:
 
 
 class UnderlyingSeries:
-    """1-minute bars for the whole run (+warmup) with point-in-time lookups."""
+    """Price bars for the whole run (+warmup) with point-in-time lookups.
 
-    def __init__(self, df: pl.DataFrame, bar_seconds: int = 60):
+    Bars may have mixed resolution (the finest stored per session: 1m ... 60m, or a single
+    daily bar). Every bar carries its own end time; a bar is only visible once t >= end.
+    """
+
+    def __init__(self, df: pl.DataFrame, bar_seconds: int = 60, official: pl.DataFrame | None = None):
         df = df.sort("ts").with_columns(
             pl.col("ts").dt.epoch("s").alias("_t"),
             pl.col("ts").dt.convert_time_zone("America/New_York").dt.date().cast(pl.Int32).alias("_d"),
         )
         self.ts = df["_t"].to_numpy().astype(np.int64)
-        self.end = self.ts + bar_seconds
+        self.end = df["end"].dt.epoch("s").to_numpy().astype(np.int64) if "end" in df.columns else self.ts + bar_seconds
         self.o = df["open"].to_numpy().astype(float)
         self.h = df["high"].to_numpy().astype(float)
         self.l = df["low"].to_numpy().astype(float)
@@ -160,20 +171,53 @@ class UnderlyingSeries:
         self.v = df["volume"].fill_null(0).to_numpy().astype(float)
         self.day = df["_d"].to_numpy().astype(np.int64)
         self.bar_seconds = bar_seconds
+        # nominal resolution of each bar in seconds (86400 marks a daily bar)
+        self.res = df["res"].to_numpy().astype(np.int64) if "res" in df.columns else (self.end - self.ts)
         self.days, self.day_start = np.unique(self.day, return_index=True)
         self.day_end = np.r_[self.day_start[1:], len(self.ts)]
-        # daily bars (completed sessions)
-        self.d_o = self.o[self.day_start]
-        self.d_c = self.c[self.day_end - 1]
-        self.d_h = np.maximum.reduceat(self.h, self.day_start) if len(self.ts) else np.array([])
-        self.d_l = np.minimum.reduceat(self.l, self.day_start) if len(self.ts) else np.array([])
-        self.d_v = np.add.reduceat(self.v, self.day_start) if len(self.ts) else np.array([])
+        n = len(self.ts)
+        self.d_o = self.o[self.day_start] if n else np.array([])
+        self.d_c = self.c[self.day_end - 1] if n else np.array([])
+        self.d_h = np.maximum.reduceat(self.h, self.day_start) if n else np.array([])
+        self.d_l = np.minimum.reduceat(self.l, self.day_start) if n else np.array([])
+        self.d_v = np.add.reduceat(self.v, self.day_start) if n else np.array([])
+        self.d_end = self.end[self.day_end - 1] if n else np.array([], np.int64)
+        self.d_open_t = self.ts[self.day_start] if n else np.array([], np.int64)
+        # finest bar length (seconds) available in each session
+        self.d_res = np.minimum.reduceat(self.res, self.day_start) if n else np.array([], np.int64)
+        self.official_closes = 0
+        if official is not None and n and not official.is_empty():
+            # Session closes come from the daily record (the official closing print) where one
+            # exists: the last intraday bar's close can differ from it by a few cents, and
+            # day-over-day returns should match published closes. Intraday bars are untouched.
+            od = official["date"].cast(pl.Int32).to_numpy().astype(np.int64)
+            oc = official["close"].to_numpy().astype(float)
+            idx = np.searchsorted(od, self.days)
+            ok = (idx < len(od)) & (self.d_res < 86400)
+            ok[ok] &= od[idx[ok]] == self.days[ok]
+            ok[ok] &= np.isfinite(oc[idx[ok]]) & (np.abs(oc[idx[ok]] / self.d_c[ok] - 1) < 0.01)
+            self.d_c = self.d_c.copy()
+            self.d_c[ok] = oc[idx[ok]]
+            self.official_closes = int(ok.sum())
         self._tf_cache: dict = {}
         self._ind_cache: dict = {}
+        self._memo: dict = {}
 
     def empty(self) -> bool:
         return len(self.ts) == 0
 
+    def rescale(self, k: float) -> None:
+        """Re-express all prices in different share terms (used across stock splits so
+        history stays continuous while today's prices match as-traded option strikes)."""
+        if abs(k - 1.0) < 1e-12:
+            return
+        for name in ("o", "h", "l", "c", "d_o", "d_h", "d_l", "d_c"):
+            setattr(self, name, getattr(self, name) * k)
+        self._tf_cache.clear()
+        self._ind_cache.clear()
+        self._memo.clear()
+
+    # ----- index helpers
     def day_index(self, d: date) -> int:
         n = day_num(d)
         i = int(np.searchsorted(self.days, n))
@@ -182,6 +226,14 @@ class UnderlyingSeries:
     def prev_day_index(self, d: date) -> int:
         """Index of the last session strictly before d."""
         return int(np.searchsorted(self.days, day_num(d))) - 1
+
+    def completed_day(self, t: int) -> int:
+        """Index of the last session whose final bar has ended by t."""
+        return int(np.searchsorted(self.d_end, t, side="right")) - 1
+
+    def resolution(self, d: date) -> int:
+        di = self.day_index(d)
+        return int(self.d_res[di]) if di >= 0 else 0
 
     def last_bar(self, t: int) -> int:
         return int(np.searchsorted(self.end, t, side="right")) - 1
@@ -212,6 +264,14 @@ class UnderlyingSeries:
             return float("nan"), float("nan")
         return float(self.h[a:b].max()), float(self.l[a:b].min())
 
+    def today_slice(self, d: date, t: int) -> tuple[int, int]:
+        """[start, stop) of today's bars that have completed by t."""
+        di = self.day_index(d)
+        if di < 0:
+            return 0, 0
+        s, e = self.day_start[di], self.day_end[di]
+        return int(s), int(s + np.searchsorted(self.end[s:e], t, side="right"))
+
     def session_range_until(self, d: date, t: int, minutes: int | None = None) -> tuple[float, float, bool]:
         """High/low of today's bars that ended by t (optionally only the first `minutes`).
         Returns (high, low, complete) where complete means the window has fully elapsed."""
@@ -230,44 +290,35 @@ class UnderlyingSeries:
     def _tf(self, minutes: int):
         if minutes in self._tf_cache:
             return self._tf_cache[minutes]
-        if minutes <= 1:
-            res = (self.ts, self.end, self.o, self.h, self.l, self.c, self.v, self.day)
-        else:
-            mins_from_open = (self.ts - self.ts[np.repeat(self.day_start, self.day_end - self.day_start)]) // 60
-            bucket = self.day * 10_000 + mins_from_open // minutes
-            uniq, start = np.unique(bucket, return_index=True)
-            end_idx = np.r_[start[1:], len(self.ts)]
-            o = self.o[start]
-            h = np.maximum.reduceat(self.h, start)
-            l = np.minimum.reduceat(self.l, start)
-            c = self.c[end_idx - 1]
-            v = np.add.reduceat(self.v, start)
-            ts = self.ts[start]
-            # a bar completes at its bucket boundary; a truncated last bucket (early close)
-            # completes when its final minute ends
-            end = np.where(end_idx - start < minutes, self.end[end_idx - 1], ts + minutes * 60)
-            res = (ts, end, o, h, l, c, v, self.day[start])
+        mins_from_open = (self.ts - self.ts[np.repeat(self.day_start, self.day_end - self.day_start)]) // 60
+        bucket = self.day * 10_000 + mins_from_open // max(minutes, 1)
+        uniq, start = np.unique(bucket, return_index=True)
+        end_idx = np.r_[start[1:], len(self.ts)]
+        res = (self.ts[start], self.end[end_idx - 1], self.o[start], np.maximum.reduceat(self.h, start), np.minimum.reduceat(self.l, start),
+               self.c[end_idx - 1], np.add.reduceat(self.v, start), self.day[start])
         self._tf_cache[minutes] = res
         return res
+
+    @staticmethod
+    def tf_minutes(tf: str) -> int:
+        return int(tf[:-1]) * (60 if tf.endswith("h") else 1)
 
     def indicator(self, name: str, params: dict, tf: str, field: str | None, t: int, d: date, offset: int = 0) -> float:
         key = (name, json.dumps(params or {}, sort_keys=True), tf)
         if key not in self._ind_cache:
             if tf == "1d":
                 vals = ind.compute(name, params, self.d_o, self.d_h, self.d_l, self.d_c, self.d_v, np.zeros(len(self.d_c), np.int64))
-                self._ind_cache[key] = (None, vals)
+                self._ind_cache[key] = (self.d_end, vals)
             else:
-                m = int(tf.rstrip("m")) if tf.endswith("m") else int(tf.rstrip("h")) * 60
-                ts, end, o, h, l, c, v, dd = self._tf(m)
+                ts, end, o, h, l, c, v, dd = self._tf(self.tf_minutes(tf))
                 vals = ind.compute(name, params, o, h, l, c, v, dd)
                 self._ind_cache[key] = (end, vals)
         end, vals = self._ind_cache[key]
+        if tf != "1d" and self.resolution(d) > self.tf_minutes(tf) * 60:
+            return float("nan")  # the session's bars are coarser than the requested timeframe
         fld = field or next(iter(vals))
         arr = vals[fld]
-        if end is None:
-            i = self.prev_day_index(d) - offset
-        else:
-            i = int(np.searchsorted(end, t, side="right")) - 1 - offset
+        i = int(np.searchsorted(end, t, side="right")) - 1 - offset
         if i < 0 or i >= len(arr):
             return float("nan")
         return float(arr[i])

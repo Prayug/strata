@@ -27,7 +27,8 @@ INDICATOR_NAMES = ["rsi", "sma", "ema", "macd", "vwap", "atr", "bbands", "rvol"]
 TIMEFRAMES = ["1m", "5m", "15m", "30m", "60m", "1d"]
 
 LEAF_TYPES: dict[str, dict] = {
-    "entry_times": {"label": "Entry at times", "category": "Time", "params": [P("times", "string", "Times (ET, comma separated)", "10:00")]},
+    "expr": {"label": "Expression", "category": "Expression", "params": [P("expr", "expr", "Rule", "previous_session.return_pct <= -1"), P("label", "string", "Label (optional)", "")]},
+    "entry_times": {"label": "Entry at times", "category": "Time", "params": [P("times", "string", "Times (ET; also open / close)", "10:00")]},
     "time_window": {"label": "Time window", "category": "Time", "params": [P("start", "time", "From", "09:45"), P("end", "time", "Until", "15:30")]},
     "session": {"label": "Trading session", "category": "Time", "params": [P("name", "select", "Session", "morning", options=list(SESSIONS))]},
     "day_of_week": {"label": "Day of week", "category": "Time", "params": [P("days", "multiselect", "Days", ["Mon", "Tue", "Wed", "Thu", "Fri"], options=DOW[:5])]},
@@ -55,9 +56,10 @@ def _fmt(x: float, nd=2) -> str:
     return "n/a" if x is None or not math.isfinite(x) else f"{x:.{nd}f}"
 
 
-def _cmp(a, op, b) -> bool:
+def _cmp(a, op, b) -> bool | None:
+    """None = not evaluable (an input is missing), which is different from False."""
     if a is None or b is None or not math.isfinite(a) or not math.isfinite(b):
-        return False
+        return None
     return CMP[op](a, b)
 
 
@@ -92,11 +94,18 @@ def eval_leaf(node: CondNode, ctx, pos=None) -> tuple[bool, str]:
     p = node.params or {}
     t = node.type
     m = ctx.minute
+    if t == "expr":
+        from strata.engine.expr import Evaluator, explain
+        ev = Evaluator(ctx, pos)
+        res, text = explain(str(p.get("expr", "")), ev)
+        if res is None and not ev.missing:
+            res = False  # "not yet known" (e.g. the opening range is still forming) is a plain no, not missing data
+            text = text.split(" [not evaluable")[0] + " (not yet determined)"
+        return res, (f"{p['label']}: {text}" if p.get("label") else text)
     if t == "entry_times":
-        times = [parse_hhmm(x) for x in str(p.get("times", "10:00")).replace(";", ",").split(",") if x.strip()]
-        step = max(1, ctx.tick_minutes)
-        hit = [x for x in times if x <= m < x + step]
-        return bool(hit), f"time {fmt_hhmm(m)} {'matches' if hit else 'not in'} entry times {','.join(fmt_hhmm(x) for x in times)}"
+        times = resolve_times(p.get("times", "10:00"), ctx.close_minute)
+        hit = m in times  # exact: the engine schedules a tick at each requested time when the data can observe it
+        return hit, f"time {fmt_hhmm(m)} {'matches' if hit else 'not in'} entry times {','.join(fmt_hhmm(x) for x in times)}"
     if t == "time_window":
         a, b = parse_hhmm(p.get("start", "09:30")), parse_hhmm(p.get("end", "16:00"))
         ok = a <= m <= b
@@ -224,22 +233,27 @@ def eval_leaf(node: CondNode, ctx, pos=None) -> tuple[bool, str]:
     raise ValueError(f"unknown condition type {t!r}")
 
 
-def evaluate(node: CondNode | None, ctx, pos=None) -> tuple[bool, list[dict]]:
-    """Returns (passed, flat list of {id, depth, text, passed, group?})."""
+def evaluate(node: CondNode | None, ctx, pos=None) -> tuple[bool, list[dict], list[str]]:
+    """Returns (passed, explanations, not_evaluable). Leaves evaluate to True / False / None
+    (None = an input is missing). Kleene logic combines them, so a rule that could not be
+    evaluated is reported as such instead of being counted as "condition false"."""
     out: list[dict] = []
+    na: list[str] = []
     if node is None:
-        return True, out
+        return True, out, na
 
-    def rec(n: CondNode, depth: int) -> bool | None:
+    def rec(n: CondNode, depth: int):
         if not n.enabled:
-            return None
+            return "skip"
         if n.kind == "group":
-            vals = [v for v in (rec(c, depth + 1) for c in n.children) if v is not None]
+            vals = [v for v in (rec(c, depth + 1) for c in n.children) if v != "skip"]
             if not vals:
                 res = True
+            elif n.op == "and":
+                res = False if any(v is False for v in vals) else (None if any(v is None for v in vals) else True)
             else:
-                res = all(vals) if n.op == "and" else any(vals)
-            if n.negate:
+                res = True if any(v is True for v in vals) else (None if any(v is None for v in vals) else False)
+            if n.negate and res is not None:
                 res = not res
             if depth > 0:
                 out.append({"id": n.id, "depth": depth, "text": f"{'NOT ' if n.negate else ''}{n.op.upper()} group", "passed": res, "group": True})
@@ -248,13 +262,87 @@ def evaluate(node: CondNode | None, ctx, pos=None) -> tuple[bool, list[dict]]:
             ok, text = eval_leaf(n, ctx, pos)
         except Exception as e:  # malformed params -> condition fails, reason recorded
             ok, text = False, f"{n.type}: error {e}"
-        if n.negate:
+        if ok is None:
+            na.append(text)
+        elif n.negate:
             ok, text = not ok, f"NOT ({text})"
         out.append({"id": n.id, "depth": depth, "text": text, "passed": ok, "type": n.type})
         return ok
 
     res = rec(node, 0)
-    return (True if res is None else res), out
+    if res == "skip":
+        res = True
+    return (res is True), out, (na if res is None else [])
+
+
+def resolve_times(spec, close_minute: int = 960) -> list[int]:
+    """'10:00, 13:30', or the keywords open / close (close follows early-close sessions)."""
+    out = []
+    for x in str(spec).replace(";", ",").split(","):
+        x = x.strip().lower()
+        if not x:
+            continue
+        out.append(570 if x == "open" else close_minute if x == "close" else parse_hhmm(x))
+    return out
+
+
+def walk_leaves(node: CondNode | None):
+    if node is None:
+        return
+    if node.kind == "cond":
+        if node.enabled:
+            yield node
+        return
+    for c in node.children:
+        yield from walk_leaves(c)
+
+
+def explicit_minutes(node: CondNode | None) -> set[int]:
+    """Clock times a rule refers to, so the engine can schedule evaluation ticks there."""
+    import ast
+    from strata.engine import expr as X
+    out: set[int] = set()
+    for leaf in walk_leaves(node):
+        p = leaf.params or {}
+        if leaf.type == "entry_times":
+            out |= {parse_hhmm(x) for x in str(p.get("times", "")).replace(";", ",").split(",") if x.strip() and x.strip().lower() not in ("open", "close")}
+        elif leaf.type == "time_window":
+            out |= {parse_hhmm(p.get("start", "09:30")), parse_hhmm(p.get("end", "16:00"))}
+        elif leaf.type == "expr":
+            try:
+                for n in ast.walk(X.parse(str(p.get("expr", "")))):
+                    if isinstance(n, ast.Call) and n.func.id == "hhmm" and all(isinstance(a, ast.Constant) for a in n.args):
+                        out.add(int(n.args[0].value) * 60 + (int(n.args[1].value) if len(n.args) > 1 else 0))
+            except X.ExprError:
+                pass
+    return out
+
+
+def extra_symbols(node: CondNode | None) -> set[str]:
+    from strata.engine import expr as X
+    out: set[str] = set()
+    for leaf in walk_leaves(node):
+        p = leaf.params or {}
+        if leaf.type == "expr":
+            try:
+                out |= X.symbols_used(str(p.get("expr", "")))
+            except X.ExprError:
+                pass
+        for v in p.values():
+            if isinstance(v, dict) and v.get("symbol"):
+                out.add(v["symbol"])
+    return out
+
+
+def validate_tree(node: CondNode | None) -> list[str]:
+    from strata.engine import expr as X
+    errs = []
+    for leaf in walk_leaves(node):
+        if leaf.type not in LEAF_TYPES:
+            errs.append(f"unknown condition type {leaf.type!r}")
+        elif leaf.type == "expr":
+            errs += X.validate(str((leaf.params or {}).get("expr", "")))
+    return errs
 
 
 def required_tick_types(node: CondNode | None) -> set[str]:

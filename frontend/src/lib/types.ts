@@ -5,7 +5,7 @@ export type StrikeMethod = "delta" | "premium" | "pct_otm" | "atm_offset" | "fix
 export interface StrikeSel { method: StrikeMethod; value: number; unit?: "points" | "strikes" | "pct"; ref_leg?: string | null }
 export interface LegSpec {
   id: string; side: Side; kind?: "option" | "stock"; right: Right; quantity: number; dte: number;
-  dte_min?: number | null; dte_max?: number | null; dte_mode?: "nearest" | "at_least" | "at_most";
+  dte_min?: number | null; dte_max?: number | null; dte_mode?: "nearest" | "at_least" | "at_most" | "exact";
   strike: StrikeSel; iv_min?: number | null; iv_max?: number | null; max_spread_abs?: number | null; max_spread_pct?: number | null;
   min_bid?: number; min_volume?: number | null; min_open_interest?: number | null; group?: string | null;
 }
@@ -41,13 +41,18 @@ export interface Execution {
   fee_per_contract: number; commission_per_order: number; stock_commission_per_share: number; stock_slippage_bps: number; exercise_fee: number;
   participation_rate: number; max_volume_pct: number | null; allow_partial_fills: boolean; max_quote_age_seconds: number;
   early_assignment: boolean; assignment_extrinsic_threshold: number; physical_settlement: "close_next_open" | "intrinsic";
+  signal_interval_minutes: number; latency_seconds: number; max_fill_delay_minutes: number; trade_bar_slippage_pct: number;
+}
+export interface Pricing {
+  mode: "historical" | "modeled"; model: "american_baw" | "black_scholes"; iv_source: "vix" | "realized" | "fixed"; iv_fixed: number; iv_scale: number;
+  skew_per_10pct: number; spread_pct: number; min_spread: number; rate: number; dividend_yield: number; snapshot_minutes: number; strike_step: number | null;
 }
 export interface Capital {
   initial_capital: number; margin_model: "regt" | "cash"; max_bp_usage_pct: number; max_concurrent_positions: number;
   risk_free_rate: number; cash_interest_rate: number; cash_benchmark_rate: number; liquidate_on_margin_call: boolean;
 }
 export interface BacktestConfig {
-  strategies: StrategyConfig[]; start: string; end: string; capital: Capital; execution: Execution; benchmark?: string | null; allow_synthetic: boolean; label: string;
+  strategies: StrategyConfig[]; start: string; end: string; capital: Capital; execution: Execution; pricing?: Pricing; benchmark?: string | null; allow_synthetic: boolean; label: string;
 }
 
 export interface RunRow {
@@ -81,8 +86,9 @@ export interface Meta {
   research_targets: Record<string, string>; research_filters: Record<string, string>;
   providers: { name: string; label: string; docs: string; resolution: string }[];
   execution_defaults: Execution; engine_version: string;
+  expressions: { name: string; signature: string; description: string; category: string; needs: string }[]; default_symbol: string; pricing_defaults: Pricing;
 }
-export interface ParamMeta { name: string; type: "string" | "time" | "select" | "multiselect" | "int" | "number" | "bool" | "operand"; label: string; default: any; options?: string[] }
+export interface ParamMeta { name: string; type: "string" | "time" | "select" | "multiselect" | "int" | "number" | "bool" | "operand" | "expr"; label: string; default: any; options?: string[] }
 
 export interface ChartSpec {
   type: "bar" | "bar_ci" | "line" | "scatter" | "histogram" | "band"; title: string; x?: any[];

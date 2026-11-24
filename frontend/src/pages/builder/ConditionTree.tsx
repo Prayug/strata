@@ -4,11 +4,12 @@ import { CSS } from "@dnd-kit/utilities";
 import { Copy, GripVertical, ListPlus, Plus, Trash2 } from "lucide-react";
 import { Fragment } from "react";
 import { Button, Input, Menu, MenuContent, MenuItem, MenuLabel, MenuSep, MenuTrigger, NumInput, Segmented, Select, Switch, Tip } from "@/components/ui";
+import { ExprInput } from "@/components/research/ExprInput";
 import { useMeta } from "@/lib/api";
 import { clone, cn, uid } from "@/lib/format";
 import type { CondNode, Meta, ParamMeta } from "@/lib/types";
 
-const CATEGORY_ORDER = ["Time", "Price", "Indicators", "Volatility", "Regime", "Events", "Position"];
+const CATEGORY_ORDER = ["Expression", "Time", "Price", "Indicators", "Volatility", "Regime", "Events", "Position"];
 
 function defaults(meta: Meta, type: string): Record<string, any> {
   const p: Record<string, any> = {};
@@ -161,6 +162,8 @@ function ParamControl({ pm, value, onChange, meta, params }: { pm: ParamMeta; va
       return <span className="flex items-center gap-1">{lab}<Input sz="sm" className="w-16 num" value={value ?? pm.default} onChange={(e) => onChange(e.target.value)} placeholder="HH:MM" /></span>;
     case "operand":
       return <OperandEditor value={value ?? pm.default} onChange={onChange} meta={meta} />;
+    case "expr":
+      return <ExprInput className="min-w-[340px] flex-1" value={value ?? ""} onChange={onChange} />;
     default:
       return <span className="flex items-center gap-1">{lab}<Input sz="sm" className="w-40 num" value={value ?? ""} onChange={(e) => onChange(e.target.value)} /></span>;
   }

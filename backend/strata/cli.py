@@ -16,10 +16,48 @@ def cmd_init(a):
     p = db.init_db()
     print(f"database ready: {p}")
     st = MarketStore()
-    if a.demo and "DEMO" not in st.symbols():
-        cmd_demo(a)
-    else:
-        print(f"market data dir: {get_settings().market_dir} ({len(st.symbols())} symbols)")
+    real = [k for k, m in st.symbols().items() if not m.synthetic]
+    print(f"market data dir: {get_settings().market_dir} ({len(real)} real symbols stored)")
+    if getattr(a, "fetch", False):
+        a.symbols, a.no_intraday, a.options, a.years = ["SPY", "QQQ", "IWM"], False, False, None
+        cmd_fetch(a)
+    elif not real:
+        print("No market data yet. Get free real data with:  strata fetch            (daily + recent intraday, a few MB)")
+        print("                                              strata fetch --options  (adds SPY end-of-day option chains)")
+
+
+def cmd_fetch(a):
+    """Free, keyless real market data: Yahoo daily/intraday bars, CBOE VIX, and optionally
+    the open end-of-day option-chain archive. Nothing here costs money or needs an account."""
+    from strata.data.providers.sources import get_source, quickstart, verify_daily
+    syms = [x.upper() for x in a.symbols]
+    t = time.time()
+
+    def prog(f, m=""):
+        print(f"\r  {f:5.1%} {str(m)[:70]:70s}", end="", flush=True)
+    out = quickstart(syms, progress=prog, intraday=not a.no_intraday)
+    print()
+    for step in out["steps"]:
+        print("  ", json.dumps(step, default=str)[:300])
+    if a.options:
+        src = get_source("github_eod")
+        osyms = [x for x in syms if x in ("SPY", "QQQ", "IWM")]
+        if not osyms:
+            print("  the free option archive covers SPY, QQQ and IWM only")
+        else:
+            start = date(int(a.years.split("-")[0]), 1, 1) if a.years else date(date.today().year - 5, 1, 1)
+            end = date(int(a.years.split("-")[-1]), 12, 31) if a.years else None
+            plan = src.plan("options_eod", osyms, start, end)
+            print(f"  option chains: {json.dumps(plan, default=str)[:400]}")
+            print("  ", json.dumps(src.ingest("options_eod", osyms, start, end, progress=prog), default=str)[:400])
+            print()
+    if "SPY" in syms:
+        try:
+            v = verify_daily(__import__("strata.data.store", fromlist=["MarketStore"]).MarketStore(), "SPY")
+            print(f"  verified SPY daily closes against an independent source: {v.get('compared')} sessions compared, max difference {v.get('max_close_diff_pct', 0):.3f}%")
+        except Exception as e:  # noqa: BLE001
+            print(f"  (verification skipped: {e})")
+    print(f"done in {time.time() - t:.0f}s")
 
 
 def cmd_demo(a):
@@ -31,7 +69,8 @@ def cmd_demo(a):
     def prog(sym, i, n):
         print(f"\r  {sym}: {i}/{n} sessions", end="", flush=True)
     out = generate_demo_dataset(MarketStore(), cfg, progress=prog)
-    print(f"\nSYNTHETIC demo dataset generated in {time.time() - t:.0f}s: {out}")
+    print(f"\nSIMULATED sandbox symbols generated in {time.time() - t:.0f}s: {out}")
+    print("These are not market data. Runs that use them must set allow_synthetic and are labelled SIMULATED everywhere.")
 
 
 def cmd_serve(a):
@@ -95,14 +134,16 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="strata", description="Strata options research platform")
     ap.add_argument("--data-dir", help="override STRATA_DATA_DIR")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("init", help="create the database (and the synthetic demo dataset with --demo)")
-    p.add_argument("--demo", action="store_true")
-    p.add_argument("--start", default="2023-01-03")
-    p.add_argument("--end", default="2024-12-31")
-    p.add_argument("--seed", type=int, default=20240101)
-    p.add_argument("--interval", type=int, default=15)
+    p = sub.add_parser("init", help="create the database (add --fetch to also download free real market data)")
+    p.add_argument("--fetch", action="store_true", help="download free daily + recent intraday history for SPY, QQQ, IWM and VIX")
     p.set_defaults(fn=cmd_init)
-    p = sub.add_parser("demo-data", help="(re)generate the SYNTHETIC demo dataset")
+    p = sub.add_parser("fetch", help="download free real market data (no account or key needed)")
+    p.add_argument("symbols", nargs="*", default=["SPY", "QQQ", "IWM"])
+    p.add_argument("--no-intraday", action="store_true", help="daily bars only")
+    p.add_argument("--options", action="store_true", help="also download end-of-day option chains for SPY/QQQ/IWM (hundreds of MB)")
+    p.add_argument("--years", help="option-chain years, e.g. 2020-2025 (default: the last five years)")
+    p.set_defaults(fn=cmd_fetch)
+    p = sub.add_parser("sandbox", help="developer sandbox: generate SIMULATED symbols (DEMO/DEMOX) for testing without market data")
     p.add_argument("--start", default="2023-01-03")
     p.add_argument("--end", default="2024-12-31")
     p.add_argument("--seed", type=int, default=20240101)

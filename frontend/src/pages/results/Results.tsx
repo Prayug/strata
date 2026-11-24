@@ -25,13 +25,13 @@ function Spark({ data }: { data: number[] }) {
 
 function RunList() {
   const nav = useNavigate();
-  const [kind, setKind] = useState<"backtest,portfolio" | "backtest" | "portfolio">("backtest,portfolio");
+  const [kind, setKind] = useState<"backtest,portfolio,study" | "backtest" | "portfolio" | "study">("backtest,portfolio,study");
   const [q, setQ] = useState("");
   const runs = useQuery({ queryKey: ["runs", kind], queryFn: () => api.get<RunRow[]>(`/api/backtests?kind=${kind}&limit=500`), refetchInterval: 4000 });
   const rows = useMemo(() => (runs.data || []).filter((r) => !q || r.name.toLowerCase().includes(q.toLowerCase())), [runs.data, q]);
   const cols: Col<RunRow>[] = [
     { key: "st", label: "", render: (r) => <StatusDot status={r.status} />, width: 14 },
-    { key: "name", label: "Run", render: (r) => <span className="flex items-center gap-1.5"><span className="truncate max-w-[340px] text-fg">{r.name}</span>{r.kind === "portfolio" && <span className="text-2xs text-info">PORTFOLIO</span>}<SyntheticBadge on={r.synthetic} /></span>, sort: (r) => r.name },
+    { key: "name", label: "Run", render: (r) => <span className="flex items-center gap-1.5"><span className="truncate max-w-[340px] text-fg">{r.name}</span>{r.kind === "portfolio" && <span className="text-2xs text-info">PORTFOLIO</span>}{r.kind === "study" && <span className="text-2xs text-info">STUDY {r.summary?.probability !== null && r.summary?.probability !== undefined ? `${(r.summary.probability * 100).toFixed(1)}% of ${r.summary.qualifying_sessions}` : ""}</span>}<SyntheticBadge on={r.synthetic} /></span>, sort: (r) => r.name },
     { key: "period", label: "Period", render: (r) => <span className="num text-fg-2">{r.summary?.start} → {r.summary?.end}</span> },
     { key: "spark", label: "Equity", render: (r) => <Spark data={r.summary?.equity_spark} /> },
     { key: "trades", label: "Trades", align: "r", render: (r) => <span className="num">{r.summary?.trades ?? "—"}</span>, sort: (r) => r.summary?.trades },
@@ -46,13 +46,13 @@ function RunList() {
   ];
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Backtest Results" sub={<span className="text-2xs text-muted">{rows.length} runs</span>}>
+      <PageHeader title="Backtests" sub={<span className="text-2xs text-muted">{rows.length} runs</span>}>
         <Input sz="sm" className="w-52" placeholder="Filter runs…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <Segmented value={kind} onChange={setKind} options={[{ value: "backtest,portfolio", label: "All" }, { value: "backtest", label: "Backtests" }, { value: "portfolio", label: "Portfolios" }]} />
+        <Segmented value={kind} onChange={setKind} options={[{ value: "backtest,portfolio,study", label: "All" }, { value: "backtest", label: "Option backtests" }, { value: "study", label: "Market studies" }, { value: "portfolio", label: "Portfolios" }]} />
       </PageHeader>
       <div className="min-h-0 flex-1">
         {runs.isLoading ? <Loading /> : rows.length === 0 ? (
-          <Empty icon={BarChart3} title="No backtests yet">Build a strategy in the Strategy Builder and press Run (⌘↵). Every run is stored with its configuration hash, dataset version and engine version so it can be reproduced.</Empty>
+          <Empty icon={BarChart3} title="No runs yet">Ask a question in the AI Lab, or build a strategy in the Strategy Builder and press Run (⌘↵). Every run is stored with its configuration hash, dataset version and engine version so it can be reproduced.</Empty>
         ) : (
           <DataTable rows={rows} cols={cols} rowKey={(r) => r.id} onRowClick={(r) => nav(r.kind === "portfolio" ? `/portfolio/${r.id}` : `/results/${r.id}`)} defaultSort={{ key: "created", dir: -1 }} />
         )}

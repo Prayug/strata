@@ -25,7 +25,7 @@ class LegSpec(BaseModel):
     dte: int = Field(0, ge=0)
     dte_min: Optional[int] = None
     dte_max: Optional[int] = None
-    dte_mode: Literal["nearest", "at_least", "at_most"] = "nearest"
+    dte_mode: Literal["nearest", "at_least", "at_most", "exact"] = "nearest"  # dte 0 with "nearest" is always exact
     strike: StrikeSel = StrikeSel()
     iv_min: Optional[float] = None  # percent, e.g. 12 = 12%
     iv_max: Optional[float] = None
@@ -151,7 +151,7 @@ class RegimeSettings(BaseModel):
 
 class StrategyConfig(BaseModel):
     name: str = "Untitled strategy"
-    symbol: str = "DEMO"
+    symbol: str = "SPY"
     legs: list[LegSpec]
     entry: EntryRules = EntryRules()
     exits: ExitRules = ExitRules()
@@ -187,6 +187,12 @@ class Execution(BaseModel):
     max_volume_pct: Optional[float] = None
     allow_partial_fills: bool = True
     max_quote_age_seconds: int = 120
+    # --- clocks: signals are evaluated on the underlying's bars; orders fill at the next
+    # eligible option quote. Signal time and fill time are recorded separately.
+    signal_interval_minutes: int = Field(5, ge=1)
+    latency_seconds: float = Field(0.0, ge=0)
+    max_fill_delay_minutes: float = Field(5.0, ge=0)
+    trade_bar_slippage_pct: float = Field(0.0, ge=0)  # only for trade-print (no-quote) option data
     early_assignment: bool = True
     assignment_extrinsic_threshold: float = 0.05
     physical_settlement: Literal["close_next_open", "intrinsic"] = "close_next_open"
@@ -203,14 +209,32 @@ class Capital(BaseModel):
     liquidate_on_margin_call: bool = True
 
 
+class Pricing(BaseModel):
+    """historical = observed option prices only. modeled = real underlying prices with
+    THEORETICAL option premiums from the assumptions below (results are estimates)."""
+    mode: Literal["historical", "modeled"] = "historical"
+    model: Literal["american_baw", "black_scholes"] = "american_baw"
+    iv_source: Literal["vix", "realized", "fixed"] = "vix"
+    iv_fixed: float = 0.20
+    iv_scale: float = 1.0
+    skew_per_10pct: float = 0.03  # vol added per 10% of downside moneyness (and removed on the upside)
+    spread_pct: float = 1.0  # assumed bid-ask spread, % of premium
+    min_spread: float = 0.01
+    rate: float = 0.04
+    dividend_yield: float = 0.013
+    snapshot_minutes: int = Field(5, ge=1)
+    strike_step: Optional[float] = None
+
+
 class BacktestConfig(BaseModel):
     strategies: list[StrategyConfig]
     start: date
     end: date
     capital: Capital = Capital()
     execution: Execution = Execution()
+    pricing: Pricing = Pricing()
     benchmark: Optional[str] = None
-    allow_synthetic: bool = True
+    allow_synthetic: bool = False
     label: str = ""
 
     @model_validator(mode="after")

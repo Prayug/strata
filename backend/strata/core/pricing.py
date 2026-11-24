@@ -140,3 +140,84 @@ def implied_vol_vec(price, S, K, T, r, q, is_call):
 def intrinsic(S, K, is_call):
     S = np.asarray(S, dtype=float)
     return np.where(is_call, np.maximum(S - K, 0.0), np.maximum(K - S, 0.0))
+
+
+# ---------------------------------------------------------------- American options (BAW)
+@njit(cache=True)
+def baw_price_scalar(S, K, T, r, q, sigma, is_call):
+    """Barone-Adesi & Whaley (1987) quadratic approximation for American options with a
+    continuous dividend yield q. Falls back to Black-Scholes when early exercise is never
+    optimal (calls with q <= 0) or inputs are degenerate."""
+    euro = bs_price_scalar(S, K, T, r, q, sigma, is_call)
+    intrinsic = (S - K) if is_call else (K - S)
+    if intrinsic < 0.0:
+        intrinsic = 0.0
+    if T <= 1e-8 or sigma <= 1e-8:
+        return intrinsic
+    if r <= 1e-9 or (is_call and q <= 1e-9):
+        return euro if euro > intrinsic else intrinsic
+    b = r - q
+    s2 = sigma * sigma
+    M = 2.0 * r / s2
+    N = 2.0 * b / s2
+    Kc = 1.0 - math.exp(-r * T)
+    sqT = sigma * math.sqrt(T)
+    disc = (N - 1.0) ** 2 + 4.0 * M / Kc
+    if is_call:
+        q2 = (-(N - 1.0) + math.sqrt(disc)) / 2.0
+        Sx = K * 1.2
+        for _ in range(60):  # critical price S*: S* - K = c(S*) + (1 - e^{(b-r)T} N(d1)) S*/q2
+            d1 = (math.log(Sx / K) + (b + 0.5 * s2) * T) / sqT
+            c = bs_price_scalar(Sx, K, T, r, q, sigma, True)
+            lhs = Sx - K
+            rhs = c + (1.0 - math.exp((b - r) * T) * ncdf(d1)) * Sx / q2
+            slope = math.exp((b - r) * T) * ncdf(d1) * (1.0 - 1.0 / q2) + (1.0 - math.exp((b - r) * T) * npdf(d1) / sqT) / q2
+            if abs(lhs - rhs) < 1e-7 * K:
+                break
+            Sx = (K + rhs - slope * Sx) / (1.0 - slope)
+            if Sx < K:
+                Sx = K * 1.0001
+        if S >= Sx:
+            return S - K
+        d1 = (math.log(Sx / K) + (b + 0.5 * s2) * T) / sqT
+        A2 = (Sx / q2) * (1.0 - math.exp((b - r) * T) * ncdf(d1))
+        v = euro + A2 * (S / Sx) ** q2
+        return v if v > intrinsic else intrinsic
+    q1 = (-(N - 1.0) - math.sqrt(disc)) / 2.0
+    Sx = K * 0.85
+    for _ in range(60):  # S**: K - S** = p(S**) - (1 - e^{(b-r)T} N(-d1)) S**/q1
+        d1 = (math.log(Sx / K) + (b + 0.5 * s2) * T) / sqT
+        p = bs_price_scalar(Sx, K, T, r, q, sigma, False)
+        lhs = K - Sx
+        rhs = p - (1.0 - math.exp((b - r) * T) * ncdf(-d1)) * Sx / q1
+        slope = -math.exp((b - r) * T) * ncdf(-d1) * (1.0 - 1.0 / q1) - (1.0 + math.exp((b - r) * T) * npdf(-d1) / sqT) / q1
+        if abs(lhs - rhs) < 1e-7 * K:
+            break
+        Sx = (K - rhs + slope * Sx) / (1.0 + slope)
+        if Sx <= 0.0:
+            Sx = K * 0.01
+        if Sx > K:
+            Sx = K * 0.9999
+    if S <= Sx:
+        return K - S
+    d1 = (math.log(Sx / K) + (b + 0.5 * s2) * T) / sqT
+    A1 = -(Sx / q1) * (1.0 - math.exp((b - r) * T) * ncdf(-d1))
+    v = euro + A1 * (S / Sx) ** q1
+    return v if v > intrinsic else intrinsic
+
+
+@njit(cache=True, parallel=True)
+def model_chain_vec(S, K, T, r, q, sigma, is_call, american):
+    """Columns: price, delta, gamma, theta/day, vega/pt. Greeks are Black-Scholes."""
+    n = K.shape[0]
+    out = np.empty((n, 5))
+    for i in prange(n):
+        p, d, g, t, v = bs_greeks_scalar(S[i], K[i], T[i], r, q, sigma[i], is_call[i])
+        if american:
+            p = baw_price_scalar(S[i], K[i], T[i], r, q, sigma[i], is_call[i])
+        out[i, 0] = p
+        out[i, 1] = d
+        out[i, 2] = g
+        out[i, 3] = t
+        out[i, 4] = v
+    return out

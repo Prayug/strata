@@ -1,0 +1,536 @@
+"""Strategy drafts: the structured interpretation of a plain-English request.
+
+An interpreter (the offline rule parser or an LLM) only fills in a `Draft`. Everything
+after that is deterministic Python: the draft is compiled into the engine's own
+StrategyConfig / StudyConfig, every default the user did not state is recorded as an
+explicit assumption, missing details are listed, and data coverage decides which research
+mode can answer the question. No financial number is ever produced by a language model.
+"""
+from __future__ import annotations
+
+from datetime import date
+from typing import Literal, Optional
+
+from pydantic import BaseModel, Field
+
+from strata.core import calendar as cal
+from strata.data.store import MarketStore
+from strata.engine import expr as X
+from strata.engine.models import BacktestConfig, StrategyConfig
+from strata.research.study import StudyConfig
+
+BULLISH = {"long_call", "short_put", "bull_call_spread", "bull_put_spread", "covered_call"}
+BEARISH = {"long_put", "short_call", "bear_put_spread", "bear_call_spread"}
+STRUCTURES = {
+    "long_call": "Long call", "long_put": "Long put", "short_put": "Short put", "short_call": "Short call",
+    "bull_call_spread": "Bull call (debit) spread", "bear_put_spread": "Bear put (debit) spread", "bull_put_spread": "Bull put (credit) spread",
+    "bear_call_spread": "Bear call (credit) spread", "iron_condor": "Iron condor", "iron_butterfly": "Iron butterfly", "long_straddle": "Long straddle",
+    "short_straddle": "Short straddle", "long_strangle": "Long strangle", "short_strangle": "Short strangle", "covered_call": "Covered call",
+}
+WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+
+
+class DraftCondition(BaseModel):
+    expr: str
+    text: str = ""
+    source: Literal["stated", "assumed"] = "stated"
+
+
+class DraftStrike(BaseModel):
+    method: Literal["atm", "delta", "pct_otm"] = "atm"
+    value: float = 0.0
+
+
+class DraftLevel(BaseModel):
+    kind: Literal["pct", "abs", "expr"] = "pct"
+    value: float = 0.0
+    expr: Optional[str] = None
+
+
+class DraftStudy(BaseModel):
+    target: Optional[DraftLevel] = None
+    stop: Optional[DraftLevel] = None
+    reference: Literal["entry", "open", "prev_close"] = "entry"
+    measure: Literal["touch", "close"] = "touch"  # touch = trades at the level; close = final price of the horizon is beyond it
+    direction: Optional[Literal["up", "down"]] = None
+    horizon_kind: Literal["session", "time", "sessions"] = "session"
+    horizon_time: str = "12:00"
+    horizon_sessions: int = 1
+
+
+class Draft(BaseModel):
+    kind: Literal["options", "study"] = "options"
+    title: str = ""
+    symbol: str = "SPY"
+    symbol_stated: bool = True
+    entry_time: Optional[str] = None  # New York "HH:MM", or "open" / "close"; None = whenever the conditions hold
+    entry_time_stated: Optional[str] = None  # the user's words, e.g. "6:30 AM Pacific"
+    tz_assumed: Optional[str] = None  # set when a clock time carried no timezone and one had to be assumed
+    weekdays: Optional[list[str]] = None
+    conditions: list[DraftCondition] = Field(default_factory=list)
+    # ---- option position
+    structure: Optional[str] = None
+    dte: Optional[int] = None
+    strike: Optional[DraftStrike] = None
+    width: Optional[float] = None
+    quantity: int = 1
+    # ---- exits
+    underlying_target_pct: Optional[float] = None  # favourable move of the underlying from entry, %
+    underlying_stop_pct: Optional[float] = None  # adverse move, %
+    underlying_target_abs: Optional[float] = None  # favourable move of the underlying in price points ($), not percent
+    underlying_stop_abs: Optional[float] = None
+    premium_target_pct: Optional[float] = None  # gain as % of premium
+    premium_stop_pct: Optional[float] = None  # loss as % of premium
+    exit_time: Optional[str] = None  # New York "HH:MM" or "close"
+    exit_time_stated: Optional[str] = None
+    hold_sessions: Optional[int] = None
+    exit_weekday: Optional[str] = None
+    hold_to_expiration: bool = False
+    # ---- market study
+    study: Optional[DraftStudy] = None
+    # ---- scope
+    start: Optional[date] = None
+    end: Optional[date] = None
+    mode: Optional[Literal["historical", "study", "modeled"]] = None
+    notes: list[str] = Field(default_factory=list)
+
+
+def direction(d: Draft) -> int:
+    return 1 if d.structure in BULLISH else -1 if d.structure in BEARISH else 0
+
+
+def _cond_tree(d: Draft, for_study: bool = False) -> dict:
+    kids = []
+    if d.entry_time and not for_study:
+        kids.append({"id": "t", "kind": "cond", "type": "entry_times", "params": {"times": d.entry_time}})
+    if d.weekdays:
+        kids.append({"id": "w", "kind": "cond", "type": "day_of_week", "params": {"days": d.weekdays}})
+    for i, c in enumerate(d.conditions):
+        kids.append({"id": f"c{i}", "kind": "cond", "type": "expr", "params": {"expr": c.expr, "label": c.text}})
+    return {"id": "root", "kind": "group", "op": "and", "children": kids}
+
+
+def _leg(id, side, right, dte, method, value, ref=None, qty=1, group=None, kind="option"):
+    return {"id": id, "side": side, "kind": kind, "right": right, "quantity": qty, "dte": dte, "dte_mode": "exact" if dte == 0 else "nearest",
+            "strike": {"method": method, "value": value, "unit": "points", "ref_leg": ref}, **({"group": group} if group else {})}
+
+
+def build_legs(structure: str, dte: int, strike: DraftStrike, width: float, qty: int) -> list[dict]:
+    m, v = {"atm": ("atm_offset", 0.0), "delta": ("delta", strike.value), "pct_otm": ("pct_otm", strike.value)}[strike.method]
+    L = lambda *a, **k: _leg(*a, **{"qty": qty, **k})
+    if structure == "long_call":
+        return [L("lc", "buy", "C", dte, m, v)]
+    if structure == "long_put":
+        return [L("lp", "buy", "P", dte, m, v)]
+    if structure == "short_put":
+        return [L("sp", "sell", "P", dte, m, v)]
+    if structure == "short_call":
+        return [L("sc", "sell", "C", dte, m, v)]
+    if structure == "bull_call_spread":
+        return [L("lc", "buy", "C", dte, m, v), L("sc", "sell", "C", dte, "leg_offset", width, "lc")]
+    if structure == "bear_put_spread":
+        return [L("lp", "buy", "P", dte, m, v), L("sp", "sell", "P", dte, "leg_offset", -width, "lp")]
+    if structure == "bull_put_spread":
+        return [L("sp", "sell", "P", dte, m, v), L("lp", "buy", "P", dte, "leg_offset", -width, "sp")]
+    if structure == "bear_call_spread":
+        return [L("sc", "sell", "C", dte, m, v), L("lc", "buy", "C", dte, "leg_offset", width, "sc")]
+    if structure == "iron_condor":
+        return [L("sp", "sell", "P", dte, m, v, group="put_side"), L("lp", "buy", "P", dte, "leg_offset", -width, "sp", group="put_side"),
+                L("sc", "sell", "C", dte, m, v, group="call_side"), L("lc", "buy", "C", dte, "leg_offset", width, "sc", group="call_side")]
+    if structure == "iron_butterfly":
+        return [L("sp", "sell", "P", dte, "atm_offset", 0), L("sc", "sell", "C", dte, "atm_offset", 0), L("lp", "buy", "P", dte, "leg_offset", -width, "sp"), L("lc", "buy", "C", dte, "leg_offset", width, "sc")]
+    if structure in ("long_straddle", "short_straddle"):
+        s = "buy" if structure.startswith("long") else "sell"
+        return [L("c", s, "C", dte, "atm_offset", 0), L("p", s, "P", dte, "atm_offset", 0)]
+    if structure in ("long_strangle", "short_strangle"):
+        s = "buy" if structure.startswith("long") else "sell"
+        dm, dv = ("delta", v if m == "delta" else 0.2)
+        return [L("c", s, "C", dte, dm, dv), L("p", s, "P", dte, dm, dv)]
+    if structure == "covered_call":
+        return [{"id": "stk", "side": "buy", "kind": "stock", "right": "C", "quantity": 100 * qty, "dte": 0, "strike": {"method": "fixed", "value": 0}}, L("sc", "sell", "C", dte, m if m == "delta" else "delta", v if m == "delta" else 0.3)]
+    raise ValueError(f"unsupported structure {structure!r}")
+
+
+def fmt_time(t: Optional[str], stated: Optional[str] = None) -> str:
+    if not t:
+        return "whenever the conditions hold"
+    base = {"open": "the open (09:30 ET)", "close": "the close (16:00 ET, earlier on half days)"}.get(t, f"{t} ET")
+    return f"{base} - you said \"{stated}\"" if stated and stated.lower() not in base.lower() else base
+
+
+def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None = None) -> dict:
+    """Draft -> engine configs + an itemised interpretation (stated / assumed / missing)."""
+    store = store or MarketStore()
+    items: list[dict] = []
+    assumptions: list[dict] = []
+    missing: list[str] = []
+    errors: list[str] = []
+
+    def add(label, value, status="stated", field=None):
+        items.append({"label": label, "value": value, "status": status, "field": field})
+
+    def assume(field, value, reason):
+        assumptions.append({"field": field, "value": value, "reason": reason})
+
+    for c in d.conditions:
+        errors += X.validate(c.expr)
+    add("Underlying", d.symbol, "stated" if d.symbol_stated else "assumed", "symbol")
+    if not d.symbol_stated:
+        assume("symbol", d.symbol, "no ticker mentioned, so the default symbol is used")
+    if d.tz_assumed:
+        assume("timezone", d.tz_assumed, f"a clock time was given without a timezone, so it was read as {d.tz_assumed} time (change the default under Settings)")
+    if d.weekdays:
+        add("Days", ", ".join(d.weekdays), field="weekdays")
+    for c in d.conditions:
+        add("Condition", f"{c.text or c.expr}   [{c.expr}]", c.source, "conditions")
+
+    # ------------------------------------------------------------ study config (always derivable)
+    st = d.study or DraftStudy()
+    dirn = direction(d)
+    study_entry = d.entry_time or "open"
+    if d.kind == "options":
+        sgn = dirn or 1
+        tgt = DraftLevel(kind="pct", value=d.underlying_target_pct * sgn) if d.underlying_target_pct else DraftLevel(kind="abs", value=d.underlying_target_abs * sgn) if d.underlying_target_abs else None
+        stp = DraftLevel(kind="pct", value=-d.underlying_stop_pct * sgn) if d.underlying_stop_pct else DraftLevel(kind="abs", value=-d.underlying_stop_abs * sgn) if d.underlying_stop_abs else None
+        hz = {"kind": "session"}
+        if d.exit_time and d.exit_time not in ("close",):
+            hz = {"kind": "time", "time": d.exit_time}
+        elif d.hold_sessions:
+            hz = {"kind": "sessions", "sessions": d.hold_sessions}
+        elif d.exit_weekday and study_entry == "close":
+            hz = {"kind": "sessions", "sessions": 4}
+        st_cfg = {"target": tgt.model_dump() if tgt else None, "stop": stp.model_dump() if stp else None, "reference": "entry", "horizon": hz}
+    else:
+        hz = {"kind": st.horizon_kind, "time": st.horizon_time, "sessions": st.horizon_sessions}
+        st_cfg = {"target": st.target.model_dump() if st.target else None, "stop": st.stop.model_dump() if st.stop else None, "reference": st.reference, "horizon": hz,
+                  "measure": st.measure, "direction": st.direction}
+    study = {"symbol": d.symbol, "start": d.start.isoformat() if d.start else None, "end": d.end.isoformat() if d.end else None, "condition": _cond_tree(d, for_study=True),
+             "entry_time": study_entry, "label": d.title, **st_cfg}
+    try:
+        StudyConfig.model_validate(study)
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"study: {e}")
+
+    strategy = None
+    entry_time, dte = d.entry_time, d.dte
+    if d.kind == "study":
+        add("Question type", "Historical market study (underlying prices; no option premiums)")
+        add("Observation starts", fmt_time(study_entry, d.entry_time_stated), "stated" if d.entry_time else "assumed", "entry_time")
+        if not d.entry_time:
+            assume("entry_time", "open", "no time given, so each session is observed from its open")
+        lv = lambda x: None if x is None else (f"{x.value:+g}% from the {st.reference if st.reference != 'entry' else 'starting price'}" if x.kind == "pct" else f"{x.value:+g} $ from the starting price" if x.kind == "abs" else f"price level: {x.expr}")
+        if st.target and st.measure == "close":
+            side = "below" if (st.direction == "down" or (st.target.kind == "pct" and st.target.value < 0)) else "above"
+            add("Outcome", (f"final price of the horizon is {side} the starting price" if st.target.kind == "pct" and st.target.value == 0 else f"final price of the horizon is at or {side} {lv(st.target)}") + " (a close, not an intraday touch)", field="study.target")
+        elif st.target:
+            add("Target", lv(st.target) + " - counted when price trades there at any point (a touch)", field="study.target")
+        if st.stop:
+            add("Stop", lv(st.stop), field="study.stop")
+        add("Horizon", {"session": "until that session's close", "time": f"until {st.horizon_time} ET", "sessions": f"through the close {st.horizon_sessions} session(s) later"}[st.horizon_kind], field="study.horizon")
+    else:
+        if not d.structure:
+            missing.append("structure")
+            errors.append("no option position was described (calls, puts, a spread ...)")
+        else:
+            add("Position", f"{d.quantity} x {STRUCTURES.get(d.structure, d.structure)}", field="structure")
+        add("Entry", fmt_time(d.entry_time, d.entry_time_stated) + (" - once per eligible session" if d.entry_time else " - first signal each session"), "stated" if d.entry_time or d.conditions else "assumed", "entry_time")
+        intraday_rule = any(X.needs_intraday(c.expr) for c in d.conditions)
+        same_day = bool(d.exit_time) and not d.hold_sessions and not d.exit_weekday
+        multi_day = bool(d.hold_sessions or d.exit_weekday or d.hold_to_expiration)
+        short_premium = d.structure in ("short_put", "short_call", "bull_put_spread", "bear_call_spread", "iron_condor", "iron_butterfly", "short_strangle", "short_straddle", "covered_call")
+        # ---- expiration
+        dte = d.dte
+        if dte is None:
+            missing.append("expiration")
+            if same_day:
+                dte, why = 0, "the exit is on the same day as the entry, so the same-day (0DTE) expiration is used"
+            elif multi_day:
+                dte = max(7, (d.hold_sessions or 5) + 9)
+                why = f"about {dte} days to expiration leaves room for the holding period"
+            elif d.entry_time not in (None, "close") or intraday_rule:
+                dte, why = 0, "an intraday entry with no holding period reads as a day trade, so the same-day (0DTE) expiration is used"
+            else:
+                dte = 30 if short_premium else 14
+                why = "no expiration or holding period was given; a common " + ("30-day premium-selling" if short_premium else "two-week") + " expiration is used"
+            assume("dte", dte, why)
+            add("Expiration", f"{dte}DTE", "assumed", "dte")
+        else:
+            add("Expiration", f"{dte}DTE" + (" (exact - never a later expiry)" if dte == 0 else " (nearest listed)"), field="dte")
+        entry_time = d.entry_time
+        if not d.entry_time and not intraday_rule:
+            from strata.data.catalog import profile
+            opt = (profile(store, d.symbol) or {}).get("options") or {}
+            if dte > 0 and opt.get("resolution") == "EOD":
+                entry_time = "close"
+                assume("entry_time", "close", f"no entry time given; entering at the close, which is when the stored {d.symbol} option quotes are observed (end-of-day data)")
+            else:
+                entry_time = "open"
+                assume("entry_time", "open", "no entry time given; entering at the open")
+            missing.append("entry time")
+            for it in items:
+                if it["field"] == "entry_time":
+                    it["value"], it["status"] = fmt_time(entry_time) + " - once per eligible session", "assumed"
+        # ---- strike
+        strike = d.strike
+        if strike is None:
+            strike = DraftStrike(method="delta", value=0.16 if d.structure == "iron_condor" else 0.20) if short_premium else DraftStrike(method="atm")
+            if d.structure not in ("iron_butterfly", "long_straddle", "short_straddle"):
+                missing.append("strike")
+                assume("strike", "ATM" if strike.method == "atm" else f"{strike.value:g} delta", "at-the-money is the neutral default for a long option" if strike.method == "atm" else "a typical short-premium distance")
+                add("Strike", "At the money" if strike.method == "atm" else f"{strike.value:g} delta short strike", "assumed", "strike")
+        else:
+            add("Strike", {"atm": "At the money", "delta": f"{strike.value:g} delta", "pct_otm": f"{strike.value:g}% out of the money"}[strike.method], field="strike")
+        width = d.width
+        if d.structure and ("spread" in d.structure or d.structure in ("iron_condor", "iron_butterfly")):
+            if width is None:
+                width = max(1.0, round((spot or 500) * 0.01)) if d.structure != "iron_butterfly" else max(2.0, round((spot or 500) * 0.02))
+                missing.append("spread width")
+                assume("width", width, "about 1% of the underlying price")
+                add("Width", f"{width:g} points", "assumed", "width")
+            else:
+                add("Width", f"{width:g} points", field="width")
+        # ---- exits
+        exits: dict = {"profit_target": {"enabled": False, "mode": "pct", "value": 50}, "stop_loss": {"enabled": False, "mode": "pct", "value": 200}}
+        any_exit = False
+        if d.underlying_target_pct:
+            mv = "rises" if dirn >= 0 else "falls"
+            add("Target", f"{d.symbol} {mv} {d.underlying_target_pct:g}% from its price at entry (underlying move, not option return)", field="underlying_target_pct")
+            any_exit = True
+        if d.underlying_stop_pct:
+            add("Stop", f"{d.symbol} moves {d.underlying_stop_pct:g}% against the position from its entry price", field="underlying_stop_pct")
+        if d.underlying_target_pct or d.underlying_stop_pct:
+            if dirn != 0:
+                exits["underlying"] = {"enabled": True, "move_for_pct": d.underlying_target_pct, "move_against_pct": d.underlying_stop_pct}
+            else:
+                exits["underlying"] = {"enabled": True, "move_against_pct": d.underlying_target_pct or d.underlying_stop_pct}
+        custom_kids: list[dict] = []
+        if d.underlying_target_abs:
+            up = dirn >= 0
+            custom_kids.append({"id": "ut", "kind": "cond", "type": "expr", "params": {"expr": f"price {'>=' if up else '<='} entry.underlying_price {'+' if up else '-'} {d.underlying_target_abs:g}", "label": f"{d.symbol} {'up' if up else 'down'} ${d.underlying_target_abs:g} from entry"}})
+            add("Target", f"{d.symbol} {'rises' if up else 'falls'} ${d.underlying_target_abs:g} from its price at entry (a dollar move of the underlying, not a percent and not option profit)", field="underlying_target_abs")
+            any_exit = True
+        if d.underlying_stop_abs:
+            up = dirn >= 0
+            custom_kids.append({"id": "us", "kind": "cond", "type": "expr", "params": {"expr": f"price {'<=' if up else '>='} entry.underlying_price {'-' if up else '+'} {d.underlying_stop_abs:g}", "label": f"{d.symbol} ${d.underlying_stop_abs:g} against the position"}})
+            add("Stop", f"{d.symbol} moves ${d.underlying_stop_abs:g} against the position from its entry price", field="underlying_stop_abs")
+        if d.premium_target_pct:
+            exits["profit_target"] = {"enabled": True, "mode": "pct", "value": d.premium_target_pct}
+            add("Profit target", f"{d.premium_target_pct:g}% of the option premium (option return, not underlying move)", field="premium_target_pct")
+            any_exit = True
+        if d.premium_stop_pct:
+            exits["stop_loss"] = {"enabled": True, "mode": "pct", "value": d.premium_stop_pct}
+            add("Stop loss", f"{d.premium_stop_pct:g}% of the option premium", field="premium_stop_pct")
+        if not d.underlying_stop_pct and not d.premium_stop_pct and not d.underlying_stop_abs:
+            missing.append("stop loss")
+            assume("stop", None, "no stop was described, so none is applied (loss is limited to the premium for long options)" if d.structure in ("long_call", "long_put", "long_straddle", "long_strangle", "bull_call_spread", "bear_put_spread") else "no stop was described, so none is applied")
+            add("Stop loss", "None", "assumed", "premium_stop_pct")
+        exit_time = d.exit_time
+        if d.hold_sessions:
+            exits["max_hold"] = {"enabled": True, "days": d.hold_sessions}
+            add("Holding period", f"{d.hold_sessions} session(s), exiting at the same time of day", field="hold_sessions")
+            any_exit = True
+        if d.exit_weekday:
+            k = WEEKDAYS.index(d.exit_weekday)
+            last = " or is_last_session_of_week" if k == 4 else ""
+            custom_kids.append({"id": "x1", "kind": "cond", "type": "expr", "params": {"expr": f"(weekday == {k}{last}) and minutes_to_close <= 5", "label": f"{d.exit_weekday} close"}})
+            add("Exit", f"At the close on {d.exit_weekday}" + (" (or the week's last session)" if k == 4 else ""), field="exit_weekday")
+            any_exit = True
+        if custom_kids:
+            exits["custom"] = {"id": "x", "kind": "group", "op": "or", "children": custom_kids}
+        if exit_time:
+            exits["time_exit"] = {"enabled": True, "time": "16:00" if exit_time == "close" else exit_time, "dte_lte": None}
+            add("Time exit", fmt_time(exit_time, d.exit_time_stated), field="exit_time")
+            any_exit = True
+        elif d.hold_to_expiration:
+            add("Exit", "Hold until expiration (settled per the contract)", field="hold_to_expiration")
+        elif not d.hold_sessions and not d.exit_weekday:
+            if dte == 0:
+                exits["time_exit"] = {"enabled": True, "time": "15:55", "dte_lte": None}
+                assume("exit_time", "15:55", "0DTE positions are closed five minutes before the bell so they are not exercised")
+                add("End-of-day exit", "15:55 ET (before the 0DTE contracts expire)", "assumed", "exit_time")
+            else:
+                assume("exit", "expiration", "no exit rule was described, so the position is held until expiration")
+                add("Exit", "Hold until expiration", "assumed", "hold_to_expiration")
+            if not any_exit:
+                missing.append("exit rule")
+        if d.structure and not errors:
+            try:
+                legs = build_legs(d.structure, dte, strike, width or 5.0, max(1, d.quantity))
+                tree = _cond_tree(Draft(**{**d.model_dump(), "entry_time": entry_time}))
+                strategy = StrategyConfig.model_validate({
+                    "name": d.title or "AI strategy", "symbol": d.symbol, "legs": legs,
+                    "entry": {"conditions": tree, "max_entries_per_day": 1, "max_open_positions": 1 if same_day or dte == 0 else 5},
+                    "exits": exits, "sizing": {"method": "fixed", "contracts": 1},
+                }).model_dump(mode="json")
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"strategy: {e}")
+    if d.start or d.end:
+        add("Period", f"{d.start or 'earliest data'} to {d.end or 'latest data'}", field="period")
+    effective = {"entry_time": entry_time, "dte": dte} if d.kind == "options" else {"entry_time": study_entry}
+    return {"strategy": strategy, "study": study if not any(e.startswith("study") for e in errors) else None, "items": items, "assumptions": assumptions, "effective": effective,
+            "missing": sorted(set(missing), key=missing.index), "errors": errors}
+
+
+# ----------------------------------------------------------------------------- coverage
+def _needs(d: Draft, compiled: dict) -> dict:
+    entry = (compiled.get("effective") or {}).get("entry_time") or d.entry_time or ("open" if not any(X.needs_intraday(c.expr) for c in d.conditions) else None)
+    clock = "close" if entry == "close" else "open" if entry in ("open", "09:30") else "intraday"
+    intraday_rules = any(X.needs_intraday(c.expr) for c in d.conditions)
+    strat = compiled.get("strategy")
+    dtes = [l["dte"] for l in (strat or {}).get("legs", []) if l.get("kind", "option") == "option"]
+    same_day_exit = bool(d.exit_time) and not d.hold_sessions and not d.exit_weekday
+    intraday_exit = same_day_exit or bool(d.underlying_target_pct or d.underlying_stop_pct or d.underlying_target_abs or d.underlying_stop_abs) and clock != "close"
+    return {"clock": clock, "entry": entry, "intraday_rules": intraday_rules, "min_dte": min(dtes) if dtes else None, "same_day_exit": same_day_exit, "intraday_exit": intraday_exit}
+
+
+def _range(a, b):
+    return f"{a} to {b}"
+
+
+def assess(d: Draft, compiled: dict, store: MarketStore | None = None) -> dict:
+    """Which research modes can answer this request with the data that is actually stored."""
+    from strata.data.catalog import profile
+    store = store or MarketStore()
+    prof = profile(store, d.symbol)
+    need = _needs(d, compiled)
+    out = {"symbol": d.symbol, "needs": need, "modes": {}, "messages": [], "profile": None}
+    if prof is None or not (prof.get("daily") or prof.get("intraday")):
+        msg = f"No historical price data is stored for {d.symbol}. Download it under Data (daily history is free from Yahoo); nothing will be simulated in its place."
+        for m in ("historical", "study", "modeled"):
+            out["modes"][m] = {"ok": False, "reason": msg}
+        out["recommended"] = None
+        out["messages"].append(msg)
+        return out
+    daily, intr, opt = prof.get("daily"), prof.get("intraday") or {}, prof.get("options")
+    out["profile"] = {"daily": daily and [daily["first"], daily["last"]], "intraday": {k: [v["first"], v["last"], v["sessions"]] for k, v in intr.items()},
+                      "options": opt and {"first": opt["first"], "last": opt["last"], "resolution": opt["resolution"], "quote_type": opt["quote_type"], "provider": opt["provider"], "sessions": opt["sessions"]},
+                      "synthetic": bool(prof["meta"].get("synthetic"))}
+    best_intr = next((r for r in ("1m", "5m", "15m", "30m", "60m") if r in intr), None)
+    need_intr = need["clock"] == "intraday" or need["intraday_rules"] or (d.kind == "study" and d.study is not None and d.study.horizon_kind == "time")
+    entry_min = None if need["entry"] in (None, "open", "close") else cal.parse_hhmm(need["entry"])
+    # resolutions able to observe the entry minute
+    usable = [r for r in intr if entry_min is None or (entry_min - 570) % int(r[:-1]) == 0]
+    fine = next((r for r in ("1m", "5m", "15m", "30m", "60m") if r in usable), None)
+    und_desc = (f"daily bars {_range(daily['first'], daily['last'])}" if daily else "no daily bars") + "".join(f"; {r} bars {_range(v['first'], v['last'])}" for r, v in intr.items())
+
+    # ---- study
+    if need_intr:
+        if fine:
+            v = intr[fine]
+            note = f"Needs intraday prices: evaluated on the {v['sessions']} sessions with {fine} bars ({_range(v['first'], v['last'])})."
+            out["modes"]["study"] = {"ok": True, "window": [v["first"], v["last"]], "resolution": fine, "note": note}
+        else:
+            why = f"This question needs intraday prices{' at ' + need['entry'] + ' ET' if entry_min else ''}, but {d.symbol} only has {und_desc}."
+            out["modes"]["study"] = {"ok": False, "reason": why + " Add intraday history under Data (Yahoo: recent months free; Alpaca free key: 1-minute bars since 2016)."}
+    else:
+        out["modes"]["study"] = {"ok": bool(daily), "window": [daily["first"], daily["last"]] if daily else None, "resolution": "1d" + (f" (+{best_intr} where stored)" if best_intr else ""),
+                                 "note": f"Uses {und_desc}." + (" Target/stop order within a day is only resolved where intraday bars exist." if d.kind == "study" and d.study and d.study.target and d.study.stop else "")}
+    # ---- historical options
+    if d.kind == "study":
+        out["modes"]["historical"] = {"ok": False, "reason": "This is a question about the underlying's behaviour; no option position was described."}
+        out["modes"]["modeled"] = {"ok": False, "reason": "No option position was described."}
+    elif not opt:
+        free = "the free end-of-day archive (SPY/QQQ/IWM, 2008-2025) or DoltHub (2019 onward)" if d.symbol in ("SPY", "QQQ", "IWM") else "DoltHub's free end-of-day chains (2019 onward)"
+        out["modes"]["historical"] = {"ok": False, "reason": f"No option quotes are stored for {d.symbol}. You can download {free} under Data, or connect an intraday provider (ThetaData, Databento, Polygon)."}
+    else:
+        span = _range(opt["first"], opt["last"])
+        if opt["resolution"] == "EOD":
+            blockers = []
+            if need["clock"] != "close":
+                blockers.append("an entry at the open (09:30 ET)" if need["entry"] == "open" else f"an entry at {need['entry']} ET" if need["entry"] else "an entry on an intraday signal")
+            if need["min_dte"] == 0:
+                blockers.append("0DTE contracts")
+            if need["intraday_exit"] and need["clock"] == "close":
+                blockers.append("an intraday exit")
+            if blockers:
+                out["modes"]["historical"] = {"ok": False, "reason": f"{d.symbol} option history is end-of-day only (one {opt['quote_type'][:-1]} per contract at the 16:00 ET close, {span}, via {opt['provider']}). "
+                                              f"{(lambda t: t[0].upper() + t[1:])(' and '.join(blockers))} need{'s' if len(blockers) == 1 else ''} intraday option quotes, which are not stored. End-of-day data is never used to simulate fills at other times."}
+            else:
+                out["modes"]["historical"] = {"ok": True, "window": [opt["first"], opt["last"]], "resolution": "EOD", "note": f"End-of-day {opt['quote_type']} {span} via {opt['provider']}: entries and exits fill at the 16:00 ET snapshot."}
+        else:
+            if need_intr and not fine:
+                out["modes"]["historical"] = {"ok": False, "reason": f"Option quotes exist ({opt['resolution']}, {span}) but the underlying has no intraday bars able to evaluate the entry rule."}
+            else:
+                out["modes"]["historical"] = {"ok": True, "window": [opt["first"], opt["last"]], "resolution": opt["resolution"],
+                                              "note": f"{opt['resolution']} option {opt['quote_type']} {span} via {opt['provider']}." + (" Trade prints only - fills use last-trade prices, no bid/ask." if opt["quote_type"] == "trades" else "")}
+    # ---- modeled
+    if d.kind == "options":
+        if need["clock"] == "intraday" or need["intraday_rules"] or need["intraday_exit"]:
+            r = fine or best_intr
+            if r and (fine or not entry_min):
+                v = intr[r]
+                out["modes"]["modeled"] = {"ok": True, "window": [v["first"], v["last"]], "resolution": r,
+                                           "note": f"Real {d.symbol} {r} prices ({_range(v['first'], v['last'])}) with THEORETICAL option premiums. Estimates, not observed option prices."}
+            else:
+                out["modes"]["modeled"] = {"ok": False, "reason": f"Modeled premiums still need real intraday {d.symbol} prices for this timing; only {und_desc} is stored."}
+        else:
+            out["modes"]["modeled"] = {"ok": bool(daily), "window": [daily["first"], daily["last"]] if daily else None, "resolution": "1d",
+                                       "note": f"Real {d.symbol} prices with THEORETICAL option premiums (volatility from VIX). Estimates, not observed option prices."}
+    h, s = out["modes"]["historical"], out["modes"]["study"]
+    out["recommended"] = "historical" if h["ok"] else "study" if s["ok"] else None
+    if d.kind == "options" and not h["ok"]:
+        tail = "You can run the directional market study on the underlying now" + (", or explicitly opt in to a modeled-premium estimate." if out["modes"]["modeled"]["ok"] else ".")
+        out["messages"].append(f"{h['reason']} {tail if s['ok'] else s.get('reason', '')}")
+    elif not s["ok"] and d.kind == "study":
+        out["messages"].append(s["reason"])
+    return out
+
+
+def window_for(mode: str, d: Draft, cover: dict) -> tuple[str, str] | None:
+    m = cover["modes"].get(mode) or {}
+    if not m.get("ok") or not m.get("window"):
+        return None
+    a, b = m["window"]
+    if d.start:
+        a = max(a, d.start.isoformat())
+    if d.end:
+        b = min(b, d.end.isoformat())
+    return (a, b) if a <= b else None
+
+
+def backtest_config(d: Draft, compiled: dict, cover: dict, mode: str) -> dict:
+    """BacktestConfig for a compiled draft in 'historical' or 'modeled' mode."""
+    win = window_for(mode, d, cover)
+    if win is None or compiled.get("strategy") is None:
+        raise ValueError((cover["modes"].get(mode) or {}).get("reason") or "strategy is not runnable")
+    need = cover["needs"]
+    fine_signals = need["clock"] == "intraday" or need["intraday_exit"] or need["intraday_rules"]
+    cfg = {"strategies": [compiled["strategy"]], "start": win[0], "end": win[1], "label": d.title,
+           "execution": {"signal_interval_minutes": 1 if fine_signals else 5},
+           "pricing": {"mode": "modeled" if mode == "modeled" else "historical"},
+           "allow_synthetic": bool((cover.get("profile") or {}).get("synthetic"))}
+    return BacktestConfig.model_validate(cfg).model_dump(mode="json")
+
+
+def _show(k: str, v):
+    if v is None:
+        return "none"
+    if k == "conditions":
+        return "; ".join(c["text"] or c["expr"] for c in v) or "none"
+    if k == "strike":
+        return {"atm": "ATM", "delta": f"{v['value']:g} delta", "pct_otm": f"{v['value']:g}% OTM"}[v["method"]]
+    if k in ("study.target", "study.stop"):
+        return f"{v['value']:+g}%" if v["kind"] == "pct" else f"{v['value']:+g} $" if v["kind"] == "abs" else v["expr"]
+    if k == "structure":
+        return STRUCTURES.get(v, v)
+    if isinstance(v, list):
+        return ", ".join(map(str, v))
+    return v
+
+
+def diff_drafts(a: Draft | None, b: Draft) -> list[dict]:
+    """Field-level changes between two versions (for the history panel)."""
+    if a is None:
+        return []
+
+    def flat(d: Draft) -> dict:
+        x = d.model_dump(mode="json")
+        st = x.pop("study", None) or {}
+        for k in ("title", "notes", "entry_time_stated", "exit_time_stated", "symbol_stated", "tz_assumed"):
+            x.pop(k, None)
+        if d.kind == "study":
+            x.update({f"study.{k}": v for k, v in st.items()})
+        return x
+
+    fa, fb = flat(a), flat(b)
+    return [{"field": k, "from": _show(k, fa.get(k)), "to": _show(k, fb.get(k))} for k in fb if fa.get(k) != fb.get(k)]

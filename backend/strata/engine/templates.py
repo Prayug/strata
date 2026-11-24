@@ -1,4 +1,8 @@
-"""Strategy presets for the visual builder (each is an ordinary StrategyConfig dict)."""
+"""Strategy presets for the visual builder (each is an ordinary StrategyConfig dict).
+
+Presets are built for a real symbol (SPY by default) and adapt to the option data that is
+actually stored: with end-of-day chains the entry is the close and same-day (0DTE)
+structures become weeklies, because end-of-day quotes cannot fill intraday orders."""
 from __future__ import annotations
 
 
@@ -19,22 +23,63 @@ def entry_at(times="10:00"):
     ]}, "max_entries_per_day": 1, "max_open_positions": 1}
 
 
-def exits(pt=50, sl=200, time_exit=None, dte_exit=None):
+def exits(pt=50, sl=200, time_exit=None, dte_exit=None, dte_time="10:00"):
     e = {"profit_target": {"enabled": pt is not None, "mode": "pct", "value": pt or 50}, "stop_loss": {"enabled": sl is not None, "mode": "pct", "value": sl or 200}}
     if time_exit:
         e["time_exit"] = {"enabled": True, "time": time_exit, "dte_lte": 0}
     if dte_exit is not None:
-        e["dte_exit"] = {"enabled": True, "dte": dte_exit, "time": "10:00"}
+        e["dte_exit"] = {"enabled": True, "dte": dte_exit, "time": dte_time}
     return e
+
+
+def _adapt(cfg: dict, symbol: str, eod: bool, width_scale: float = 1.0) -> dict:
+    """Point a preset at `symbol`; with end-of-day option data move it onto the close."""
+    cfg = {**cfg, "symbol": symbol}
+    legs = []
+    for l in cfg["legs"]:
+        l = {**l, "strike": dict(l["strike"])}
+        if l["strike"]["method"] in ("leg_offset", "atm_offset") and l["strike"]["value"]:
+            l["strike"]["value"] = round(l["strike"]["value"] * width_scale) or (1 if l["strike"]["value"] > 0 else -1)
+        if eod and l.get("kind", "option") == "option" and l["dte"] < 7:
+            l["dte"] = 7
+        if l.get("kind", "option") == "option" and l["dte"] == 0:
+            l["dte_mode"] = "exact"
+        legs.append(l)
+    cfg["legs"] = legs
+    if eod:
+        ex = {k: dict(v) if isinstance(v, dict) else v for k, v in cfg["exits"].items()}
+        if "time_exit" in ex:
+            ex.pop("time_exit")
+            ex.setdefault("dte_exit", {"enabled": True, "dte": 1, "time": "16:00"})
+        if "dte_exit" in ex:
+            ex["dte_exit"]["time"] = "16:00"
+        cfg["exits"] = ex
+        kids = []
+        for c in cfg["entry"]["conditions"]["children"]:
+            if c.get("type") == "entry_times":
+                c = {**c, "params": {"times": "close"}}
+            kids.append(c)
+        cfg["entry"] = {**cfg["entry"], "conditions": {**cfg["entry"]["conditions"], "children": kids}}
+    return cfg
 
 
 def T(key, label, category, legs, dte_hint, description, ex=None, entry=None):
     return {"key": key, "label": label, "category": category, "description": description,
-            "config": {"name": label, "symbol": "DEMO", "legs": legs, "entry": entry or entry_at("10:00"), "exits": ex or exits(),
+            "config": {"name": label, "symbol": "SPY", "legs": legs, "entry": entry or entry_at("10:00"), "exits": ex or exits(),
                        "sizing": {"method": "fixed", "contracts": 1}}, "dte_hint": dte_hint}
 
 
-def templates() -> list[dict]:
+def templates(symbol: str = "SPY", eod: bool = False, width_scale: float = 1.0) -> list[dict]:
+    out = []
+    for t in _templates():
+        cfg = _adapt(t["config"], symbol, eod, width_scale)
+        dte = min((l["dte"] for l in cfg["legs"] if l.get("kind", "option") == "option"), default=t["dte_hint"])
+        note = " End-of-day option data: enters at the close, weekly instead of same-day expiry." if eod and t["dte_hint"] < 7 else (" Enters at the close (end-of-day option data)." if eod else "")
+        out.append({**t, "config": cfg, "dte_hint": dte, "description": t["description"] + note})
+    return out
+
+
+def _templates() -> list[dict]:
     return [
         T("long_call", "Long call", "Single leg", [leg("lc", "buy", "C", 30, value=0.5)], 30, "Buy a call: bullish, defined risk (debit).", exits(100, 50, dte_exit=7)),
         T("long_put", "Long put", "Single leg", [leg("lp", "buy", "P", 30, value=0.5)], 30, "Buy a put: bearish, defined risk (debit).", exits(100, 50, dte_exit=7)),
@@ -73,37 +118,47 @@ def _entry(*conds, op="and", **kw):
     return {"conditions": {"kind": "group", "op": op, "children": list(conds)}, "max_entries_per_day": 1, "max_open_positions": 1, **kw}
 
 
-def examples() -> list[dict]:
-    """Curated, ready-to-run strategies on the synthetic demo symbols."""
-    return [
-        {"name": "0DTE iron condor 12Δ", "symbol": "DEMO",
-         "legs": [leg("sp", "sell", "P", 0, value=0.12, group="put_side"), leg("lp", "buy", "P", 0, "leg_offset", -5, ref="sp", group="put_side"),
-                  leg("sc", "sell", "C", 0, value=0.12, group="call_side"), leg("lc", "buy", "C", 0, "leg_offset", 5, ref="sc", group="call_side")],
+def examples(symbol: str = "SPY", eod: bool = True) -> list[dict]:
+    """Curated starting points on a real symbol. The first group runs on free end-of-day
+    option chains; the second needs intraday option quotes and says so in its name."""
+    def expr(e, label):
+        return _c("expr", expr=e, label=label)
+    daily = [
+        {"name": f"{symbol} 30DTE put credit spread 20\u0394", "symbol": symbol,
+         "legs": [leg("sp", "sell", "P", 30, value=0.20), leg("lp", "buy", "P", 30, "leg_offset", -5, ref="sp")],
+         "entry": _entry(_c("entry_times", times="close"), _c("day_of_week", days=["Mon", "Wed"]), max_open_positions=4),
+         "exits": exits(50, 200, dte_exit=7, dte_time="16:00")},
+        {"name": f"{symbol} call after a 2% down day (5-session hold)", "symbol": symbol,
+         "legs": [{**leg("lc", "buy", "C", 30, "atm_offset", 0)}],
+         "entry": _entry(_c("entry_times", times="close"), expr("change_pct <= -2", "session fell 2% or more, measured at its close"), max_open_positions=5),
+         "exits": {**exits(None, None), "max_hold": {"enabled": True, "days": 5}}},
+        {"name": f"{symbol} 45DTE short strangle 16\u0394", "symbol": symbol,
+         "legs": [leg("sp", "sell", "P", 45, value=0.16), leg("sc", "sell", "C", 45, value=0.16)],
+         "entry": _entry(_c("entry_times", times="close"), _c("day_of_week", days=["Mon"]), max_open_positions=3),
+         "exits": exits(50, 200, dte_exit=21, dte_time="16:00")},
+        {"name": f"{symbol} 30DTE iron condor 16\u0394 when VIX > 20", "symbol": symbol,
+         "legs": [leg("sp", "sell", "P", 30, value=0.16, group="put_side"), leg("lp", "buy", "P", 30, "leg_offset", -10, ref="sp", group="put_side"),
+                  leg("sc", "sell", "C", 30, value=0.16, group="call_side"), leg("lc", "buy", "C", 30, "leg_offset", 10, ref="sc", group="call_side")],
+         "entry": _entry(_c("entry_times", times="close"), _c("day_of_week", days=["Fri"]), expr("vix > 20", "VIX above 20"), max_open_positions=3),
+         "exits": exits(50, 200, dte_exit=7, dte_time="16:00")},
+        {"name": f"{symbol} covered call 30\u0394 (monthly)", "symbol": symbol,
+         "legs": [stock(), leg("sc", "sell", "C", 30, value=0.30)],
+         "entry": _entry(_c("entry_times", times="close")),
+         "exits": exits(80, None, dte_exit=2, dte_time="16:00")},
+        {"name": f"{symbol} put after 3 up days above the 50-day average", "symbol": symbol,
+         "legs": [leg("lp", "buy", "P", 14, "atm_offset", 0)],
+         "entry": _entry(_c("entry_times", times="close"), expr('consecutive_up_days() >= 3 and price > sma(50, "1d")', "three straight up closes while above the 50-day average"), max_open_positions=2),
+         "exits": {**exits(100, 50), "max_hold": {"enabled": True, "days": 5}}},
+    ]
+    intraday = [
+        {"name": f"{symbol} 0DTE iron condor 12\u0394 (needs intraday option quotes)", "symbol": symbol,
+         "legs": [{**leg("sp", "sell", "P", 0, value=0.12, group="put_side"), "dte_mode": "exact"}, {**leg("lp", "buy", "P", 0, "leg_offset", -5, ref="sp", group="put_side"), "dte_mode": "exact"},
+                  {**leg("sc", "sell", "C", 0, value=0.12, group="call_side"), "dte_mode": "exact"}, {**leg("lc", "buy", "C", 0, "leg_offset", 5, ref="sc", group="call_side"), "dte_mode": "exact"}],
          "entry": _entry(_c("entry_times", times="10:00"), _c("vix", cmp="<", value=30), _c("event", types=["FOMC", "CPI"], when="today", mode="exclude")),
          "exits": {**exits(50, 200), "time_exit": {"enabled": True, "time": "15:45", "dte_lte": 0}}},
-        {"name": "30DTE put credit spread 20Δ", "symbol": "DEMO",
-         "legs": [leg("sp", "sell", "P", 30, value=0.20), leg("lp", "buy", "P", 30, "leg_offset", -5, ref="sp")],
-         "entry": _entry(_c("entry_times", times="10:00"), _c("day_of_week", days=["Mon", "Wed"]), _c("iv_rank", cmp=">", value=20, lookback=252), max_open_positions=4),
-         "exits": exits(50, 200, dte_exit=7)},
-        {"name": "45DTE short strangle 16Δ", "symbol": "DEMO",
-         "legs": [leg("sp", "sell", "P", 45, value=0.16), leg("sc", "sell", "C", 45, value=0.16)],
-         "entry": _entry(_c("entry_times", times="10:30"), _c("day_of_week", days=["Mon"]), _c("regime", trend="any", vol="normal"), max_open_positions=3),
-         "exits": exits(50, 200, dte_exit=21)},
-        {"name": "Covered call 30Δ (monthly)", "symbol": "DEMO",
-         "legs": [stock(), leg("sc", "sell", "C", 30, value=0.30)],
-         "entry": _entry(_c("entry_times", times="10:00")),
-         "exits": exits(80, None, dte_exit=2)},
-        {"name": "DEMOX 0DTE iron fly (quiet open)", "symbol": "DEMOX",
-         "legs": [leg("sp", "sell", "P", 0, "atm_offset", 0), leg("sc", "sell", "C", 0, "atm_offset", 0), leg("lp", "buy", "P", 0, "leg_offset", -50, ref="sp"), leg("lc", "buy", "C", 0, "leg_offset", 50, ref="sc")],
-         "entry": _entry(_c("entry_times", times="10:30"), _c("gap", cmp="<", value=0.5), _c("gap", cmp=">", value=-0.5), _c("day_range", cmp="<", value=0.8)),
-         "exits": {**exits(25, 100), "time_exit": {"enabled": True, "time": "15:30", "dte_lte": 0}}},
-        {"name": "ATM call calendar 7/35", "symbol": "DEMO",
-         "legs": [leg("sc", "sell", "C", 7, "atm_offset", 0), leg("lc", "buy", "C", 35, "leg_offset", 0, ref="sc")],
-         "entry": _entry(_c("entry_times", times="11:00"), _c("day_of_week", days=["Mon", "Tue"]), _c("iv", cmp="<", value=22), max_open_positions=2),
-         "exits": exits(25, 30, dte_exit=1)},
-        {"name": "ORB breakout 0DTE bull call spread", "symbol": "DEMO",
-         "legs": [leg("lc", "buy", "C", 0, "atm_offset", 0), leg("sc", "sell", "C", 0, "leg_offset", 2, ref="lc")],
-         "entry": _entry(_c("time_window", start="10:00", end="12:00"), _c("opening_range", minutes=30, direction="breakout_up", buffer_pct=0.05),
-                         _c("compare", lhs={"kind": "price"}, cmp=">", rhs={"kind": "indicator", "name": "vwap", "params": {}, "tf": "1m"})),
-         "exits": {**exits(80, 50), "time_exit": {"enabled": True, "time": "15:30", "dte_lte": 0}}},
+        {"name": f"{symbol} 0DTE call after a 3% down day, +1% underlying target (needs intraday option quotes)", "symbol": symbol,
+         "legs": [{**leg("lc", "buy", "C", 0, "atm_offset", 0), "dte_mode": "exact"}],
+         "entry": _entry(_c("entry_times", times="open"), expr("previous_session.return_pct <= -3", "previous session fell 3% or more (close-to-close)")),
+         "exits": {**exits(None, None), "underlying": {"enabled": True, "move_for_pct": 1.0}, "time_exit": {"enabled": True, "time": "15:45", "dte_lte": None}}},
     ]
+    return daily + intraday

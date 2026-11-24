@@ -12,31 +12,23 @@ import type { ChartSpec } from "@/lib/types";
 
 type Filter = { field: string; op: string; value: any };
 
-export default function Research() {
-  return (
-    <div className="flex h-full flex-col">
-      <PageHeader title="Market Research" sub={<span className="text-2xs text-muted">answer historical questions directly from stored data — no strategy required</span>} />
-      <Tabs defaultValue="queries" className="flex min-h-0 flex-1 flex-col">
-        <TabsList><TabsTrigger value="queries"><Microscope className="size-3" /> Questions</TabsTrigger><TabsTrigger value="timing">Entry-time sensitivity</TabsTrigger><TabsTrigger value="sql"><Database className="size-3" /> SQL console</TabsTrigger></TabsList>
-        <TabsContent value="queries" className="min-h-0 flex-1"><Queries /></TabsContent>
-        <TabsContent value="timing" className="min-h-0 flex-1 overflow-auto"><EntryTiming /></TabsContent>
-        <TabsContent value="sql" className="min-h-0 flex-1"><Sql /></TabsContent>
-      </Tabs>
-    </div>
-  );
-}
-
-function Queries() {
+export function Queries() {
   const meta = useMeta().data;
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: () => api.get<any[]>("/api/data/catalog") });
-  const symbols = (catalog.data || []).filter((c) => c.options).map((c) => c.symbol);
+  // these templates read intraday option quotes; end-of-day chains cannot answer them
+  const usable = (catalog.data || []).filter((c) => c.options && c.options.resolution !== "EOD");
+  const symbols = usable.map((c) => c.symbol);
   const [tpl, setTpl] = useState("intraday_move");
-  const [p, setP] = useState<Record<string, any>>({ symbol: "DEMO", thresholds: [0.25, 0.5, 1.0], structure: "straddle", ref_time: "09:45", group_by_vix: true, recenter: true, window: 21, event_types: ["FOMC", "CPI", "NFP"], target: "oc_ret", filters: [] as Filter[] });
-  const run = useMutation({ mutationFn: () => api.post<any>("/api/research/run", { template: tpl, params: Object.fromEntries(Object.entries(p).filter(([k]) => meta?.research[tpl]?.params.includes(k))) }) });
+  const [p, setP] = useState<Record<string, any>>({ symbol: "", thresholds: [0.25, 0.5, 1.0], structure: "straddle", ref_time: "09:45", group_by_vix: true, recenter: true, window: 21, event_types: ["FOMC", "CPI", "NFP"], target: "oc_ret", filters: [] as Filter[] });
+  const sym = p.symbol && symbols.includes(p.symbol) ? p.symbol : symbols[0];
+  const run = useMutation({ mutationFn: () => api.post<any>("/api/research/run", { template: tpl, params: Object.fromEntries(Object.entries({ ...p, symbol: sym }).filter(([k]) => meta?.research[tpl]?.params.includes(k))) }) });
   const t = meta?.research[tpl];
   const has = (k: string) => t?.params.includes(k);
   const filters: Filter[] = p.filters;
   const setF = (f: Filter[]) => setP({ ...p, filters: f });
+  if (catalog.isSuccess && symbols.length === 0) {
+    return <Empty icon={Microscope} title="These studies need intraday option quotes">Straddle decay, intraday implied-volatility behaviour and the other templates here read option quotes through the session. Only end-of-day chains (or none) are stored, so they cannot be answered - and nothing is estimated in their place. Use the Event study tab for questions about the underlying, or load intraday option data under Data.</Empty>;
+  }
   return (
     <div className="grid h-full grid-cols-[300px_1fr]">
       <div className="min-h-0 overflow-auto border-r border-line bg-bg-1">
@@ -49,7 +41,7 @@ function Queries() {
         <div className="border-t border-line mt-2 p-3 space-y-2">
           <div className="label">Parameters</div>
           <div className="grid grid-cols-2 gap-2">
-            <Field label="Symbol"><Select value={p.symbol} onChange={(v) => setP({ ...p, symbol: v })} options={symbols.length ? symbols : ["DEMO"]} /></Field>
+            <Field label="Symbol"><Select value={sym || ""} onChange={(v) => setP({ ...p, symbol: v })} options={usable.map((c) => ({ value: c.symbol, label: c.meta?.synthetic ? `${c.symbol} (simulated)` : c.symbol }))} /></Field>
             <div />
             <Field label="From"><Input sz="sm" type="date" className="num" value={p.start || ""} onChange={(e) => setP({ ...p, start: e.target.value || undefined })} /></Field>
             <Field label="To"><Input sz="sm" type="date" className="num" value={p.end || ""} onChange={(e) => setP({ ...p, end: e.target.value || undefined })} /></Field>
@@ -196,7 +188,7 @@ export function SpecChart({ spec, height = 260 }: { spec: ChartSpec; height?: nu
   return <EChart option={opt} height={height} />;
 }
 
-function EntryTiming() {
+export function EntryTiming() {
   const b = useBuilder();
   const [times, setTimes] = useState("09:45,10:00,10:15,10:30,11:00,11:30,12:00,13:00,14:00,15:00");
   const [rid, setRid] = useState<string | null>(null);
@@ -243,7 +235,7 @@ function EntryTiming() {
   );
 }
 
-function Sql() {
+export function Sql() {
   const [sql, setSql] = useState("-- views: bars(symbol, ts, open, high, low, close, volume), daily, options, iv_history, events\nSELECT symbol, date_trunc('month', date) AS month, avg((high - low) / open) * 100 AS avg_range_pct, count(*) AS sessions\nFROM daily WHERE symbol = 'DEMO'\nGROUP BY 1, 2 ORDER BY 2");
   const run = useMutation({ mutationFn: () => api.post<any>("/api/research/sql", { sql: sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n") }) });
   const cols: Col<{ k: number; r: any[] }>[] = (run.data?.columns || []).map((c: string, i: number) => ({ key: String(i), label: c, render: ({ r }: { r: any[] }) => <span className={typeof r[i] === "number" ? "num" : ""}>{typeof r[i] === "number" ? num(r[i], Math.abs(r[i]) < 100 ? 4 : 2) : String(r[i] ?? "—")}</span>, sort: ({ r }: { r: any[] }) => r[i] }));

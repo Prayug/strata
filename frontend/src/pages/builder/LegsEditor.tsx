@@ -89,7 +89,7 @@ function LegRow({ leg, legs, onChange, onDup, onRemove }: { leg: LegSpec; legs: 
         <div className="flex items-center gap-0.5">
           <NumInput sz="sm" className="w-11" value={leg.dte} min={0} onChange={(v) => onChange((l) => { l.dte = Math.max(0, Math.round(v ?? 0)); })} />
           <Select sz="sm" className="w-[46px] px-1 text-2xs" value={leg.dte_mode || "nearest"} onChange={(v) => onChange((l) => { l.dte_mode = v; })}
-            options={[{ value: "nearest", label: "≈" }, { value: "at_least", label: "≥" }, { value: "at_most", label: "≤" }]} />
+            options={[{ value: "nearest", label: "≈" }, { value: "exact", label: "=" }, { value: "at_least", label: "≥" }, { value: "at_most", label: "≤" }]} />
         </div>
       )}
       {stock ? <span className="text-2xs text-faint">filled at the underlying price ± stock slippage</span> : (

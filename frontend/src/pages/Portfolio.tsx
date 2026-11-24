@@ -9,7 +9,7 @@ import { cancelJob, Empty, ErrorBox, JobBar, Loading, PageHeader, Panel, StatusD
 import { Button, Field, Input, NumInput, Select } from "@/components/ui";
 import { api, queryClient, useJob, useRun } from "@/lib/api";
 import { ago, cn, money, num, pct } from "@/lib/format";
-import { useBuilder } from "@/lib/store";
+import { useBuilder, usesSandbox } from "@/lib/store";
 import type { RunRow, StrategyConfig } from "@/lib/types";
 import { KpiStrip } from "./results/RunDetail";
 
@@ -74,7 +74,7 @@ function NewPortfolio() {
         names.add(name);
         return { ...x.config, name, allocation: x.allocation };
       });
-      return api.post<{ id: string }>("/api/portfolios", { config: { strategies: strats, start, end, capital: { ...b.capital, initial_capital: capital, max_bp_usage_pct: maxBp, max_concurrent_positions: maxPos }, execution: b.execution, allow_synthetic: true, label: "" } });
+      return api.post<{ id: string }>("/api/portfolios", { config: { strategies: strats, start, end, capital: { ...b.capital, initial_capital: capital, max_bp_usage_pct: maxBp, max_concurrent_positions: maxPos }, execution: b.execution, allow_synthetic: usesSandbox(strats), label: "" } });
     },
     onSuccess: (r) => { queryClient.invalidateQueries({ queryKey: ["runs", "portfolio"] }); nav(`/portfolio/${r.id}`); },
     onError: (e: any) => toast.error(e.message),

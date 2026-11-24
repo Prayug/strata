@@ -35,6 +35,9 @@ def _choose_expiration(exps: np.ndarray, today: int, leg: LegSpec) -> int | None
     if cand.size == 0:
         return None
     d = cand - today
+    if leg.dte_mode == "exact" or (leg.dte_mode == "nearest" and leg.dte == 0):
+        m = d == leg.dte  # a 0DTE leg never falls through to a later expiration
+        return int(cand[m][0]) if m.any() else None
     if leg.dte_mode == "at_least":
         m = d >= leg.dte
         return int(cand[m][np.argmin(d[m])]) if m.any() else None
@@ -57,6 +60,7 @@ def _filters(ch: DayChain, idx: np.ndarray, leg: LegSpec, t: int, max_age: int) 
 
     bid, ask, mid = ch.bid[idx], ch.ask[idx], ch.mid[idx]
     apply(np.isfinite(bid) & np.isfinite(ask) & (ask >= bid) & (ask > 0), "invalid_quote")
+    apply(ch.quote_ts[idx] <= t, "future_quote")
     apply((t - ch.quote_ts[idx]) <= max_age, "stale_quote")
     if leg.side == "sell":
         apply(bid > max(leg.min_bid, 0.0), "no_bid")
@@ -95,7 +99,10 @@ def select_contracts(ch: DayChain, si: int, legs: list[LegSpec], spot: float, to
             continue
         e = _choose_expiration(alive, today_n, leg)
         if e is None:
-            return None, f"leg {leg.id}: no expiration matching DTE {leg.dte}", details
+            listed = sorted(int(x) for x in (alive - today_n)) if alive.size else []
+            near = min(listed, key=lambda x: abs(x - leg.dte)) if listed else None
+            exact = leg.dte_mode == "exact" or leg.dte == 0
+            return None, (f"leg {leg.id}: no {'exact ' if exact else ''}{leg.dte}DTE expiration in the stored chain" + (f" (nearest listed: {near}DTE)" if near is not None else "")), details
         base = np.arange(s.start, s.stop)
         m = (ch.exp[base] == e) & (ch.is_call[base] == (leg.right == "C"))
         idx_all = base[m]

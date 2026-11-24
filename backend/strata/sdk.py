@@ -3,7 +3,7 @@
     from strata.sdk import Strategy, LegSpec, StrikeSel, run_backtest
 
     class MyStrategy(Strategy):
-        name, symbol = "my 0DTE put spread", "DEMO"
+        name, symbol = "my put spread", "SPY"
 
         def on_snapshot(self, ctx):
             for pos in ctx.positions():                      # manage open positions

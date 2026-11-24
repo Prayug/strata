@@ -41,6 +41,37 @@ CREATE TABLE IF NOT EXISTS runs (
   started_at TEXT,
   finished_at TEXT
 );
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  state TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  content TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id, id);
+CREATE TABLE IF NOT EXISTS versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  parent_id INTEGER,
+  label TEXT,
+  draft TEXT NOT NULL,
+  runs TEXT DEFAULT '[]',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS versions_session ON versions(session_id, id);
 CREATE INDEX IF NOT EXISTS runs_kind ON runs(kind, created_at);
 CREATE INDEX IF NOT EXISTS runs_cache ON runs(cache_key);
 CREATE INDEX IF NOT EXISTS runs_strategy ON runs(strategy_id);
@@ -67,7 +98,7 @@ def init_db() -> Path:
     return get_settings().db_path
 
 
-JSON_COLS = {"config", "dataset_versions", "summary", "tags"}
+JSON_COLS = {"config", "dataset_versions", "summary", "tags", "state", "content", "draft", "runs"}
 
 
 def _row(r: sqlite3.Row | None) -> dict | None:
@@ -178,3 +209,87 @@ def mark_interrupted() -> int:
     with connect() as con:
         cur = con.execute("UPDATE runs SET status='error', error='interrupted: server restarted while the job was running', finished_at=? WHERE status IN ('running','queued')", (now(),))
         return cur.rowcount
+
+
+# ---------------- AI research sessions
+def create_session(title: str, state: dict | None = None) -> dict:
+    sid = uuid.uuid4().hex[:12]
+    t = now()
+    with connect() as con:
+        con.execute("INSERT INTO sessions (id, title, state, created_at, updated_at) VALUES (?,?,?,?,?)", (sid, title, json.dumps(state or {}), t, t))
+    return get_session(sid)
+
+
+def get_session(sid: str) -> dict | None:
+    with connect() as con:
+        return _row(con.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone())
+
+
+def list_sessions(limit: int = 100) -> list[dict]:
+    with connect() as con:
+        return [_row(r) for r in con.execute("SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()]
+
+
+def update_session(sid: str, title: str | None = None, state: dict | None = None) -> None:
+    with connect() as con:
+        if title is not None:
+            con.execute("UPDATE sessions SET title=?, updated_at=? WHERE id=?", (title, now(), sid))
+        if state is not None:
+            con.execute("UPDATE sessions SET state=?, updated_at=? WHERE id=?", (json.dumps(state), now(), sid))
+
+
+def delete_session(sid: str) -> None:
+    with connect() as con:
+        con.execute("DELETE FROM messages WHERE session_id=?", (sid,))
+        con.execute("DELETE FROM versions WHERE session_id=?", (sid,))
+        con.execute("DELETE FROM sessions WHERE id=?", (sid,))
+
+
+def add_message(sid: str, role: str, kind: str, content: dict) -> dict:
+    with connect() as con:
+        cur = con.execute("INSERT INTO messages (session_id, role, kind, content, created_at) VALUES (?,?,?,?,?)", (sid, role, kind, json.dumps(content, default=str), now()))
+        con.execute("UPDATE sessions SET updated_at=? WHERE id=?", (now(), sid))
+        return _row(con.execute("SELECT * FROM messages WHERE id=?", (cur.lastrowid,)).fetchone())
+
+
+def update_message(mid: int, content: dict) -> None:
+    with connect() as con:
+        con.execute("UPDATE messages SET content=? WHERE id=?", (json.dumps(content, default=str), mid))
+
+
+def get_message(mid: int) -> dict | None:
+    with connect() as con:
+        return _row(con.execute("SELECT * FROM messages WHERE id=?", (mid,)).fetchone())
+
+
+def list_messages(sid: str) -> list[dict]:
+    with connect() as con:
+        return [_row(r) for r in con.execute("SELECT * FROM messages WHERE session_id=? ORDER BY id", (sid,)).fetchall()]
+
+
+def add_version(sid: str, parent_id: int | None, label: str, draft: dict) -> dict:
+    with connect() as con:
+        cur = con.execute("INSERT INTO versions (session_id, parent_id, label, draft, runs, created_at) VALUES (?,?,?,?,?,?)", (sid, parent_id, label, json.dumps(draft, default=str), "[]", now()))
+        return _row(con.execute("SELECT * FROM versions WHERE id=?", (cur.lastrowid,)).fetchone())
+
+
+def get_version(vid: int) -> dict | None:
+    with connect() as con:
+        r = _row(con.execute("SELECT * FROM versions WHERE id=?", (vid,)).fetchone())
+    if r is not None and not isinstance(r.get("runs"), list):
+        r["runs"] = []
+    return r
+
+
+def list_versions(sid: str) -> list[dict]:
+    with connect() as con:
+        out = [_row(r) for r in con.execute("SELECT * FROM versions WHERE session_id=? ORDER BY id", (sid,)).fetchall()]
+    for r in out:
+        if not isinstance(r.get("runs"), list):
+            r["runs"] = []
+    return out
+
+
+def set_version_runs(vid: int, runs: list) -> None:
+    with connect() as con:
+        con.execute("UPDATE versions SET runs=? WHERE id=?", (json.dumps(runs, default=str), vid))

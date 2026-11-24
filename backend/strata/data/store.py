@@ -43,7 +43,8 @@ OPTION_SCHEMA: dict[str, pl.DataType] = {
     "underlying_price": pl.Float64,
     "quote_ts": pl.Datetime("us", "UTC"),
 }
-OPTION_REQUIRED = ["ts", "expiration", "strike", "right", "bid", "ask"]
+OPTION_REQUIRED = ["ts", "expiration", "strike", "right"]  # plus bid+ask (quotes) or last (trade prints)
+INTRADAY_RES = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "60m": 3600}
 
 BAR_SCHEMA: dict[str, pl.DataType] = {
     "ts": pl.Datetime("us", "UTC"),
@@ -89,9 +90,18 @@ KNOWN_SPECS = {
     "NDX": dict(kind="index", exercise="european", settlement="cash", settlement_time="AM_MONTHLY", vol_index="VXN"),
     "RUT": dict(kind="index", exercise="european", settlement="cash", settlement_time="AM_MONTHLY", vol_index="RVX"),
     "VIX": dict(kind="volatility_index", exercise="european", settlement="cash", has_options=False),
-    "SPY": dict(kind="etf", vol_index="VIX"),
-    "QQQ": dict(kind="etf", vol_index="VXN"),
-    "IWM": dict(kind="etf", vol_index="RVX"),
+    "SPY": dict(kind="etf", vol_index="VIX", name="SPDR S&P 500 ETF"),
+    "QQQ": dict(kind="etf", vol_index="VIX", name="Invesco QQQ Trust"),
+    "IWM": dict(kind="etf", vol_index="VIX", name="iShares Russell 2000 ETF"),
+    "DIA": dict(kind="etf", vol_index="VIX", name="SPDR Dow Jones ETF"),
+    "AAPL": dict(kind="equity", vol_index="VIX", name="Apple"),
+    "NVDA": dict(kind="equity", vol_index="VIX", name="NVIDIA"),
+    "TSLA": dict(kind="equity", vol_index="VIX", name="Tesla"),
+    "MSFT": dict(kind="equity", vol_index="VIX", name="Microsoft"),
+    "AMZN": dict(kind="equity", vol_index="VIX", name="Amazon"),
+    "META": dict(kind="equity", vol_index="VIX", name="Meta Platforms"),
+    "GOOGL": dict(kind="equity", vol_index="VIX", name="Alphabet"),
+    "AMD": dict(kind="equity", vol_index="VIX", name="AMD"),
 }
 
 
@@ -108,6 +118,11 @@ class MarketStore:
 
     def minute_path(self, sym: str, year: int) -> Path:
         return self._p("underlying", sym, f"{year}.parquet")
+
+    def bars_path(self, sym: str, res: str, year: int) -> Path:
+        if res == "1m":
+            return self.minute_path(sym, year)
+        return self._p("bars", res, sym, f"{year}.parquet")
 
     def daily_path(self, sym: str) -> Path:
         return self._p("daily", f"{sym}.parquet")
@@ -144,7 +159,7 @@ class MarketStore:
         import shutil
 
         with self._lock:
-            for p in [self._p("underlying", sym), self._p("options", sym)]:
+            for p in [self._p("underlying", sym), self._p("options", sym)] + [self._p("bars", r, sym) for r in INTRADAY_RES if r != "1m"]:
                 if p.exists():
                     shutil.rmtree(p)
             for p in [self.daily_path(sym), self.iv_path(sym), self._p("manifests", f"{sym}.json"), self._p("corporate_actions", f"{sym}.parquet")]:
@@ -181,6 +196,124 @@ class MarketStore:
                 out.append(p)
         return out
 
+    def write_bars(self, sym: str, res: str, df: pl.DataFrame) -> int:
+        """Intraday bars at resolution `res` (bar START time). Merges/dedupes by ts."""
+        if res not in INTRADAY_RES:
+            raise ValueError(f"unsupported resolution {res}")
+        df = self._conform(df, BAR_SCHEMA, ["ts", "open", "high", "low", "close"]).drop_nulls(["open", "high", "low", "close"])
+        n = 0
+        with self._lock:
+            for (yr,), part in df.with_columns(pl.col("ts").dt.year().alias("_y")).partition_by("_y", as_dict=True).items():
+                p = self.bars_path(sym, res, int(yr))
+                p.parent.mkdir(parents=True, exist_ok=True)
+                part = part.drop("_y")
+                if p.exists():
+                    part = pl.concat([pl.read_parquet(p), part]).unique(subset=["ts"], keep="last")
+                part.sort("ts").write_parquet(p, compression="zstd")
+                n += part.height
+        return n
+
+    def read_bars(self, sym: str, res: str, start: date | None = None, end: date | None = None) -> pl.DataFrame:
+        if res == "1m":
+            return self.read_minutes(sym, start, end)
+        d = self._p("bars", res, sym)
+        files = sorted(d.glob("*.parquet")) if d.exists() else []
+        files = [f for f in files if (not start or int(f.stem) >= start.year) and (not end or int(f.stem) <= end.year)]
+        if not files:
+            return pl.DataFrame(schema=BAR_SCHEMA)
+        df = pl.concat([pl.read_parquet(f) for f in files]).sort("ts")
+        et_date = pl.col("ts").dt.convert_time_zone("America/New_York").dt.date()
+        if start:
+            df = df.filter(et_date >= start)
+        if end:
+            df = df.filter(et_date <= end)
+        return df
+
+    def bar_resolutions(self, sym: str) -> list[str]:
+        out = []
+        if self._p("underlying", sym).exists() and any(self._p("underlying", sym).glob("*.parquet")):
+            out.append("1m")
+        for res in ("5m", "15m", "30m", "60m"):
+            d = self._p("bars", res, sym)
+            if d.exists() and any(d.glob("*.parquet")):
+                out.append(res)
+        return out
+
+    def read_best_bars(self, sym: str, start: date | None = None, end: date | None = None) -> pl.DataFrame:
+        """Finest stored bars per session: 1m > 5m > 15m > 30m > 60m > daily. Returns
+        ts (bar start), end (bar end), OHLCV and res (seconds). A session only covered by
+        a daily bar becomes one bar spanning the whole session."""
+        from strata.core import calendar as cal
+        frames, taken = [], None
+        for res in self.bar_resolutions(sym):
+            b = self.read_bars(sym, res, start, end)
+            if b.is_empty():
+                continue
+            b = b.with_columns(pl.col("ts").dt.convert_time_zone("America/New_York").dt.date().alias("_d"))
+            if taken is not None:
+                b = b.filter(~pl.col("_d").is_in(taken.implode()))
+            if b.is_empty():
+                continue
+            days = b["_d"].unique()
+            taken = days if taken is None else pl.concat([taken, days])
+            closes = {d: cal.session_bounds(d)[1] for d in days.to_list()}
+            cmap = pl.DataFrame({"_d": list(closes), "_close": list(closes.values())}).with_columns(pl.col("_close").dt.convert_time_zone("UTC").cast(pl.Datetime("us", "UTC")))
+            secs = INTRADAY_RES[res]
+            b = b.join(cmap, on="_d").with_columns(pl.min_horizontal(pl.col("ts") + pl.duration(seconds=secs), pl.col("_close")).alias("end"), pl.lit(secs, dtype=pl.Int32).alias("res"))
+            frames.append(b.filter(pl.col("ts") < pl.col("_close")).drop("_close"))
+        dd = self.read_daily(sym) if self.daily_path(sym).exists() else pl.DataFrame(schema=DAILY_SCHEMA)
+        if not dd.is_empty():
+            if start:
+                dd = dd.filter(pl.col("date") >= start)
+            if end:
+                dd = dd.filter(pl.col("date") <= end)
+            if taken is not None:
+                dd = dd.filter(~pl.col("date").is_in(taken.implode()))
+            dd = dd.drop_nulls(["open", "high", "low", "close"])
+            if not dd.is_empty():
+                bounds = [cal.session_bounds(x) for x in dd["date"].to_list()]
+                frames.append(dd.with_columns(
+                    pl.Series("ts", [b[0] for b in bounds]).dt.convert_time_zone("UTC").cast(pl.Datetime("us", "UTC")),
+                    pl.Series("end", [b[1] for b in bounds]).dt.convert_time_zone("UTC").cast(pl.Datetime("us", "UTC")),
+                    pl.lit(86400, dtype=pl.Int32).alias("res"), pl.col("date").alias("_d")).drop("date"))
+        if not frames:
+            return pl.DataFrame(schema={**BAR_SCHEMA, "end": pl.Datetime("us", "UTC"), "res": pl.Int32})
+        cols = ["ts", "end", "open", "high", "low", "close", "volume", "res"]
+        return pl.concat([f.select([pl.col(c).cast(pl.Float64) if c in ("open", "high", "low", "close", "volume") else pl.col(c) for c in cols]) for f in frames]).sort("ts")
+
+    def official_closes(self, sym: str, start: date | None = None, end: date | None = None) -> pl.DataFrame | None:
+        """Daily closes (date, close) from the daily record, or None when no daily file is stored."""
+        if not self.daily_path(sym).exists():
+            return None
+        d = self.read_daily(sym).select("date", "close").drop_nulls().sort("date")
+        if start:
+            d = d.filter(pl.col("date") >= start)
+        if end:
+            d = d.filter(pl.col("date") <= end)
+        return d
+
+    def note_source(self, sym: str, kind: str, provider: str, resolution: str, license: str = "", quote_type: str = "", url: str = "") -> None:
+        """Record where a dataset came from (shown in the coverage matrix)."""
+        with self._lock:
+            m = self.symbols().get(sym) or self.symbol_meta(sym)
+            src = dict(m.extra.get("sources") or {})
+            src[f"{kind}:{resolution}"] = {"provider": provider, "kind": kind, "resolution": resolution, "license": license, "quote_type": quote_type, "url": url,
+                                           "updated": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+            m.extra = {**m.extra, "sources": src}
+            if m.provider in ("import", "") or kind == "options":
+                m.provider = provider
+            self.upsert_symbol(m)
+
+    def split_factor(self, sym: str, d: date) -> float:
+        """Product of split ratios with ex-date after d (vendor prices are split-adjusted
+        to today; multiply by this to get as-traded prices on session d)."""
+        ca = self.read_corporate_actions(sym)
+        f = 1.0
+        for r in ca.iter_rows(named=True):
+            if r["action"] == "split" and r["ratio"] and r["ex_date"] > d:
+                f *= float(r["ratio"])
+        return f
+
     def write_daily(self, sym: str, df: pl.DataFrame) -> Path:
         df = self._conform(df, DAILY_SCHEMA, ["date", "open", "high", "low", "close"])
         p = self.daily_path(sym)
@@ -192,6 +325,8 @@ class MarketStore:
         return p
 
     def write_option_day(self, sym: str, d: date, df: pl.DataFrame) -> Path:
+        if not (("bid" in df.columns and "ask" in df.columns) or "last" in df.columns):
+            raise ValueError("option data needs bid+ask quotes or last trade prices")
         df = self._conform(df, OPTION_SCHEMA, OPTION_REQUIRED)
         df = df.with_columns(pl.col("right").str.to_uppercase().str.slice(0, 1))
         p = self.option_path(sym, d)
@@ -276,7 +411,8 @@ class MarketStore:
     # ---------- manifests / dataset versions ----------
     def _files_for(self, sym: str) -> list[Path]:
         files = []
-        for sub in [self._p("underlying", sym), self._p("options", sym)]:
+        subs = [self._p("underlying", sym), self._p("options", sym)] + [self._p("bars", r, sym) for r in INTRADAY_RES if r != "1m"]
+        for sub in subs:
             if sub.exists():
                 files += sorted(sub.rglob("*.parquet"))
         for p in [self.daily_path(sym), self.iv_path(sym), self._p("corporate_actions", f"{sym}.parquet")]:

@@ -75,7 +75,7 @@ STRATEGY = {
 
 
 def cfg(start="2024-02-01", end="2024-04-30"):
-    return {"start": start, "end": end, "strategies": [STRATEGY], "execution": {"max_quote_age_seconds": 3600}}
+    return {"start": start, "end": end, "strategies": [STRATEGY], "allow_synthetic": True, "execution": {"max_quote_age_seconds": 3600}}
 
 
 def entry_sig(t):
@@ -114,7 +114,7 @@ def test_reproducible(synth_store):
 
 def test_entry_times_survive_dst_and_holidays(synth_store):
     s = dict(STRATEGY, entry={"conditions": {"kind": "group", "children": [{"kind": "cond", "type": "entry_times", "params": {"times": "10:00"}}]}})
-    res = run_backtest({"start": "2024-03-04", "end": "2024-04-05", "strategies": [s]}, store=synth_store, record_paths=False)
+    res = run_backtest({"start": "2024-03-04", "end": "2024-04-05", "strategies": [s], "allow_synthetic": True}, store=synth_store, record_paths=False)
     assert res.trades
     assert {t["entry_time"][11:16] for t in res.trades} == {"10:00"}
     days = {t["entry_date"] for t in res.trades}

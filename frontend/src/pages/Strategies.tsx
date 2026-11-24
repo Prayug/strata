@@ -9,7 +9,7 @@ import { DataTable, Empty, Loading, PageHeader, Panel, Pnl, type Col } from "@/c
 import { Button, Input } from "@/components/ui";
 import { api, queryClient } from "@/lib/api";
 import { ago, cn, money, num, pct } from "@/lib/format";
-import { useBuilder } from "@/lib/store";
+import { useBuilder, usesSandbox } from "@/lib/store";
 
 export default function Strategies() {
   const nav = useNavigate();
@@ -22,7 +22,7 @@ export default function Strategies() {
   const del = useMutation({ mutationFn: (id: string) => api.del(`/api/strategies/${id}`), onSuccess: inv });
   const seed = useMutation({ mutationFn: () => api.post<any[]>("/api/strategies/examples"), onSuccess: (r) => { inv(); toast.success(`Added ${r.length} example strategies`); } });
   const run = useMutation({
-    mutationFn: (s: any) => api.post<{ id: string }>("/api/backtests", { config: { ...useBuilder.getState().backtestConfig(), strategies: [s.config], label: s.name }, strategy_id: s.id }),
+    mutationFn: (s: any) => api.post<{ id: string }>("/api/backtests", { config: { ...useBuilder.getState().backtestConfig(), strategies: [s.config], label: s.name, allow_synthetic: usesSandbox([s.config]) }, strategy_id: s.id }),
     onSuccess: (r) => nav(`/results/${r.id}`), onError: (e: any) => toast.error(e.message),
   });
   const rows = (list.data || []).filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase()) || s.symbol.toLowerCase().includes(q.toLowerCase()));

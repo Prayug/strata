@@ -1,8 +1,8 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Blocks, ChevronRight, Copy, FilePlus2, Play, Save, Sigma, Briefcase } from "lucide-react";
+import { AlertTriangle, Blocks, ChevronRight, Copy, FilePlus2, Play, Save, Sigma, Briefcase, FolderOpen } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Group, Panel as RPanel, Separator } from "react-resizable-panels";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ErrorBox } from "@/components/common";
 import { Button, Input, Kbd, Menu, MenuContent, MenuItem, MenuLabel, MenuSep, MenuTrigger, Select, Tip } from "@/components/ui";
@@ -33,8 +33,19 @@ export default function Builder() {
   const b = useBuilder();
   const { strategy: s, setStrategy, load, patch } = b;
   const [section, setSection] = useState<Section>("legs");
-  const catalog = useQuery({ queryKey: ["catalog"], queryFn: () => api.get<any[]>("/api/data/catalog") });
-  const symbols = (catalog.data || []).filter((c) => c.options).map((c) => c.symbol);
+  const cov = useQuery({ queryKey: ["coverage"], queryFn: () => api.get<any[]>("/api/data/coverage") });
+  // real symbols first; simulated sandbox symbols last and labelled
+  const tradable = (cov.data || []).filter((c) => c.kind !== "vol_index" && c.symbol !== "VIX" && (c.daily || Object.keys(c.intraday || {}).length || c.options));
+  const symbolOpts = [...tradable.filter((c) => !c.synthetic), ...tradable.filter((c) => c.synthetic)].map((c) => ({ value: c.symbol as string, label: c.synthetic ? `${c.symbol} (simulated)` : (c.symbol as string) }));
+  const symRow = (cov.data || []).find((c) => c.symbol === s.symbol);
+  const tpl = useQuery({ queryKey: ["templates", s.symbol], queryFn: () => api.get<{ symbol: string; eod: boolean; templates: NonNullable<typeof meta>["templates"] }>(`/api/templates?symbol=${s.symbol}`), staleTime: 60_000 });
+  const modeled = (b.pricing?.mode || "historical") === "modeled";
+  const entryTimes = (function walk(n: any): string[] { return n.kind === "cond" ? (n.type === "entry_times" && n.enabled !== false ? String(n.params?.times || "").split(/[,;]/).map((x: string) => x.trim()).filter(Boolean) : []) : (n.children || []).flatMap(walk); })(s.entry.conditions);
+  const dataHint = !symRow ? `No data is stored for ${s.symbol}. Download it under Data - nothing is simulated in its place.`
+    : modeled ? null
+      : !symRow.options ? `No option quotes are stored for ${s.symbol}: a historical backtest cannot run. Download chains under Data, or switch Option prices to Modeled (estimates).`
+        : symRow.options.resolution === "EOD" && (entryTimes.some((t) => t !== "close" && t !== "16:00") || s.legs.some((l) => (l.kind || "option") === "option" && l.dte === 0))
+          ? `${s.symbol} option quotes are end-of-day only: entries must be at the close and 0DTE legs cannot be traded. Orders at other times expire unfilled and are reported.` : null;
 
   // load a saved strategy from ?strategy=
   useEffect(() => {
@@ -94,9 +105,9 @@ export default function Builder() {
 
   const templatesByCat = useMemo(() => {
     const m: Record<string, NonNullable<typeof meta>["templates"]> = {};
-    for (const t of meta?.templates || []) (m[t.category] ||= []).push(t);
+    for (const t of tpl.data?.templates || meta?.templates || []) (m[t.category] ||= []).push(t);
     return m;
-  }, [meta]);
+  }, [meta, tpl.data]);
 
   const ex = s.exits;
   const exitBits = [ex.profit_target.enabled && `PT ${ex.profit_target.value}${ex.profit_target.mode === "pct" ? "%" : "$"}`, ex.stop_loss.enabled && `SL ${ex.stop_loss.value}${ex.stop_loss.mode === "pct" ? "%" : "$"}`,
@@ -115,7 +126,8 @@ export default function Builder() {
         <Blocks className="size-4 text-accent" />
         <Input className="h-7 w-64 bg-transparent border-transparent hover:border-line-2 text-sm font-semibold" value={s.name} onChange={(e) => setStrategy((x) => { x.name = e.target.value; })} />
         {b.dirty && <span className="text-2xs text-warn">● unsaved</span>}
-        <Select className="w-24" value={s.symbol} onChange={(v) => setStrategy((x) => { x.symbol = v; })} options={symbols.length ? (symbols.includes(s.symbol) ? symbols : [s.symbol, ...symbols]) : [s.symbol]} />
+        <Select className="w-32" value={s.symbol} onChange={(v) => setStrategy((x) => { x.symbol = v; })} options={symbolOpts.some((o) => o.value === s.symbol) ? symbolOpts : [{ value: s.symbol, label: s.symbol }, ...symbolOpts]} />
+        {modeled && <span className="rounded-[2px] border border-warn/60 bg-warn/10 px-1.5 py-px text-[10px] font-semibold tracking-wider text-warn">MODELED PREMIUMS</span>}
         <Menu>
           <MenuTrigger asChild><Button><FilePlus2 /> Template</Button></MenuTrigger>
           <MenuContent align="start" className="max-h-[70vh] overflow-auto w-72">
@@ -142,6 +154,7 @@ export default function Builder() {
         <Menu>
           <MenuTrigger asChild><Button variant="ghost">More</Button></MenuTrigger>
           <MenuContent align="end">
+            <MenuItem onSelect={() => nav("/strategies")}><FolderOpen /> Saved strategies</MenuItem>
             <MenuItem onSelect={() => save.mutate(true)}><Copy /> Save as new strategy</MenuItem>
             <MenuItem onSelect={() => nav("/optimize?from=builder")}><Sigma /> Optimise these parameters</MenuItem>
             <MenuItem onSelect={() => nav("/portfolio?add=builder")}><Briefcase /> Add to portfolio test</MenuItem>
@@ -152,6 +165,7 @@ export default function Builder() {
           <Button variant="primary" onClick={() => run.mutate()} disabled={run.isPending || validation.data?.ok === false}><Play /> Run backtest</Button>
         </Tip>
       </div>
+      {dataHint && <div className="flex shrink-0 items-center gap-2 border-b border-warn/30 bg-warn/[0.06] px-3 py-1 text-2xs text-warn"><AlertTriangle className="size-3 shrink-0" />{dataHint}<Link to="/data" className="ml-1 underline">Data</Link></div>}
       <Group orientation="horizontal" className="min-h-0 flex-1">
         <RPanel defaultSize="17%" minSize="12%" maxSize="28%" className="bg-bg-1">
           <div className="flex h-full flex-col overflow-auto">

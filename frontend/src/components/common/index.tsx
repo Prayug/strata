@@ -62,9 +62,9 @@ export function Loading({ label = "Loading", className }: { label?: string; clas
 export function SyntheticBadge({ on, className }: { on?: boolean | number | null; className?: string }) {
   if (!on) return null;
   return (
-    <Tip content="Results computed on the SYNTHETIC demonstration dataset (simulated prices, not market history).">
+    <Tip content="Computed on SIMULATED sandbox symbols (generated prices, not market history).">
       <span className={cn("inline-flex items-center gap-1 rounded-[2px] border border-synth/50 bg-synth/10 px-1.5 h-4 text-[10px] font-semibold tracking-wider text-synth", className)}>
-        <FlaskConical className="size-2.5" /> SYNTHETIC
+        <FlaskConical className="size-2.5" /> SIMULATED
       </span>
     </Tip>
   );

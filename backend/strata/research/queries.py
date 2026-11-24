@@ -345,7 +345,7 @@ class Research:
                 "stats": {"welch_t_abs_ret_event_vs_other": float(t.statistic) if t is not None else None, "p_value": float(t.pvalue) if t is not None else None},
                 "charts": [{"type": "bar", "title": "Front ATM IV at close and day-over-day change", "x": [r["bucket"] for r in rows], "series": [{"name": "front IV %", "data": [r["front_iv_close"] for r in rows]}, {"name": "IV change (pts)", "data": [r["iv_change"] for r in rows]}]},
                            {"type": "bar_ci", "title": "Mean |close-to-close return| (%)", "x": [r["bucket"] for r in rows], "series": [{"name": "|ret|", "data": [r["mean_abs_ret"] for r in rows], "ci": [r["abs_ret_ci95"] for r in rows]}]}],
-                "notes": ["Event dates come from the events table (synthetic schedule for DEMO data; import a real calendar CSV for real symbols).", "IV crush shows as a negative IV change on the event day for pre-market releases."]}
+                "notes": ["Event dates come from the events table (import an economic-calendar CSV for real symbols; sandbox symbols use a simulated schedule).", "IV crush shows as a negative IV change on the event day for pre-market releases."]}
 
     def conditional(self, symbol: str, target: str = "oc_ret", start=None, end=None, filters=None, **_):
         d = self.day_table(symbol, start, end)

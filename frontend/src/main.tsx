@@ -2,19 +2,20 @@ import "./index.css";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import { Toaster } from "sonner";
 import { Loading } from "@/components/common";
 import { Shell } from "@/components/Shell";
 import { TooltipProvider } from "@/components/ui";
 import { queryClient } from "@/lib/api";
 
-const Overview = lazy(() => import("@/pages/Overview"));
+const AiLab = lazy(() => import("@/pages/ailab/AiLab"));
+const Explorer = lazy(() => import("@/pages/Explorer"));
+const Settings = lazy(() => import("@/pages/Settings"));
 const Builder = lazy(() => import("@/pages/builder/Builder"));
 const Results = lazy(() => import("@/pages/results/Results"));
 const Replay = lazy(() => import("@/pages/Replay"));
 const Optimize = lazy(() => import("@/pages/Optimize"));
-const Research = lazy(() => import("@/pages/Research"));
 const Portfolio = lazy(() => import("@/pages/Portfolio"));
 const Strategies = lazy(() => import("@/pages/Strategies"));
 const DataPage = lazy(() => import("@/pages/DataPage"));
@@ -26,7 +27,10 @@ const router = createBrowserRouter([
     path: "/",
     element: <Shell />,
     children: [
-      { index: true, element: S(<Overview />) },
+      { index: true, element: S(<AiLab />) },
+      { path: "lab/:sid", element: S(<AiLab />) },
+      { path: "explore", element: S(<Explorer />) },
+      { path: "settings", element: S(<Settings />) },
       { path: "builder", element: S(<Builder />) },
       { path: "results", element: S(<Results />) },
       { path: "results/:id", element: S(<Results />) },
@@ -34,7 +38,7 @@ const router = createBrowserRouter([
       { path: "replay/:id/:tid", element: S(<Replay />) },
       { path: "optimize", element: S(<Optimize />) },
       { path: "optimize/:id", element: S(<Optimize />) },
-      { path: "research", element: S(<Research />) },
+      { path: "research", element: <Navigate to="/explore" replace /> },
       { path: "portfolio", element: S(<Portfolio />) },
       { path: "portfolio/:id", element: S(<Portfolio />) },
       { path: "strategies", element: S(<Strategies />) },

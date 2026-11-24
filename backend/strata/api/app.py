@@ -72,10 +72,50 @@ def meta():
     from strata.research.queries import FILTER_FIELDS, TARGETS, TEMPLATES
     return J({
         "conditions": LEAF_TYPES, "indicators": INDICATORS, "indicator_names": INDICATOR_NAMES, "timeframes": TIMEFRAMES, "features": OPERAND_FEATURES,
-        "templates": templates(), "objectives": OBJECTIVES, "research": TEMPLATES, "research_targets": TARGETS, "research_filters": FILTER_FIELDS,
+        "templates": templates(*_template_args()), "objectives": OBJECTIVES, "research": TEMPLATES, "research_targets": TARGETS, "research_filters": FILTER_FIELDS,
         "providers": [{"name": k, "label": v.label, "docs": v.docs, "resolution": v.resolution} for k, v in PROVIDERS.items()],
         "execution_defaults": Execution().model_dump(), "engine_version": ENGINE_VERSION,
+        "expressions": _expr_reference(), "default_symbol": _default_symbol(), "pricing_defaults": __import__("strata.engine.models", fromlist=["Pricing"]).Pricing().model_dump(),
     })
+
+
+def _template_args(symbol: str | None = None) -> tuple[str, bool, float]:
+    """(symbol, option data is end-of-day?, strike-width scale) for building presets on stored data."""
+    from strata.data.catalog import profile
+    s = store()
+    sym = symbol or _default_symbol()
+    prof = profile(s, sym) or {}
+    opt = prof.get("options") or {}
+    eod = opt.get("resolution") == "EOD" or not opt
+    spot = None
+    try:
+        d = s.read_daily(sym)
+        spot = float(d["close"][-1]) if not d.is_empty() else None
+    except Exception:  # noqa: BLE001
+        pass
+    scale = 1.0 if not spot else (10.0 if spot >= 2500 else 1.0 if spot >= 150 else 0.5 if spot >= 60 else 0.2)
+    return sym, eod, scale
+
+
+@app.get("/api/templates")
+def templates_for(symbol: Optional[str] = None):
+    from strata.engine.templates import templates
+    sym, eod, scale = _template_args(symbol.upper() if symbol else None)
+    return J({"symbol": sym, "eod": eod, "templates": templates(sym, eod, scale)})
+
+
+def _expr_reference() -> list[dict]:
+    from strata.engine.expr import REGISTRY
+    return [{"name": k, **v} for k, v in REGISTRY.items()]
+
+
+def _default_symbol() -> str:
+    """Preferred real symbol that is actually stored; never a synthetic one unless nothing else exists."""
+    from strata.api.settings import get_setting
+    syms = store().symbols()
+    real = [k for k, m in syms.items() if not m.synthetic and (store().daily_path(k).exists())]
+    pref = [str(get_setting("data.default_symbol") or "SPY"), "SPY", "QQQ", "IWM", "SPX", "AAPL", "NVDA", "TSLA"]
+    return next((x for x in pref if x in real and x not in ("VIX",)), next((x for x in real if x != "VIX"), pref[0]))
 
 
 @app.get("/api/overview")
@@ -83,12 +123,16 @@ def overview():
     from strata.data.catalog import catalog
     cat = catalog(store())
     runs = db.list_runs(limit=12)
+
+    def span(c):
+        o, d = c.get("options"), c.get("daily") or c.get("underlying")
+        return (o or d or {}).get("first"), (o or d or {}).get("last")
     return J({
         "symbols": [{"symbol": c["symbol"], "synthetic": c["meta"].get("synthetic"), "provider": c["meta"].get("provider"), "has_options": "options" in c,
-                     "first": (c.get("options") or c.get("underlying") or {}).get("first"), "last": (c.get("options") or c.get("underlying") or {}).get("last"),
-                     "storage_bytes": c.get("storage_bytes")} for c in cat],
+                     "first": span(c)[0], "last": span(c)[1], "storage_bytes": c.get("storage_bytes")} for c in cat],
         "recent_runs": runs, "strategies": len(db.list_strategies()), "active_jobs": jobs.active() if jobs else [],
-        "storage_bytes": store().storage_bytes(), "engine_version": ENGINE_VERSION,
+        "storage_bytes": store().storage_bytes(), "engine_version": ENGINE_VERSION, "default_symbol": _default_symbol(),
+        "has_real_data": any(not c["meta"].get("synthetic") and (c.get("daily") or c.get("underlying")) for c in cat),
     })
 
 
@@ -118,26 +162,44 @@ def data_delete(sym: str):
 
 @app.get("/api/data/candles/{sym}")
 def candles(sym: str, start: Optional[date] = None, end: Optional[date] = None, tf: str = "1d", limit: int = 5000):
+    """OHLCV bars. Intraday requests are served from the finest stored resolution at or below
+    the requested timeframe; if only coarser bars exist they are returned as-is and labelled."""
+    from strata.data.store import INTRADAY_RES
     s = store()
+    daily = s.read_daily(sym)
     if tf == "1d":
-        d = s.read_daily(sym)
+        d = daily
         if start:
             d = d.filter(pl.col("date") >= start)
         if end:
             d = d.filter(pl.col("date") <= end)
         d = d.tail(limit)
-        return {"tf": tf, "bars": [[int(datetime(x.year, x.month, x.day).timestamp()), o, h, l, c, v] for x, o, h, l, c, v in d.select(["date", "open", "high", "low", "close", "volume"]).rows()]}
-    mins = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}[tf]
-    end = end or (s.read_daily(sym)["date"].max() if not s.read_daily(sym).is_empty() else date.today())
-    start = start or end - timedelta(days=5 if mins <= 5 else 30)
-    m = s.read_minutes(sym, start, end)
+        return {"tf": tf, "served": "1d", "bars": [[int(datetime(x.year, x.month, x.day).timestamp()), o, h, l, c, v] for x, o, h, l, c, v in d.select(["date", "open", "high", "low", "close", "volume"]).rows()]}
+    want = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "60m": 3600}.get(tf)
+    if want is None:
+        raise HTTPException(422, f"unknown timeframe {tf}")
+    have = s.bar_resolutions(sym)
+    finer = [r for r in have if INTRADAY_RES[r] <= want]
+    src = max(finer, key=lambda r: INTRADAY_RES[r]) if finer else (min(have, key=lambda r: INTRADAY_RES[r]) if have else None)
+    if src is None:
+        return {"tf": tf, "served": None, "bars": [], "note": f"No intraday bars are stored for {sym}."}
+    full = s.read_bars(sym, src)
+    last = full["ts"].max().date() if not full.is_empty() else date.today()
+    end = end or last
+    start = start or end - timedelta(days=5 if want <= 300 else 45)
+    m = s.read_bars(sym, src, start, end)
     if m.is_empty():
-        return {"tf": tf, "bars": []}
+        return {"tf": tf, "served": src, "bars": []}
     m = m.with_columns(pl.col("ts").dt.epoch("s").alias("t"))
-    if mins > 1:
-        m = m.with_columns((pl.col("t") // (mins * 60) * (mins * 60)).alias("t")).group_by("t", maintain_order=True).agg(
+    if want > INTRADAY_RES[src]:
+        # bucket from each session's open so 30-minute bars start at 09:30, not on the hour
+        m = m.with_columns(pl.col("ts").dt.convert_time_zone("America/New_York").alias("et")).with_columns(
+            (pl.col("et").dt.hour().cast(pl.Int32) * 3600 + pl.col("et").dt.minute().cast(pl.Int32) * 60 - 34200).alias("so"))
+        m = m.with_columns((pl.col("t") - pl.col("so") % want).alias("t")).group_by("t", maintain_order=True).agg(
             pl.col("open").first(), pl.col("high").max(), pl.col("low").min(), pl.col("close").last(), pl.col("volume").sum())
-    return {"tf": tf, "bars": m.select(["t", "open", "high", "low", "close", "volume"]).tail(limit).rows()}
+    served = src if want <= INTRADAY_RES[src] else tf
+    note = f"{tf} bars are not stored for {sym}; showing {src} bars." if INTRADAY_RES[src] > want else None
+    return {"tf": tf, "served": served, "source_resolution": src, "note": note, "bars": m.select(["t", "open", "high", "low", "close", "volume"]).tail(limit).rows()}
 
 
 @app.get("/api/data/chain/{sym}")
@@ -220,7 +282,8 @@ class DemoReq(BaseModel):
 
 @app.post("/api/data/demo")
 def demo(req: DemoReq):
-    rid = db.create_run("demo_data", "generate SYNTHETIC demo dataset", req.model_dump(mode="json"))
+    """Developer sandbox only: generates SIMULATED symbols (DEMO, DEMOX). Never started automatically."""
+    rid = db.create_run("demo_data", "Developer sandbox: generate SIMULATED symbols", req.model_dump(mode="json"))
     jobs.submit(rid, "demo_data", req.model_dump(mode="json"))
     return {"id": rid}
 
@@ -237,6 +300,310 @@ def storage():
     cache = get_settings().cache_dir
     return {"market": parts, "results": sum(f.stat().st_size for f in res.rglob("*") if f.is_file()) if res.exists() else 0,
             "cache": sum(f.stat().st_size for f in cache.rglob("*") if f.is_file()) if cache.exists() else 0, "data_dir": str(get_settings().data_dir)}
+
+
+# ======================================================================= free data sources
+@app.get("/api/data/sources")
+def data_sources():
+    from strata.data.providers.sources import SOURCES
+    return J([cls(store()).info() for cls in SOURCES.values()])
+
+
+class SourceReq(BaseModel):
+    source: str
+    dataset: str
+    symbols: list[str] = []
+    start: Optional[date] = None
+    end: Optional[date] = None
+    force: bool = False
+
+
+@app.post("/api/data/sources/plan")
+def data_source_plan(req: SourceReq):
+    """Coverage and size estimate before anything is downloaded."""
+    from strata.data.providers.sources import SourceError, get_source
+    try:
+        return J(get_source(req.source, store()).plan(req.dataset, [x.upper() for x in req.symbols], req.start, req.end))
+    except SourceError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/data/sources/ingest")
+def data_source_ingest(req: SourceReq):
+    from strata.data.providers.sources import SOURCES
+    if req.source not in SOURCES:
+        raise HTTPException(404, f"unknown source {req.source}")
+    src = SOURCES[req.source](store())
+    ok, why = src.available()
+    if not ok:
+        raise HTTPException(400, why)
+    if src.tier == "paid":
+        raise HTTPException(400, "Paid sources are never started automatically; use the provider's own controls.")
+    payload = req.model_dump(mode="json")
+    rid = db.create_run("source_ingest", f"{src.label}: {req.dataset} {' '.join(req.symbols)}".strip(), payload)
+    jobs.submit(rid, "source_ingest", payload)
+    return {"id": rid}
+
+
+class QuickReq(BaseModel):
+    symbols: list[str] = ["SPY", "QQQ", "IWM"]
+    intraday: bool = True
+
+
+@app.post("/api/data/quickstart")
+def data_quickstart(req: QuickReq):
+    """Free, keyless first download: daily history + recent intraday bars + VIX (a few MB)."""
+    payload = req.model_dump()
+    rid = db.create_run("quickstart", "Free market data: " + ", ".join(req.symbols), payload)
+    jobs.submit(rid, "quickstart", payload)
+    return {"id": rid}
+
+
+@app.get("/api/data/verify/{sym}")
+def data_verify(sym: str):
+    from strata.data.providers.sources import SourceError, verify_daily
+    try:
+        return J(verify_daily(store(), sym.upper()))
+    except SourceError as e:
+        raise HTTPException(502, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"{type(e).__name__}: {e}")
+
+
+@app.get("/api/data/coverage")
+def data_coverage():
+    """Coverage matrix: one row per symbol, one column per dataset, with what is missing spelled out."""
+    from strata.data.catalog import catalog
+    rows = []
+    for c in catalog(store()):
+        d, intr, o = c.get("daily"), c.get("intraday") or {}, c.get("options")
+        gaps = []
+        if not d:
+            gaps.append("no daily history")
+        if not intr:
+            gaps.append("no intraday bars: time-of-day rules and intraday targets cannot be evaluated")
+        elif "1m" not in intr:
+            gaps.append("no 1-minute bars: entries are limited to times the stored bars can observe")
+        if c["meta"].get("has_options") or o:
+            if not o:
+                gaps.append("no option quotes: only market studies and modeled estimates are possible")
+            elif o["resolution"] == "EOD":
+                gaps.append("option quotes are end-of-day only: no intraday or 0DTE option backtests")
+        rows.append({"symbol": c["symbol"], "synthetic": bool(c["meta"].get("synthetic")), "kind": c["meta"].get("kind"),
+                     "daily": d and {"first": d["first"], "last": d["last"], "sessions": d["sessions"], "missing": d["missing_sessions"], "provider": d.get("provider")},
+                     "intraday": {k: {"first": v["first"], "last": v["last"], "sessions": v["sessions"], "incomplete": v["incomplete_sessions"], "provider": v.get("provider")} for k, v in intr.items()},
+                     "options": o and {"first": o["first"], "last": o["last"], "sessions": o["sessions"], "missing": o["missing_count"], "resolution": o["resolution"], "quote_type": o["quote_type"],
+                                       "provider": o["provider"], "license": o.get("license"), "rows": o["rows"]},
+                     "iv_history": c.get("iv_history"), "storage_bytes": c.get("storage_bytes"), "dataset_version": c.get("dataset_version"), "sources": c.get("sources") or [], "gaps": gaps})
+    return J(rows)
+
+
+# ======================================================================= market studies
+class StudyReq(BaseModel):
+    config: dict
+    name: str = ""
+    force: bool = False
+
+
+@app.post("/api/study/run")
+def study_run(req: StudyReq):
+    from strata.api.launch import launch_study
+    from strata.engine.conditions import validate_tree
+    from strata.research.study import StudyConfig
+    try:
+        cfg = StudyConfig.model_validate(req.config)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(422, str(e))
+    errs = validate_tree(cfg.condition)
+    if errs:
+        raise HTTPException(422, "; ".join(errs))
+    if not store().daily_path(cfg.symbol).exists() and not store().bar_resolutions(cfg.symbol):
+        raise HTTPException(404, f"No historical price data is stored for {cfg.symbol}. Download it under Data; nothing is simulated in its place.")
+    return launch_study(jobs, cfg, req.name, req.force)
+
+
+@app.get("/api/study/session")
+def study_session(symbol: str, day: date, context_days: int = 0):
+    from strata.research.study import session_chart
+    try:
+        return J(session_chart(store(), symbol.upper(), day, context_days))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.get("/api/study/runs")
+def study_runs(limit: int = 100):
+    return J(db.list_runs(kind="study", limit=limit))
+
+
+# ======================================================================= expressions
+@app.post("/api/expr/validate")
+def expr_validate(expr: str = Body(..., embed=True)):
+    from strata.ai.agent import tool_validate_expression
+    return tool_validate_expression(expr)
+
+
+# ======================================================================= settings
+@app.get("/api/settings")
+def settings_get():
+    from strata.ai.llm import status
+    from strata.api.settings import public_settings
+    return J({**public_settings(), "llm": status()})
+
+
+class SettingsReq(BaseModel):
+    settings: dict[str, Any] = {}
+    secrets: dict[str, Optional[str]] = {}
+
+
+@app.put("/api/settings")
+def settings_put(req: SettingsReq):
+    """Keys are write-only: they are stored server-side and never sent back to the browser."""
+    from strata.api.settings import DEFAULTS, SECRETS, set_setting
+    for k, v in req.settings.items():
+        if k not in DEFAULTS:
+            raise HTTPException(422, f"unknown setting {k}")
+        set_setting(k, v)
+    for k, v in req.secrets.items():
+        if k not in SECRETS:
+            raise HTTPException(422, f"unknown secret {k}")
+        set_setting(f"secret.{k}", (v or "").strip() or None)
+    return settings_get()
+
+
+@app.get("/api/settings/ollama")
+def settings_ollama():
+    from strata.ai.llm import ollama_models
+    return {"models": ollama_models()}
+
+
+@app.post("/api/settings/llm/test")
+def settings_llm_test(provider: str = Body(..., embed=True)):
+    """One tiny request to confirm the provider answers. No result or strategy is involved."""
+    from strata.ai.llm import LLMError, build
+    try:
+        m = build(provider)
+        out = m.json("You are a connectivity check.", [{"role": "user", "content": 'Reply with the JSON object {"ok": true}.'}], max_tokens=200)
+        return {"ok": bool(out.get("ok", True)), "model": m.name}
+    except LLMError as e:
+        return {"ok": False, "error": str(e)}
+
+
+# ======================================================================= AI research lab
+def _agent():
+    from strata.ai.agent import Agent
+    return Agent(jobs, store())
+
+
+def _ai(fn):
+    try:
+        return J(fn())
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/api/ai/meta")
+def ai_meta():
+    from strata.ai.llm import status
+    from strata.ai.nl_rules import EXAMPLES, SWEEP_FIELDS
+    return J({"examples": EXAMPLES, "sweep_fields": SWEEP_FIELDS, "llm": status(), "default_symbol": _default_symbol()})
+
+
+@app.get("/api/ai/sessions")
+def ai_sessions():
+    return J(db.list_sessions())
+
+
+@app.post("/api/ai/sessions")
+def ai_session_create(title: str = Body("New research", embed=True)):
+    return J(db.create_session(title[:80] or "New research"))
+
+
+@app.get("/api/ai/sessions/{sid}")
+def ai_session_get(sid: str):
+    return _ai(lambda: _agent().payload(sid))
+
+
+@app.patch("/api/ai/sessions/{sid}")
+def ai_session_rename(sid: str, title: str = Body(..., embed=True)):
+    db.update_session(sid, title=title[:80])
+    return {"ok": True}
+
+
+@app.delete("/api/ai/sessions/{sid}")
+def ai_session_delete(sid: str):
+    db.delete_session(sid)
+    return {"ok": True}
+
+
+@app.post("/api/ai/sessions/{sid}/messages")
+def ai_message(sid: str, text: str = Body(..., embed=True)):
+    return _ai(lambda: {"messages": _agent().post(sid, text)})
+
+
+class AiRunReq(BaseModel):
+    version_id: int
+    mode: str
+
+
+@app.post("/api/ai/sessions/{sid}/run")
+def ai_run(sid: str, req: AiRunReq):
+    return _ai(lambda: {"messages": _agent().run(sid, req.version_id, req.mode)})
+
+
+class AiEditReq(BaseModel):
+    draft: dict
+    run: bool = True
+
+
+@app.post("/api/ai/sessions/{sid}/edit")
+def ai_edit(sid: str, req: AiEditReq):
+    def go():
+        try:
+            return {"messages": _agent().edit(sid, req.draft, req.run)}
+        except Exception as e:  # noqa: BLE001
+            if type(e).__name__ == "ValidationError":
+                raise ValueError(str(e)) from None
+            raise
+    return _ai(go)
+
+
+class AiApplyReq(BaseModel):
+    field: str
+    value: Any
+
+
+@app.post("/api/ai/sessions/{sid}/apply")
+def ai_apply(sid: str, req: AiApplyReq):
+    return _ai(lambda: {"messages": _agent().apply(sid, req.field, req.value)})
+
+
+@app.post("/api/ai/sessions/{sid}/restore")
+def ai_restore(sid: str, version_id: int = Body(..., embed=True)):
+    return _ai(lambda: {"messages": _agent().restore(sid, version_id)})
+
+
+@app.post("/api/ai/sessions/{sid}/finalize")
+def ai_finalize(sid: str):
+    return _ai(lambda: {"messages": _agent().finalize(sid)})
+
+
+@app.post("/api/ai/interpret")
+def ai_interpret(text: str = Body(..., embed=True)):
+    """Stateless preview: how a request is read, what is assumed, and which mode the data supports. Runs nothing."""
+    from strata.ai import nl_rules as NL
+    from strata.ai.draft import assess, compile_draft
+    s = store()
+    r = NL.interpret(text, None, list(s.symbols().keys()))
+    if r["action"] != "new":
+        return {"understood": False}
+    d = r["draft"]
+    compiled = compile_draft(d, s)
+    cover = assess(d, compiled, s)
+    return J({"understood": True, "draft": d.model_dump(mode="json"), "items": compiled["items"], "assumptions": compiled["assumptions"], "missing": compiled["missing"], "errors": compiled["errors"],
+              "coverage": {"modes": cover["modes"], "recommended": cover["recommended"], "messages": cover["messages"]}})
 
 
 # ======================================================================= strategies
@@ -300,7 +667,8 @@ def strategy_examples():
     from strata.engine.templates import examples
     have = {s["name"] for s in db.list_strategies()}
     out = []
-    for ex in examples():
+    sym, eod, _ = _template_args()
+    for ex in examples(sym, eod):
         if ex["name"] in have:
             continue
         cfg = StrategyConfig.model_validate(ex)
@@ -342,16 +710,8 @@ def strategy_preview(req: PreviewReq):
 
 # ======================================================================= backtests
 def _cache_key(cfg: BacktestConfig) -> tuple[str, dict, bool]:
-    s = store()
-    syms = {x.symbol for x in cfg.strategies}
-    for x in cfg.strategies:
-        m = s.symbol_meta(x.symbol)
-        if x.vol_symbol or m.vol_index:
-            syms.add(x.vol_symbol or m.vol_index)
-    vers = {k: s.dataset_version(k) for k in sorted(syms)}
-    synthetic = any(s.symbol_meta(k).synthetic for k in syms)
-    h = hashlib.sha256((cfg.canonical_json() + json.dumps(vers, sort_keys=True) + s.events_version() + ENGINE_VERSION).encode()).hexdigest()[:24]
-    return h, vers, synthetic
+    from strata.api.launch import backtest_cache_key
+    return backtest_cache_key(cfg, store())
 
 
 class BacktestReq(BaseModel):
@@ -367,15 +727,8 @@ def backtest_create(req: BacktestReq):
         cfg = BacktestConfig.model_validate(req.config)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(422, str(e))
-    key, vers, synth = _cache_key(cfg)
-    if not req.force:
-        hit = db.find_cached(key)
-        if hit:
-            return {"id": hit["id"], "cached": True}
-    name = req.name or cfg.label or " + ".join(s.name for s in cfg.strategies)
-    rid = db.create_run("backtest", name, cfg.model_dump(mode="json"), req.strategy_id, key, cfg.config_hash(), vers, ENGINE_VERSION, synth)
-    jobs.submit(rid, "backtest", {"config": cfg.model_dump(mode="json")})
-    return {"id": rid, "cached": False}
+    from strata.api.launch import launch_backtest
+    return launch_backtest(jobs, cfg, req.name, req.strategy_id, req.force)
 
 
 @app.get("/api/backtests")
@@ -392,6 +745,12 @@ def run_get(rid: str):
         try:
             r["result"] = load_result(rid)
         except FileNotFoundError:
+            r["status"], r["error"] = "error", "result files missing"
+    elif r["status"] == "done" and r["kind"] == "study":
+        p = run_dir(rid) / "study.json"
+        if p.exists():
+            r["result"] = json.loads(p.read_text())
+        else:
             r["status"], r["error"] = "error", "result files missing"
     elif r["status"] == "done" and r["kind"] == "optimization":
         p = run_dir(rid) / "optimization.json"

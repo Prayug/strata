@@ -76,6 +76,25 @@ def save_backtest(rid: str, res: BacktestResult, extra: dict | None = None) -> d
     return _clean(summary)
 
 
+def save_study(rid: str, res: dict) -> dict:
+    d = run_dir(rid)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "study.json").write_text(dumps(res))
+    st = res["stats"]
+    keep = ("qualifying_sessions", "evaluated_sessions", "excluded_sessions", "target_first", "stop_first", "ambiguous", "probability", "probability_ci95", "baseline_probability", "avg_end_return_pct")
+    return _clean({**{k: st.get(k) for k in keep}, "start": res["period"][0], "end": res["period"][1], "symbols": [res["symbol"]], "synthetic": res.get("synthetic"), "study": True})
+
+
+def load_run_result(run: dict) -> dict:
+    """Stored result payload of a finished backtest / portfolio / study run."""
+    if run["kind"] == "study":
+        p = run_dir(run["id"]) / "study.json"
+        if not p.exists():
+            raise FileNotFoundError(p)
+        return json.loads(p.read_text())
+    return load_result(run["id"])
+
+
 def _spark(xs: list, n: int = 60) -> list:
     if not xs:
         return []

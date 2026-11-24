@@ -1,3 +1,5 @@
+import { StudyReport } from "@/components/research/StudyReport";
+import { PricingBadge, dataResolutionLines, excludedRows } from "@/components/research/BacktestReport";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Blocks, Download, PlayCircle, RotateCw, Sigma, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -38,6 +40,14 @@ export function RunDetail({ id }: { id: string }) {
           <ErrorBox error={`Run ${r.status}: ${r.message || ""}\n\n${(r.error || "").slice(0, 3000)}`} />
           <RerunButton run={r} />
         </div>
+      </div>
+    );
+  }
+  if (r.kind === "study") {
+    return (
+      <div className="flex h-full flex-col">
+        <PageHeader title={r.name} sub={<span className="num text-2xs text-muted">market study · data {Object.values(r.dataset_versions || {})[0] as string}</span>} />
+        <div className="min-h-0 flex-1 overflow-auto"><StudyReport res={r.result} /></div>
       </div>
     );
   }
@@ -103,6 +113,7 @@ function ResultView({ run }: { run: RunRow }) {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title={run.name} sub={<>
+        <PricingBadge modeled={meta.pricing === "modeled"} />
         <SyntheticBadge on={meta.synthetic} />
         <span className="num text-2xs text-muted">{res.config.start} → {res.config.end} · {meta.sessions} sessions · {meta.runtime_seconds}s</span>
         <Tip content={<div className="num text-2xs space-y-0.5"><div>config {meta.config_hash}</div>{Object.entries(meta.dataset_versions).map(([k, v]) => <div key={k}>{k} data {v as string}</div>)}<div>events {meta.events_version}</div><div>engine {meta.engine_version}</div></div>}>
@@ -117,11 +128,15 @@ function ResultView({ run }: { run: RunRow }) {
         <Button variant="ghost" size="icon" onClick={() => confirm("Delete this run and its stored results?") && del.mutate()}><Trash2 /></Button>
       </PageHeader>
       <KpiStrip m={m} />
-      {(m.warnings?.length > 0 || meta.synthetic) && (
-        <div className="border-b border-line px-3 py-1.5">
-          <Warnings items={[...(meta.synthetic ? [{ level: "info", text: "Computed on the SYNTHETIC demonstration dataset: performance reflects a simulated market, not history." }] : []), ...m.warnings.map((t: string) => ({ level: "warn", text: t }))]} />
-        </div>
-      )}
+      <div className="border-b border-line px-3 py-1.5">
+        <Warnings items={[
+          ...(meta.pricing === "modeled" ? [{ level: "warn", text: `MODELED premiums - estimates, not observed option prices. ${(meta.pricing_assumptions || []).join(" ")}` }] : []),
+          ...(meta.synthetic ? [{ level: "info", text: "Computed on SIMULATED sandbox symbols: performance reflects a simulated market, not history." }] : []),
+          ...dataResolutionLines(meta).map((t) => ({ level: "info", text: t })),
+          ...excludedRows(res.diagnostics).slice(0, 3).map((e) => ({ level: "warn", text: `${e.count} session(s) excluded - ${e.reason} (e.g. ${e.sample.join(", ")}). Not counted as "condition false".` })),
+          ...(m.warnings || []).map((t: string) => ({ level: "warn", text: t })),
+        ]} />
+      </div>
       <Tabs defaultValue="perf" className="flex min-h-0 flex-1 flex-col">
         <TabsList>
           <TabsTrigger value="perf">Performance</TabsTrigger>
@@ -273,7 +288,7 @@ function TradesTab({ runId, trades }: { runId: string; trades?: Trade[] }) {
   const rows = trades.filter((t) => filter === "all" || (filter === "win" ? t.pnl > 0 : filter === "loss" ? t.pnl <= 0 : t.flags.length > 0));
   const cols: Col<Trade>[] = [
     { key: "id", label: "#", render: (t) => <span className="num text-faint">{t.id}</span>, sort: (t) => t.id },
-    { key: "entry", label: "Entry (ET)", render: (t) => <span className="num">{etTime(t.entry_ts)}</span>, sort: (t) => t.entry_ts },
+    { key: "entry", label: "Entry fill (ET)", title: "Fill time; a suffix shows how long after the signal the order filled", render: (t: any) => <span className="num">{etTime(t.entry_ts)}{t.fill_delay_seconds ? <span className="ml-1 text-warn">+{t.fill_delay_seconds >= 3600 ? `${(t.fill_delay_seconds / 3600).toFixed(1)}h` : `${Math.round(t.fill_delay_seconds / 60)}m`}</span> : null}</span>, sort: (t) => t.entry_ts },
     { key: "exit", label: "Exit", render: (t) => <span className="num text-fg-2">{etTime(t.exit_ts)}</span>, sort: (t) => t.exit_ts },
     { key: "legs", label: "Structure", render: (t) => <span className="num text-fg-2">{t.legs.map((l) => l.kind === "stock" ? `${l.ratio > 0 ? "+" : ""}${l.ratio}sh` : `${l.ratio > 0 ? "+" : ""}${l.ratio}${l.strike}${l.right}`).join(" ")}</span> },
     { key: "dte", label: "DTE", align: "r", render: (t) => <span className="num">{t.entry_dte}</span>, sort: (t) => t.entry_dte },
@@ -366,7 +381,8 @@ function Diagnostics({ res }: { res: any }) {
   const meta = res.meta;
   const skipped = Object.entries(d.skipped_entries || {}).sort((a: any, b: any) => b[1] - a[1]);
   const counts: [string, number, string][] = [
-    ["Entry signals", d.signals, "condition trees that evaluated true"], ["Entries filled", d.entries, ""], ["Deferred exits", d.deferred_exits, "exit wanted but no fresh quote / size; retried next snapshot"],
+    ["Entry signals", d.signals, "condition trees that evaluated true"], ["Entries filled", d.entries, ""], ["Orders expired unfilled", Array.isArray(d.expired_orders) ? d.expired_orders.length : d.expired_orders || 0, "no fresh option quote within the allowed delay; never filled late"],
+    ["Sessions excluded", excludedRows(d).reduce((a, e) => a + e.count, 0), "a rule could not be evaluated (missing data); not counted as 'condition false'"], ["Deferred exits", d.deferred_exits, "exit wanted but no fresh quote / size; retried next snapshot"],
     ["Partial fills", d.partial_fills, "limited by displayed size"], ["Stale marks", d.stale_marks, "quote older than max age"], ["Missing marks", d.missing_marks, "contract absent from a snapshot; last mark kept"],
     ["Ambiguous exits", d.ambiguous_exits, "loss & profit rules fired together; loss recorded"], ["Assignments", d.assignments, ""], ["Exercises", d.exercises, ""], ["Margin calls", d.margin_calls, ""],
   ];
@@ -382,7 +398,9 @@ function Diagnostics({ res }: { res: any }) {
       </Panel>
       <Panel className="border-0" title="Data quality">
         <table className="tbl"><tbody>
-          <tr><td>Synthetic data</td><td className="r">{meta.synthetic ? <SyntheticBadge on /> : "no"}</td></tr>
+          <tr><td>Option prices</td><td className="r">{meta.pricing === "modeled" ? <span className="text-warn">modeled (estimated)</span> : "observed historical quotes"}</td></tr>
+          {dataResolutionLines(meta).map((t) => <tr key={t}><td colSpan={2} className="whitespace-normal text-2xs text-fg-2">{t}</td></tr>)}
+          <tr><td>Simulated sandbox data</td><td className="r">{meta.synthetic ? <SyntheticBadge on /> : "no"}</td></tr>
           <tr><td>Missing option sessions</td><td className="r num">{meta.data_quality.missing_sessions}</td></tr>
           {Object.entries(d.missing_sessions || {}).map(([s, days]: any) => <tr key={s}><td className="text-muted pl-4">{s}</td><td className="r num text-2xs text-fg-2 whitespace-normal">{days.slice(0, 8).join(", ")}{days.length > 8 ? ` +${days.length - 8}` : ""}</td></tr>)}
           <tr><td>Greeks computed from quotes</td><td className="r">{meta.data_quality.computed_greeks ? "yes" : "provider-supplied"}</td></tr>

@@ -1,6 +1,6 @@
 [project]
 name = "strata"
-version = "0.1.0"
+version = "0.2.0"
 description = "Strata: event-driven options backtesting and research platform"
 requires-python = ">=3.11"
 dependencies = [
@@ -15,6 +15,7 @@ dependencies = [
   "scipy>=1.13",
   "httpx>=0.27",
   "python-multipart>=0.0.9",
+  "anthropic>=2.0",
 ]
 
 [project.optional-dependencies]

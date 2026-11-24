@@ -1,21 +1,33 @@
-"""RuleStrategy: executes a declarative StrategyConfig (what the visual builder produces)."""
+"""RuleStrategy: executes a declarative StrategyConfig (what the builder and the AI lab produce).
+
+Signals and fills are separate events:
+  * rules are evaluated on the signal clock (the underlying's bars)
+  * a passing entry rule creates an ORDER stamped with the signal time
+  * the order fills at the first option quote observed at/after signal + latency that is
+    still fresh, provided it arrives within `max_fill_delay_minutes`; otherwise the order
+    expires and is reported - it is never filled at a later, unrelated quote
+  * exits requested while no fresh quote exists are filled at the next observable quote
+"""
 from __future__ import annotations
 
 import math
 
-import numpy as np
-
 from strata.core import calendar as cal
-from strata.engine.conditions import evaluate
+from strata.engine.conditions import evaluate, explicit_minutes, walk_leaves
 from strata.engine.engine import Context, Strategy
 from strata.engine.margin import MLeg, max_profit_loss, requirement
 from strata.engine.models import StrategyConfig
 from strata.engine.portfolio import Position
 
 LOSS_REASONS = {"stop_loss", "trailing_stop", "underlying_stop", "greek_stop", "strike_breach"}
-PROFIT_REASONS = {"profit_target"}
+PROFIT_REASONS = {"profit_target", "underlying_target"}
 PRIORITY = ["stop_loss", "trailing_stop", "strike_breach", "underlying_stop", "greek_stop", "custom_exit", "roll", "time_exit", "dte_exit", "max_hold", "underlying_target", "profit_target"]
-REASON_CLASS = {"profit_target": "target", "stop_loss": "stop", "trailing_stop": "stop", "time_exit": "time", "dte_exit": "time", "max_hold": "time"}
+REASON_CLASS = {"profit_target": "target", "underlying_target": "target", "stop_loss": "stop", "trailing_stop": "stop", "underlying_stop": "stop",
+                "time_exit": "time", "dte_exit": "time", "max_hold": "time"}
+
+
+def _res_label(sec: int) -> str:
+    return "daily" if sec >= 86400 else f"{sec // 60}-minute"
 
 
 class RuleStrategy(Strategy):
@@ -31,10 +43,37 @@ class RuleStrategy(Strategy):
         self.last_exit_t = None
         self.last_exit_reason = None
         self.exit_today = False
+        self.pending: dict | None = None
+        self.na_today: set[str] = set()
+        ex = cfg.exits
+        self.entry_minutes = set()
+        for leaf in walk_leaves(cfg.entry.conditions):
+            if leaf.type == "entry_times":  # open / close always have a tick, so only clock times can be unobservable
+                self.entry_minutes |= {cal.parse_hhmm(x) for x in str((leaf.params or {}).get("times", "")).replace(";", ",").split(",") if x.strip() and x.strip().lower() not in ("open", "close")}
+        self.explicit_minutes = explicit_minutes(cfg.entry.conditions) | explicit_minutes(ex.custom)
+        if ex.time_exit.enabled:
+            self.explicit_minutes.add(cal.parse_hhmm(ex.time_exit.time))
+        if ex.dte_exit.enabled:
+            self.explicit_minutes.add(cal.parse_hhmm(ex.dte_exit.time))
 
     def on_day_start(self, ctx: Context):
         self.entries_today = 0
         self.exit_today = False
+        self.na_today = set()
+        self.pending = None
+
+    def on_day_end(self, ctx: Context):
+        diag = ctx.bt.diag
+        if self.pending:
+            self._expire(ctx, "the session closed before an eligible option quote arrived")
+        if self.entries_today:
+            return
+        if self.na_today:
+            for r in sorted(self.na_today):
+                diag.exclude(ctx.today, f"{self.name}: rule not evaluable - {r}")
+        elif self.entry_minutes and not (self.entry_minutes & ctx.day_minutes):
+            times = ", ".join(cal.fmt_hhmm(m) for m in sorted(self.entry_minutes))
+            diag.exclude(ctx.today, f"{self.name}: entry time {times} ET cannot be observed with {_res_label(ctx.session_res)} price bars")
 
     def on_position_closed(self, ctx: Context, pos: Position):
         self.last_exit_t = pos.exit_ts
@@ -42,44 +81,44 @@ class RuleStrategy(Strategy):
         self.exit_today = True
 
     # ------------------------------------------------------------------ exits
-    def _pnl(self, ctx: Context, pos: Position) -> float:
-        return pos.gross_pnl(use_mid=self.cfg.exits.trigger_price == "mid")
-
     def check_exits(self, ctx: Context, pos: Position):
         ex = self.cfg.exits
         if pos.pending_exit:
             ctx.close(pos, pos.pending_exit)
             return
-        if any(l.stale for l in pos.legs if l.is_open):
-            return  # cannot evaluate price-based rules on stale marks; retried next snapshot
-        pnl = self._pnl(ctx, pos)
-        pct = pnl / pos.basis * 100
+        # price-based rules need fresh option quotes; time / underlying rules do not
+        fresh = not any(l.stale for l in pos.legs if l.is_open)
         u = max(pos.units, 1)
-        pos.peak_pnl = max(pos.peak_pnl, pnl)
         hits: list[tuple[str, str]] = []
         tgt_thr = stop_thr = None
-        if ex.profit_target.enabled:
-            thr = ex.profit_target.value if ex.profit_target.mode == "pct" else ex.profit_target.value * u
-            val = pct if ex.profit_target.mode == "pct" else pnl
-            tgt_thr = thr / 100 * pos.basis if ex.profit_target.mode == "pct" else thr
-            if val >= thr:
-                hits.append(("profit_target", f"P&L {pnl:+,.2f} ({pct:+.1f}% of premium) >= target {ex.profit_target.value:g}{'%' if ex.profit_target.mode == 'pct' else ' $/unit'}"))
-        if ex.stop_loss.enabled:
-            thr = ex.stop_loss.value if ex.stop_loss.mode == "pct" else ex.stop_loss.value * u
-            val = pct if ex.stop_loss.mode == "pct" else pnl
-            stop_thr = -thr / 100 * pos.basis if ex.stop_loss.mode == "pct" else -thr
-            if val <= -thr:
-                hits.append(("stop_loss", f"P&L {pnl:+,.2f} ({pct:+.1f}% of premium) <= stop -{ex.stop_loss.value:g}{'%' if ex.stop_loss.mode == 'pct' else ' $/unit'}"))
-        ts = ex.trailing_stop
-        if ts.enabled:
-            scale = pos.basis / 100 if ts.mode == "pct" else u
-            act, trail = ts.activate * scale, ts.trail * scale
-            if pos.peak_pnl >= act and pos.peak_pnl - pnl >= trail:
-                hits.append(("trailing_stop", f"peak P&L {pos.peak_pnl:,.2f} gave back {pos.peak_pnl - pnl:,.2f} >= trail {trail:,.2f}"))
+        pnl = pct = float("nan")
+        if fresh:
+            pnl = pos.gross_pnl(use_mid=ex.trigger_price == "mid")
+            pct = pnl / pos.basis * 100
+            pos.peak_pnl = max(pos.peak_pnl, pnl)
+            if ex.profit_target.enabled:
+                thr = ex.profit_target.value if ex.profit_target.mode == "pct" else ex.profit_target.value * u
+                val = pct if ex.profit_target.mode == "pct" else pnl
+                tgt_thr = thr / 100 * pos.basis if ex.profit_target.mode == "pct" else thr
+                if val >= thr:
+                    hits.append(("profit_target", f"P&L {pnl:+,.2f} ({pct:+.1f}% of premium) >= target {ex.profit_target.value:g}{'%' if ex.profit_target.mode == 'pct' else ' $/unit'}"))
+            if ex.stop_loss.enabled:
+                thr = ex.stop_loss.value if ex.stop_loss.mode == "pct" else ex.stop_loss.value * u
+                val = pct if ex.stop_loss.mode == "pct" else pnl
+                stop_thr = -thr / 100 * pos.basis if ex.stop_loss.mode == "pct" else -thr
+                if val <= -thr:
+                    hits.append(("stop_loss", f"P&L {pnl:+,.2f} ({pct:+.1f}% of premium) <= stop -{ex.stop_loss.value:g}{'%' if ex.stop_loss.mode == 'pct' else ' $/unit'}"))
+            ts = ex.trailing_stop
+            if ts.enabled:
+                scale = pos.basis / 100 if ts.mode == "pct" else u
+                act, trail = ts.activate * scale, ts.trail * scale
+                if pos.peak_pnl >= act and pos.peak_pnl - pnl >= trail:
+                    hits.append(("trailing_stop", f"peak P&L {pos.peak_pnl:,.2f} gave back {pos.peak_pnl - pnl:,.2f} >= trail {trail:,.2f}"))
         front = pos.front_dte(ctx.today_num)
-        if ex.time_exit.enabled and ctx.minute >= cal.parse_hhmm(ex.time_exit.time) and (ex.time_exit.dte_lte is None or front <= ex.time_exit.dte_lte):
+        # a time exit later than an early close fires at that session's close
+        if ex.time_exit.enabled and ctx.minute >= min(cal.parse_hhmm(ex.time_exit.time), ctx.close_minute) and (ex.time_exit.dte_lte is None or front <= ex.time_exit.dte_lte):
             hits.append(("time_exit", f"time {cal.fmt_hhmm(ctx.minute)} >= {ex.time_exit.time} with front DTE {front}"))
-        if ex.dte_exit.enabled and front <= ex.dte_exit.dte and ctx.minute >= cal.parse_hhmm(ex.dte_exit.time):
+        if ex.dte_exit.enabled and front <= ex.dte_exit.dte and ctx.minute >= min(cal.parse_hhmm(ex.dte_exit.time), ctx.close_minute):
             hits.append(("dte_exit", f"front DTE {front} <= {ex.dte_exit.dte}"))
         if ex.max_hold.enabled:
             held_min = (ctx.t - pos.entry_ts) / 60
@@ -88,7 +127,9 @@ class RuleStrategy(Strategy):
             if ex.max_hold.days:
                 from strata.engine.market import from_day_num
                 sessions = cal.trading_days_between(from_day_num(pos.entry_day), ctx.today)
-                if sessions >= ex.max_hold.days:
+                entry_min = cal.minute_of_day_et(pos.entry_ts * 1_000_000_000)
+                # N sessions later at the same time of day (or that session's close if it ends earlier)
+                if sessions > ex.max_hold.days or (sessions == ex.max_hold.days and ctx.minute >= min(entry_min, ctx.close_minute)):
                     hits.append(("max_hold", f"held {sessions} sessions >= {ex.max_hold.days}"))
         ue = ex.underlying
         spot = ctx.price(pos.symbol)
@@ -100,9 +141,9 @@ class RuleStrategy(Strategy):
             if ue.move_against_pct is not None:
                 against = abs(mv) if neutral else -directional
                 if against >= ue.move_against_pct:
-                    hits.append(("underlying_stop", f"underlying moved {mv:+.2f}% ({'abs' if neutral else 'against'} {against:.2f}% >= {ue.move_against_pct}%)"))
+                    hits.append(("underlying_stop", f"underlying {spot:.2f} moved {mv:+.2f}% from entry {pos.entry_spot:.2f} ({'abs' if neutral else 'against'} {against:.2f}% >= {ue.move_against_pct:g}%)"))
             if ue.move_for_pct is not None and not neutral and directional >= ue.move_for_pct:
-                hits.append(("underlying_target", f"underlying moved {mv:+.2f}% in favour >= {ue.move_for_pct}%"))
+                hits.append(("underlying_target", f"underlying {spot:.2f} moved {mv:+.2f}% from entry {pos.entry_spot:.2f} in favour >= {ue.move_for_pct:g}%"))
             if ue.strike_breach:
                 b = ue.breach_buffer_pct / 100
                 for l in pos.legs:
@@ -111,7 +152,7 @@ class RuleStrategy(Strategy):
                             hits.append(("strike_breach", f"underlying {spot:.2f} breached short {l.label()}"))
                             break
         ge = ex.greeks
-        if ge.enabled:
+        if ge.enabled and fresh:
             dlt = pos.greeks()[0] / u
             if ge.max_abs_delta is not None and abs(dlt) > ge.max_abs_delta:
                 hits.append(("greek_stop", f"|delta|/unit {abs(dlt):.1f} > {ge.max_abs_delta}"))
@@ -121,11 +162,11 @@ class RuleStrategy(Strategy):
                         hits.append(("greek_stop", f"short {l.label()} |delta| {abs(l.greeks[0]):.2f} > {ge.short_leg_delta}"))
                         break
         if ex.custom is not None and ex.custom.children:
-            ok, expl = evaluate(ex.custom, ctx, pos)
+            ok, expl, _ = evaluate(ex.custom, ctx, pos)
             if ok:
                 hits.append(("custom_exit", "; ".join(e["text"] for e in expl if e.get("passed") and not e.get("group"))))
         rr = ex.roll
-        if rr.enabled and pos.roll_count < rr.max_rolls:
+        if rr.enabled and pos.roll_count < rr.max_rolls and fresh:
             trig = False
             if rr.trigger == "dte" and front <= rr.value:
                 trig = True
@@ -138,44 +179,37 @@ class RuleStrategy(Strategy):
             if trig:
                 hits.append(("roll", f"roll trigger {rr.trigger} {rr.value:g} hit (roll {pos.roll_count + 1}/{rr.max_rolls})"))
 
-        # intrabar ambiguity: could the underlying's 1-minute path between snapshots have
-        # touched both the stop and the target? (delta-gamma estimate; flag only)
-        if tgt_thr is not None and stop_thr is not None and ctx.prev_t < ctx.t:
+        # intrabar ambiguity: could the underlying's path between ticks have touched both the
+        # stop and the target? (delta-gamma estimate from completed bars; flag only)
+        if fresh and tgt_thr is not None and stop_thr is not None and ctx.prev_t < ctx.t:
             ser = ctx.series(pos.symbol)
             hi, lo = ser.range_between(ctx.prev_t, ctx.t)
-            s_prev = ser.price_at(ctx.prev_t, ctx.today)
-            if math.isfinite(hi) and math.isfinite(s_prev):
+            if math.isfinite(hi):
                 d, g, _, _ = pos.greeks()
-                prev_pnl = pnl  # approximation anchor
-                est = [prev_pnl + d * (x - spot) + 0.5 * g * (x - spot) ** 2 for x in (hi, lo)]
+                est = [pnl + d * (x - spot) + 0.5 * g * (x - spot) ** 2 for x in (hi, lo)]
                 if max(est) >= tgt_thr and min(est) <= stop_thr:
                     pos.flags.add("intrabar_ambiguous")
 
-        # leg-level rules (independent of the full-position decision)
-        full = [h for h in hits]
-        if full:
-            reasons = {r for r, _ in full}
-            chosen = None
+        if hits:
+            reasons = {r for r, _ in hits}
             if reasons & LOSS_REASONS and reasons & PROFIT_REASONS:
                 pos.flags.add("ambiguous_exit")
                 ctx.bt.diag.ambiguous_exits += 1
-            for r in PRIORITY:
-                if r in reasons:
-                    chosen = r
-                    break
-            explain = [{"text": txt, "passed": True, "reason": r} for r, txt in full]
+            chosen = next(r for r in PRIORITY if r in reasons)
+            explain = [{"text": txt, "passed": True, "reason": r} for r, txt in hits]
             if chosen == "roll":
                 self._roll(ctx, pos, explain)
             else:
+                pos.exit_explain = explain
                 ctx.close(pos, chosen, explain=explain)
+            return
+        if not fresh:
             return
         for rule in ex.leg_rules:
             idxs = [i for i, l in enumerate(pos.legs) if l.is_open and (l.leg_id == rule.target or l.group == rule.target)]
-            if not idxs:
-                continue
             for i in list(idxs):
                 l = pos.legs[i]
-                px = l.mid if self.cfg.exits.trigger_price == "mid" else (l.ask if l.qty < 0 else l.bid)
+                px = l.mid if ex.trigger_price == "mid" else (l.ask if l.qty < 0 else l.bid)
                 if not math.isfinite(px) or l.entry_price <= 0:
                     continue
                 short = l.qty < 0
@@ -240,7 +274,68 @@ class RuleStrategy(Strategy):
             return 0, f"sizing: {s.pct:g}% budget {budget:,.0f} < risk per unit {risk:,.0f}"
         return units, ""
 
+    def _expire(self, ctx: Context, why: str):
+        pd = self.pending
+        self.pending = None
+        ctx.bt.diag.expired_orders += 1
+        ctx.bt.diag.skip(f"order expired unfilled: {why}")
+        ctx.log("order_expired", f"entry signal at {cal.fmt_hhmm(pd['minute'])} ET not filled: {why}")
+
+    def _try_fill(self, ctx: Context):
+        pd = self.pending
+        ex = ctx.bt.ex
+        ready_t = pd["signal_t"] + ex.latency_seconds
+        ch, si = ctx.chain()
+        eligible = False
+        if ch is not None and si >= 0 and ctx.t >= ready_t:
+            snap_t = int(ch.snap_ts[si])
+            fresh_now = ctx.t - snap_t <= ex.max_quote_age_seconds
+            # the quote must be observed at/after the order reaches the market (or, with no
+            # latency, be a still-fresh quote at the signal time)
+            after_signal = snap_t >= ready_t or (ex.latency_seconds == 0 and pd["signal_t"] - snap_t <= ex.max_quote_age_seconds)
+            eligible = fresh_now and after_signal
+        if not eligible:
+            if ch is None:
+                self._expire(ctx, f"no option chain is stored for {self.symbol} on this session")
+            elif ctx.t - pd["signal_t"] >= ex.max_fill_delay_minutes * 60 or ctx.is_last_tick:
+                nxt = [int(x) for x in ch.snap_ts if x > ctx.t]
+                detail = f"next option quote is {(nxt[0] - pd['signal_t']) / 60:.0f} min after the signal" if nxt else "no later option quote this session"
+                self._expire(ctx, f"no option quote within {ex.max_fill_delay_minutes:g} min of the signal ({detail})")
+            return
+        self.pending = None
+        sel, why, _details = ctx.select(self.cfg.legs)
+        if sel is None:
+            ctx.bt.diag.skip(why)
+            if len(ctx.bt.events_log) < 20000:
+                ctx.log("entry_skipped", why)
+            return
+        units, why = self._units(ctx, sel)
+        if units < 1:
+            ctx.bt.diag.skip("insufficient capital for one unit")
+            ctx.log("entry_skipped", why)
+            return
+        sel_expl = []
+        for x in sel:
+            if x.row < 0:
+                sel_expl.append({"text": f"{x.leg.id}: {x.leg.side} {x.leg.quantity} shares", "passed": True, "selection": True})
+                continue
+            sm = x.leg.strike
+            target = {"delta": f"|delta| ~ {sm.value:g}", "premium": f"premium ~ {sm.value:g}", "pct_otm": f"{sm.value:g}% OTM",
+                      "atm_offset": f"ATM {sm.value:+g} {sm.unit}", "fixed": f"strike {sm.value:g}", "leg_offset": f"{sm.ref_leg} {sm.value:+g} {sm.unit}"}[sm.method]
+            sel_expl.append({"text": f"{x.leg.id}: {x.leg.side} {x.leg.right} {x.leg.dte}DTE target {target} -> {x.strike:g}{x.leg.right} exp {x.expiration - ctx.today_num}d, delta {ch.delta[x.row]:+.3f}, bid/ask {ch.bid[x.row]:.2f}/{ch.ask[x.row]:.2f}", "passed": True, "selection": True})
+        delay = ctx.t - pd["signal_t"]
+        timing = [{"text": f"signal {cal.fmt_hhmm(pd['minute'])} ET -> filled {cal.fmt_hhmm(ctx.minute)} ET ({delay / 60:.0f} min later, first eligible option quote)", "passed": True, "selection": True}] if delay else []
+        pos, why = ctx.open(sel, units, explain=pd["explain"] + timing + sel_expl, meta={"signal_ts": pd["signal_t"]})
+        if pos is None:
+            ctx.bt.diag.skip(why)
+            ctx.log("entry_rejected", why)
+            return
+        self.entries_today += 1
+
     def check_entry(self, ctx: Context):
+        if self.pending:
+            self._try_fill(ctx)
+            return
         e = self.cfg.entry
         if self.entries_today >= e.max_entries_per_day:
             return
@@ -252,37 +347,14 @@ class RuleStrategy(Strategy):
             cls = REASON_CLASS.get(self.last_exit_reason or "", "other")
             if "none" in e.reentry_after or cls not in e.reentry_after:
                 return
-        ok, explain = evaluate(e.conditions, ctx)
+        ok, explain, na = evaluate(e.conditions, ctx)
+        if na:
+            self.na_today |= {x.split("[not evaluable: ")[-1].rstrip("]") if "[not evaluable: " in x else x for x in na}
         if not ok:
             return
         ctx.bt.diag.signals += 1
-        sel, why, details = ctx.select(self.cfg.legs)
-        if sel is None:
-            ctx.bt.diag.skip(why)
-            if len(ctx.bt.events_log) < 20000:
-                ctx.log("entry_skipped", why)
-            return
-        units, why = self._units(ctx, sel)
-        if units < 1:
-            ctx.bt.diag.skip("insufficient capital for one unit")
-            ctx.log("entry_skipped", why)
-            return
-        ch, _ = ctx.chain()
-        sel_expl = []
-        for x in sel:
-            if x.row < 0:
-                sel_expl.append({"text": f"{x.leg.id}: {x.leg.side} {x.leg.quantity} shares", "passed": True, "selection": True})
-                continue
-            sm = x.leg.strike
-            target = {"delta": f"|delta| ~ {sm.value:g}", "premium": f"premium ~ {sm.value:g}", "pct_otm": f"{sm.value:g}% OTM",
-                      "atm_offset": f"ATM {sm.value:+g} {sm.unit}", "fixed": f"strike {sm.value:g}", "leg_offset": f"{sm.ref_leg} {sm.value:+g} {sm.unit}"}[sm.method]
-            sel_expl.append({"text": f"{x.leg.id}: {x.leg.side} {x.leg.right} {x.leg.dte}DTE target {target} -> {x.strike:g}{x.leg.right} exp {x.expiration - ctx.today_num}d, delta {ch.delta[x.row]:+.3f}, bid/ask {ch.bid[x.row]:.2f}/{ch.ask[x.row]:.2f}", "passed": True, "selection": True})
-        pos, why = ctx.open(sel, units, explain=explain + sel_expl)
-        if pos is None:
-            ctx.bt.diag.skip(why)
-            ctx.log("entry_rejected", why)
-            return
-        self.entries_today += 1
+        self.pending = {"signal_t": ctx.t, "minute": ctx.minute, "explain": explain}
+        self._try_fill(ctx)
 
     def on_snapshot(self, ctx: Context):
         for pos in list(ctx.positions()):
