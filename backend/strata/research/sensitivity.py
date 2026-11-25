@@ -23,6 +23,7 @@ from __future__ import annotations
 import numpy as np
 
 from strata.data.store import MarketStore
+from strata.research import evidence as EV
 from strata.research import robust as R
 from strata.research.features import A, CODE_NAMES, OutcomeSpec, Pred, T, cond_text, get_features, to_study
 
@@ -106,7 +107,6 @@ def underlying_map(symbol: str, spec: dict, store: MarketStore | None = None, st
         raise ValueError(f"the map has {len(xs) * len(ys)} cells; the limit is {MAX_CELLS}")
     base_preds = [Pred.load(p) for p in spec.get("preds") or []]
     pm = ft.window(start, end)
-    dates = np.array(ft.dates)
     cells = []
     for yi, yv in enumerate(ys):
         for xi, xv in enumerate(xs):
@@ -119,27 +119,18 @@ def underlying_map(symbol: str, spec: dict, store: MarketStore | None = None, st
             except (ValueError, KeyError) as e:
                 cells.append({**cell, "status": "error", "error": str(e)[:160]})
                 continue
-            out = ev["outcome"]
-            q = ev["qualifying"] & pm
-            base = ev["evaluable"] & pm
-            rq, rb = q & (out.code != A), base & (out.code != A)
-            rest = rb & ~ev["qualifying"]
-            n, k = int(rq.sum()), int((out.code[rq] == T).sum())
-            bn, bk = int(rb.sum()), int((out.code[rb] == T).sum())
+            e = EV.of(ft, ev, pm, o.direction, reps=reps, return_ci=True)
+            n, evaluated = e["n"], e["evaluated"]
             window_n = int(pm[1:].sum())
-            er = out.end_ret[q]
-            cell.update(status="ok", n=n, hits=k, probability=(k / n) if n else None, baseline_n=bn, baseline_probability=(bk / bn) if bn else None, lift=((k / n - bk / bn) * 100) if n and bn else None,
-                        ambiguous=int((q & (out.code == A)).sum()), evaluated=int(base.sum()), not_evaluated=window_n - int(base.sum()),
-                        avg_end_return_pct=float(er.mean()) if er.size else None, q05_end_return_pct=float(np.quantile(er, 0.05)) if er.size >= 20 else None,
-                        q50_end_return_pct=float(np.median(er)) if er.size else None, q95_end_return_pct=float(np.quantile(er, 0.95)) if er.size >= 20 else None,
-                        avg_mae_pct=float(out.mae[q].mean()) if er.size else None, thin=n < MIN_CELL, incomplete=window_n > 0 and (window_n - int(base.sum())) / window_n > 0.2,
+            cell.update(status="ok", n=n, hits=e["hits"], probability=e["probability"], baseline_n=e["baseline_n"], baseline_probability=e["baseline_probability"],
+                        lift=None if e["lift"] is None else e["lift"] * 100, ambiguous=e["ambiguous"], evaluated=evaluated, not_evaluated=window_n - evaluated,
+                        avg_end_return_pct=e["avg_end_return_pct"], q05_end_return_pct=e["q05_end_return_pct"], q50_end_return_pct=e["median_end_return_pct"], q95_end_return_pct=e["q95_end_return_pct"],
+                        avg_mae_pct=e["avg_mae_pct"], thin=n < MIN_CELL, incomplete=window_n > 0 and (window_n - evaluated) / window_n > 0.2,
                         study=to_study(sym, preds, o, start, end) if o.direction != "either" else None)
-            if n and rest.any():
-                lt = R.lift_test((out.code[rq] == T).astype(float), dates[rq], (out.code[rest] == T).astype(float), dates[rest], "week", reps)
-                ci = R.cluster_prop_ci((out.code[rq] == T).astype(float), dates[rq], "week", reps)
-                cell.update(p_value=lt["p_value"], ci95=ci["ci"], clusters=lt["cond_clusters"], lift_ci95=[None if v is None else v * 100 for v in lt["ci"]])
-                if er.size >= 6:
-                    cell["return_ci95"] = R.cluster_mean_ci(er, dates[q], "week", reps)["ci"]
+            if n and e["rest_n"]:
+                cell.update(p_value=e["p_value"], ci95=e["ci95"], clusters=e["clusters"], lift_ci95=[None if v is None else v * 100 for v in e["lift_ci95"]])
+                if e["return_ci95"][0] is not None:
+                    cell["return_ci95"] = e["return_ci95"]
             cells.append(cell)
     ok = [c for c in cells if c["status"] == "ok"]
     adj = R.adjust([c.get("p_value") for c in ok], "holm")
@@ -181,7 +172,7 @@ def cell_detail(symbol: str, preds: list[dict], outcome: dict, store: MarketStor
     out = ev["outcome"]
     pm = ft.window(start, end)
     q, base = ev["qualifying"] & pm, ev["evaluable"] & pm
-    cols = {p.feature: ft.col(p.feature, oc.entry) for p in ps}
+    cols = {p.name: p.values(ft, oc.entry) for p in ps}
     rows = [{"date": ft.dates[i], "outcome": CODE_NAMES[out.code[i]], "entry_price": round(float(out.entry_px[i]), 4), "end_return_pct": round(float(out.end_ret[i]), 4), "mfe_pct": round(float(out.mfe[i]), 4),
              "mae_pct": round(float(out.mae[i]), 4), **{k: round(float(v[i]), 4) for k, v in cols.items()}} for i in np.flatnonzero(q)[-limit:]]
     a, b = out.end_ret[q], out.end_ret[base & ~ev["qualifying"]]
@@ -246,8 +237,7 @@ def set_param(cfg: dict, dim: dict, v) -> dict:
     elif path == "execution.slippage":
         ex = c.setdefault("execution", {})
         if quotes:
-            ex["fill_model"], ex["custom_fraction"] = "custom", 1.0
-            ex["slippage_pct_of_price"] = float(v)
+            ex["extra_slippage_pct"] = float(v)  # every fill x% worse than the quoted side; the fill model itself is left as configured
         else:
             ex["trade_bar_slippage_pct"] = float(v)
     elif path.startswith("execution."):

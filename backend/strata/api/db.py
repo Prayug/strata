@@ -126,6 +126,76 @@ CREATE TABLE IF NOT EXISTS collector_runs (
   trigger TEXT DEFAULT 'schedule',
   report TEXT
 );
+CREATE TABLE IF NOT EXISTS findings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT,
+  run_id TEXT,
+  symbol TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  statement TEXT NOT NULL,
+  evidence TEXT NOT NULL,
+  fingerprint TEXT,
+  config TEXT,
+  numbers TEXT,
+  tags TEXT DEFAULT '[]',
+  period_start TEXT,
+  period_end TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS findings_symbol ON findings(symbol, id);
+CREATE INDEX IF NOT EXISTS findings_session ON findings(session_id, id);
+CREATE TABLE IF NOT EXISTS forward_experiments (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  config TEXT NOT NULL,
+  config_hash TEXT NOT NULL,
+  version INTEGER DEFAULT 1,
+  parent_id TEXT,
+  session_id TEXT,
+  source_run_id TEXT,
+  benchmark TEXT,
+  assumptions TEXT,
+  activation_date TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS forward_evaluations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  experiment_id TEXT NOT NULL,
+  evaluated_at TEXT NOT NULL,
+  through_date TEXT,
+  report TEXT
+);
+CREATE INDEX IF NOT EXISTS forward_eval_exp ON forward_evaluations(experiment_id, id);
+CREATE TABLE IF NOT EXISTS collector_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  session TEXT NOT NULL,
+  item TEXT NOT NULL,
+  provider TEXT DEFAULT '',
+  status TEXT NOT NULL,
+  attempts INTEGER DEFAULT 0,
+  last_error TEXT DEFAULT '',
+  not_before TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(kind, symbol, session, item)
+);
+CREATE INDEX IF NOT EXISTS collector_queue_status ON collector_queue(status, id);
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  level TEXT DEFAULT 'info',
+  title TEXT NOT NULL,
+  body TEXT DEFAULT '',
+  link TEXT DEFAULT '',
+  read INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS runs_kind ON runs(kind, created_at);
 CREATE INDEX IF NOT EXISTS runs_cache ON runs(cache_key);
 CREATE INDEX IF NOT EXISTS runs_strategy ON runs(strategy_id);
@@ -146,13 +216,22 @@ def connect() -> sqlite3.Connection:
     return con
 
 
+# columns added after a table first shipped: (table, column, declaration)
+MIGRATIONS = [("trials", "signature", "TEXT"), ("trials", "phase", "TEXT DEFAULT 'exploration'")]
+
+
 def init_db() -> Path:
     with connect() as con:
         con.executescript(SCHEMA)
+        for table, col, decl in MIGRATIONS:
+            if col not in {r[1] for r in con.execute(f"PRAGMA table_info({table})")}:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        con.execute("CREATE INDEX IF NOT EXISTS trials_key ON trials(key)")
+        con.execute("CREATE INDEX IF NOT EXISTS trials_symbol ON trials(symbol, id)")
     return get_settings().db_path
 
 
-JSON_COLS = {"config", "dataset_versions", "summary", "tags", "state", "content", "draft", "runs", "uses", "layout", "report"}
+JSON_COLS = {"config", "dataset_versions", "summary", "tags", "state", "content", "draft", "runs", "uses", "layout", "report", "signature", "numbers", "benchmark", "assumptions"}
 
 
 def _row(r: sqlite3.Row | None) -> dict | None:
@@ -316,9 +395,13 @@ def update_session(sid: str, title: str | None = None, state: dict | None = None
 
 
 def delete_session(sid: str) -> None:
+    """Remove a notebook: its conversation, versions and the findings it recorded (they cannot be opened without it).
+    Its runs stay under Backtests, and the experiment registry keeps every trial it made: what has been tested on which
+    dates must not be forgotten because a notebook was tidied away."""
     with connect() as con:
         con.execute("DELETE FROM messages WHERE session_id=?", (sid,))
         con.execute("DELETE FROM versions WHERE session_id=?", (sid,))
+        con.execute("DELETE FROM findings WHERE session_id=?", (sid,))
         con.execute("DELETE FROM sessions WHERE id=?", (sid,))
 
 

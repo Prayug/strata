@@ -62,10 +62,24 @@ TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\s*(pacifi
 EXIT_CUE = re.compile(r"\b(exit|sell (?:them|it|at|when|by)|close (?:the position|it|them|out)|clos(?:e|ing) (?:at|by)|take profits?|until|till|hold(?:ing)?\b|out by|\bor at\b|get out)", re.I)
 
 
+def _session_readings(h: int, mi: int, ap: str | None) -> list[tuple[int, int]]:
+    """(offset to New York, hour) readings of a time with no zone that land inside the regular session."""
+    cand = []
+    for o in dict.fromkeys((0, default_tz_offset(), 180)):
+        hh = h if ap else (h + 12 if (h < 7 and o == 0) or (h < 6 and o == 180) else h)
+        if 570 <= hh * 60 + mi + o <= 960:
+            cand.append((o, hh))
+    return cand
+
+
 def find_times(text: str, msg_offset: int | None) -> list[dict]:
-    """Clock times in the text, converted to New York time. Each: {pos, et, stated, assumed_tz}."""
+    """Clock times in the text, converted to New York time. Each: {pos, et, stated, assumed_tz}.
+    Times written without a zone are all read in ONE zone: the first of (the zone set in Settings, Eastern,
+    Pacific) in which every one of them falls inside the regular session. "Enter at 10:00, out by 15:30" is
+    therefore never half Pacific and half Eastern."""
     out = []
     low = text.lower()
+    found = []
     for m in TIME_RE.finditer(text):
         h, mi, ap, tz = m.group(1), m.group(2), m.group(3), m.group(4)
         if not (mi or ap or tz):
@@ -75,22 +89,25 @@ def find_times(text: str, msg_offset: int | None) -> list[dict]:
         h, mi = int(h), int(mi or 0)
         if h > 23 or mi > 59:
             continue
+        if ap:
+            h = (h % 12) + (12 if ap.lower().startswith("p") else 0)
+        found.append((m, h, mi, ap, tz))
+    pref = default_tz_offset()
+    common = None
+    named = {TZ_OFFSET[tz.lower()] for _m, _h, _mi, _ap, tz in found if tz and tz.lower() in TZ_OFFSET}
+    if msg_offset is None and len(named) == 1:
+        msg_offset = named.pop()  # "between 9:30 and 11:00 Eastern": a zone written once applies to the other times too
+    if msg_offset is None:
+        sets = [{o for o, _ in _session_readings(h, mi, ap)} for _m, h, mi, ap, tz in found if not tz]
+        shared = set.intersection(*sets) if sets else set()
+        common = next((o for o in dict.fromkeys((pref, 0, 180)) if o in shared), None)
+    for m, h, mi, ap, tz in found:
         off = TZ_OFFSET.get(tz.lower()) if tz else msg_offset
         assumed = None
-        if ap:
-            pm = ap.lower().startswith("p")
-            h = (h % 12) + (12 if pm else 0)
         if off is None:
-            # no timezone anywhere: pick the reading that lands inside the regular session
-            cand = []
-            for o in (0, default_tz_offset(), 180):
-                hh = h if ap else (h + 12 if (h < 7 and o == 0) or (h < 6 and o == 180) else h)
-                et = hh * 60 + mi + o
-                if 570 <= et <= 960:
-                    cand.append((o, hh))
-            pref = default_tz_offset()
-            pick = next((c for c in cand if c[0] == pref), cand[0] if cand else (pref, h))
-            off, h = pick
+            cand = _session_readings(h, mi, ap)
+            want = common if common is not None else pref
+            off, h = next((c for c in cand if c[0] == want), cand[0] if cand else (want, h))
             assumed = TZ_NAME.get(off, "Eastern")
         elif not ap:
             if off == 0 and h < 7:

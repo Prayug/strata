@@ -16,3 +16,32 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+
+  # Unattended data collection, without the web application:
+  #     docker compose --profile collector up -d collector
+  # It collects after each market close for as long as the machine is on, restarts with the
+  # machine, resumes an interrupted cycle, and never places an order (it can only read data).
+  # Both services may run together: only one collection cycle runs at a time.
+  collector:
+    profiles: ["collector"]
+    build: .
+    image: strata:latest
+    command: ["strata", "collect", "--daemon"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      STRATA_DATA_DIR: /app/data
+      STRATA_SKIP_FETCH: "0"
+      # switch collection on without opening the app (same as Data > Collector > Enable)
+      STRATA_COLLECTOR_ENABLE: ${STRATA_COLLECTOR_ENABLE:-1}
+      TZ: America/New_York
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "strata", "collect", "--health"]
+      interval: 2m
+      timeout: 20s
+      retries: 3
+      start_period: 3m

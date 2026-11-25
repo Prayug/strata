@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import date
@@ -141,8 +142,10 @@ def cmd_bulk_import(a):
 
 
 def cmd_collect(a):
+
     from strata.api import db
     from strata.collector import service as CS
+    from strata.config import get_settings
     db.init_db()
     if a.status:
         st = CS.state()
@@ -151,18 +154,40 @@ def cmd_collect(a):
             print(f"  {r['started_at'][:19]}  {r['status']:9s} {r['report'].get('bars', 0):>8,} bars  {r['report'].get('requests', 0):>5} requests  {'; '.join(r['report'].get('errors', [])[:1])[:80]}")
         print(f"missed sessions: {len(st['coverage']['missed'])}")
         return
+    beat = get_settings().data_dir / "collector.heartbeat"
+    if a.health:
+        # for a container health check: is the daemon loop alive?
+        import time as _t
+        ok = beat.exists() and _t.time() - beat.stat().st_mtime < 300
+        print("collector daemon is alive" if ok else "collector daemon has not reported for five minutes (or was never started)")
+        sys.exit(0 if ok else 1)
     if a.daemon:
         import time as _t
-        print("collector running; press Ctrl-C to stop. It collects after each close while enabled in its settings.")
-        while True:
-            cfg = CS.load_config()
-            nd = CS.next_due(cfg)
-            from datetime import datetime as _dt
+        from datetime import datetime as _dt
 
-            from strata.core import calendar as cal
-            if cfg["enabled"] and nd is not None and nd <= _dt.now(cal.ET):
-                rep = CS.run_once(progress=lambda f, m: None, trigger="daemon")
-                print(f"{rep['started_at'][:19]}  {rep['status']}  {rep['bars']:,} bars  {rep['requests']} requests")
+        from strata.core import calendar as cal
+        print("collector running; press Ctrl-C to stop. It collects after each close while enabled in its settings, and it never trades.", flush=True)
+        if not CS.load_config()["enabled"]:
+            print("NOTE: the collector is switched off in its settings, so nothing will be collected until it is enabled (Data > Collector, or STRATA_COLLECTOR_ENABLE=1).", flush=True)
+        if os.environ.get("STRATA_COLLECTOR_ENABLE") == "1" and not CS.load_config()["enabled"]:
+            CS.save_config({"enabled": True})
+            print("enabled by STRATA_COLLECTOR_ENABLE=1", flush=True)
+        for rid in CS.recover_interrupted():
+            print(f"cycle {rid} was cut off by a restart; continuing from what it stored", flush=True)
+        while True:
+            beat.parent.mkdir(parents=True, exist_ok=True)
+            beat.write_text(_dt.now(cal.ET).isoformat())
+            try:  # one bad cycle (an outage, a full disk, another process mid-cycle) must not stop the daemon
+                cfg = CS.load_config()
+                nd = CS.next_due(cfg)
+                last = CS.history(1)
+                failed_recently = bool(last and last[0]["status"] in ("error", "skipped") and (_dt.now(cal.ET) - _dt.fromisoformat(last[0]["started_at"]).astimezone(cal.ET)).total_seconds() < 3600)
+                if cfg["enabled"] and nd is not None and nd <= _dt.now(cal.ET) and not failed_recently:
+                    rep = CS.run_once(progress=lambda f, m: beat.write_text(_dt.now(cal.ET).isoformat()), trigger="daemon")
+                    print(f"{rep['started_at'][:19]}  {rep['status']}  {rep['bars']:,} bars  {rep['requests']} requests" + (f"  recovered {len(rep['recovered'])}" if rep.get("recovered") else "")
+                          + (f"  unrecoverable {len(rep['unrecoverable'])}" if rep.get("unrecoverable") else "") + ("  " + "; ".join(rep["errors"][:1])[:120] if rep.get("errors") else ""), flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"{_dt.now(cal.ET).isoformat()[:19]}  cycle not run: {type(e).__name__}: {e}"[:300], flush=True)
             _t.sleep(60)
     rep = CS.run_once(progress=lambda f, m: print(f"\r  {f:5.1%} {m[:70]:70s}", end="", flush=True), trigger="cli")
     print(f"\n{rep['status']}: {rep['bars']:,} option bars, {rep['requests']} requests, {rep['seconds']}s")
@@ -272,6 +297,7 @@ def main(argv=None):
     p.add_argument("--once", action="store_true", help="run one collection cycle and exit (the default)")
     p.add_argument("--daemon", action="store_true", help="stay running and collect after each close while the collector is enabled")
     p.add_argument("--status", action="store_true", help="show the configuration, recent cycles and missed sessions")
+    p.add_argument("--health", action="store_true", help="exit 0 if the daemon reported in the last five minutes (for container health checks)")
     p.set_defaults(fn=cmd_collect)
     p = sub.add_parser("bench", help="time realistic research workloads on a reproducible fixture and record the result")
     p.add_argument("--quick", action="store_true", help="a smaller fixture (for a fast sanity run; not comparable with the baseline)")

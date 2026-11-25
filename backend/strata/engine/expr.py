@@ -78,9 +78,11 @@ REGISTRY: dict[str, dict] = {
     # objects
     "previous_session": _d("previous_session.<field>", "Fields of the previous session: return_pct (close-to-close), open_to_close_pct, gap_pct, range_pct, open, high, low, close, volume", "Sessions"),
     "session": _d("session.<field>", "Today so far: open, high, low, return_pct (vs previous close), from_open_pct, gap_pct, range_pct, volume", "Sessions"),
-    "entry": _d("entry.<field>", "Exit / add rules - the open position's entry: underlying_price, premium, time, minutes_ago, signal_price, vwap, session_open", "Position"),
+    "entry": _d("entry.<field>", "Exit / add rules - the open position's entry: underlying_price, premium, time, minutes_ago, signal_price, vwap, session_open, atr (daily ATR as it stood at the entry)", "Position"),
     "position": _d("position.<field>", "Exit / add rules: pnl_pct (of premium), pnl, dte, minutes_held, sessions_held, delta, max_gain_pct, max_loss_pct, underlying_high, underlying_low, underlying_move_pct, lot, adds", "Position"),
     "group": _d("group.<field>", "Exit / add rules - every lot of a scaled position together: pnl, pnl_pct, lots, avg_underlying_entry", "Position"),
+    "portfolio": _d("portfolio.<field>", "The whole account at this tick (backtests only): open_positions, strategy_positions, symbol_positions, exposure_pct (buying power in use, % of equity), "
+                    "day_pnl_pct (change in equity since the session opened), drawdown_pct (from the highest equity so far, 0 or negative), equity", "Portfolio"),
     # running session state
     "max_decline_from_open_pct": _d("max_decline_from_open_pct", "Largest fall below today's open so far, % (0 or negative)", "State", "intraday"),
     "max_rally_from_open_pct": _d("max_rally_from_open_pct", "Largest rise above today's open so far, % (0 or positive)", "State", "intraday"),
@@ -143,6 +145,7 @@ REGISTRY: dict[str, dict] = {
     "day_volume_ratio": _d("day_volume_ratio(n=20)", "Last completed session's volume / average of the n sessions before it", "Volume"),
     # cross-symbol & events
     "relative_strength": _d("relative_strength(a, b, sessions=20)", "return_pct(a) - return_pct(b) over N sessions, percentage points", "Cross-symbol"),
+    "signal": _d('signal("name")', "True on the sessions of a stored signal list (for example a walk-forward model signal from the ML workspace). A list known only at the close is not readable earlier in the session", "Signals"),
     "event_today": _d('event_today("FOMC", ...)', "A scheduled event of one of these types is on today's calendar", "Events"),
     "event_within": _d('event_within(n, "CPI", ...)', "An event of these types falls within the next n sessions", "Events"),
     "hhmm": _d("hhmm(h, m)", "Minutes since midnight for a clock time, e.g. time >= hhmm(10, 30)", "Time"),
@@ -160,9 +163,10 @@ FIELDS = {
     "underlying": {"price"},
     "previous_session": {"open", "high", "low", "close", "volume", "open_to_close_pct", "range_pct", "return_pct", "gap_pct"},
     "session": {"open", "high", "low", "return_pct", "from_open_pct", "gap_pct", "range_pct", "volume"},
-    "entry": {"underlying_price", "premium", "time", "minutes_ago", "signal_price", "vwap", "session_open"},
+    "entry": {"underlying_price", "premium", "time", "minutes_ago", "signal_price", "vwap", "session_open", "atr"},
     "position": {"pnl_pct", "pnl", "dte", "minutes_held", "sessions_held", "delta", "max_gain_pct", "max_loss_pct", "underlying_high", "underlying_low", "underlying_move_pct", "lot", "adds"},
     "group": {"pnl", "pnl_pct", "lots", "avg_underlying_entry"},
+    "portfolio": {"open_positions", "strategy_positions", "symbol_positions", "exposure_pct", "day_pnl_pct", "drawdown_pct", "equity"},
 }
 POSITION_OBJECTS = ("entry", "position", "group")
 STAGE_FUNCS = ("occurred", "stage_price", "stage_time", "minutes_since", "low_since", "high_since")
@@ -199,7 +203,7 @@ def parse(src: str) -> ast.Expression:
             if node.attr not in SYMBOL_FIELDS:
                 raise ExprError(f"{node.value.id}.{node.attr}: another symbol's values are limited to {', '.join(sorted(SYMBOL_FIELDS))}")
             continue
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in STAGE_FUNCS + ("ref",):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in STAGE_FUNCS + ("ref", "signal"):
             if len(node.args) != 1 or node.keywords or not (isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
                 raise ExprError(f'{node.func.id} takes one quoted name, e.g. {REGISTRY[node.func.id]["signature"]}')
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in REGISTRY and node.func.id not in FUNCTIONS:
@@ -519,6 +523,29 @@ class Evaluator:
             if a not in m:
                 raise ExprError(f"session has no field {a!r}")
             return self.name(m[a])
+        if obj == "portfolio":
+            bt = getattr(c, "bt", None)
+            acct = getattr(bt, "account", None)
+            if acct is None:
+                return self._na("a portfolio (market studies have no account)")
+            eq = acct.equity()
+            if a == "equity":
+                return float(eq)
+            if a == "open_positions":
+                return float(len(acct.positions))
+            if a == "strategy_positions":
+                return float(sum(1 for x in acct.positions if x.strategy_idx == getattr(c.strategy, "idx", -1)))
+            if a == "symbol_positions":
+                return float(sum(1 for x in acct.positions if x.symbol == self.sym))
+            if a == "exposure_pct":
+                return float(acct.bp_used() / eq * 100) if eq > 0 else self._na("equity")
+            if a == "day_pnl_pct":
+                d0 = getattr(bt, "_day_open_equity", None)
+                return float((eq / d0 - 1) * 100) if d0 else self._na("equity at the session open")
+            if a == "drawdown_pct":
+                pk = max(getattr(bt, "_peak_equity", eq), eq)
+                return float((eq / pk - 1) * 100) if pk > 0 else 0.0
+            raise ExprError(f"portfolio has no field {a!r}")
         p = self.pos
         if p is None:
             raise ExprError(f"{obj}.{a} is only available in exit and add rules (it reads an open position)")
@@ -548,6 +575,9 @@ class Evaluator:
                 return v if v is not None else self._na("session open at entry")
             if a == "underlying_price":
                 return float(p.entry_spot)
+            if a == "atr":
+                v = _num(p.meta.get("entry_atr"))
+                return v if v is not None else self._na("ATR at entry")
             if a == "premium":
                 return float(abs(p.entry_cash) / max(p.units, 1) / max((p.legs[0].multiplier if p.legs else 100), 1))
             if a == "time":
@@ -1019,6 +1049,16 @@ class Evaluator:
     def f_relative_strength(self, a, b, sessions=20):
         ra, rb = self.f_return_pct(a, sessions=sessions), self.f_return_pct(b, sessions=sessions)
         return None if ra is None or rb is None else ra - rb
+
+    def f_signal(self, name):
+        from strata.research import signals as SG
+        doc = SG.load(str(name))
+        if doc is None:
+            return self._na(f"signal list {name!r} (not stored)")
+        c = self.ctx
+        if doc["known_at"] == "close" and c.minute < c.close_minute:
+            return self._na(f"signal {name!r} (known only at the close)")
+        return c.today.isoformat() in doc["set"]
 
     def f_event_today(self, *types):
         return bool(self.ctx.events.on(self.ctx.today, list(types) or None))

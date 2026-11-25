@@ -26,9 +26,9 @@ SERVICE = "strata-research"
 
 SECRETS = {
     "OPENAI_API_KEY": "OpenAI", "ANTHROPIC_API_KEY": "Anthropic", "GEMINI_API_KEY": "Google Gemini", "OPENROUTER_API_KEY": "OpenRouter",
-    "ALPACA_API_KEY": "Alpaca key id", "ALPACA_API_SECRET": "Alpaca secret", "POLYGON_API_KEY": "Polygon / Massive", "DATABENTO_API_KEY": "Databento", "ORATS_API_KEY": "ORATS",
+    "ALPACA_API_KEY": "Alpaca key id", "ALPACA_API_SECRET": "Alpaca secret", "POLYGON_API_KEY": "Polygon / Massive", "DATABENTO_API_KEY": "Databento", "ORATS_API_KEY": "ORATS", "ALPHAVANTAGE_API_KEY": "Alpha Vantage",
 }
-ENV_ALIASES = {"ALPACA_API_KEY": ["APCA_API_KEY_ID"], "ALPACA_API_SECRET": ["APCA_API_SECRET_KEY"], "GEMINI_API_KEY": ["GOOGLE_API_KEY"]}
+ENV_ALIASES = {"ALPACA_API_KEY": ["APCA_API_KEY_ID"], "ALPACA_API_SECRET": ["APCA_API_SECRET_KEY"], "GEMINI_API_KEY": ["GOOGLE_API_KEY"], "POLYGON_API_KEY": ["MASSIVE_API_KEY"]}
 DEFAULTS = {
     "llm.provider": "auto",  # auto | offline | ollama | openai | anthropic | gemini | openrouter
     "llm.model.openai": "gpt-4.1-mini", "llm.model.anthropic": "claude-opus-5-5", "llm.model.gemini": "gemini-2.5-flash",
@@ -37,6 +37,8 @@ DEFAULTS = {
     "llm.timeout_seconds": 90, "llm.max_retries": 2,
     "ai.exec_mode": "quick",  # quick | review (default for new research sessions)
     "ui.timezone": "America/Los_Angeles", "data.default_symbol": "SPY",
+    "ui.mode": "simple",  # simple | advanced: how much of each screen is shown. One calculation engine either way.
+    "ui.onboarded": "",
 }
 
 

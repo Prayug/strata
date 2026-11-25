@@ -352,7 +352,10 @@ def test_a_source_without_credentials_is_unverified_whatever_its_mocked_tests_sa
     al = next(s for s in cat["sources"] if s["name"] == "alpaca")
     assert al["verification"] == "unverified" and not al["available"] and al["benchmark"]["status"] == "unverified"
     assert next(s for s in cat["sources"] if s["name"] == "yahoo")["verification"] == "not checked yet"
-    assert {e["name"] for e in cat["external"]} >= {"Cboe DataShop", "OptionsDX", "Databento", "Massive (formerly Polygon.io) flat files"} and all(e["url"].startswith("https://") and e["cost"] for e in cat["external"])
+    # the researched list of other sources now lives in one place, the provider marketplace
+    from strata.data.providers import market as MK
+    names = {e["name"] for e in MK.ENTRIES}
+    assert names >= {"Cboe DataShop", "OptionsDX", "Databento OPRA", "Massive (formerly Polygon.io)"} and all(e["url"].startswith("https://") and e["pricing"]["summary"] for e in MK.ENTRIES) and "external" not in cat
 
 
 def test_a_live_check_records_depth_missing_bars_and_speed(tmp_settings, monkeypatch):

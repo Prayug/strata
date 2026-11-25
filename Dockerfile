@@ -17,7 +17,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 COPY backend/pyproject.toml backend/
 COPY backend/strata backend/strata
-RUN pip install -e ./backend
+RUN pip install -e "./backend[ml]"
 COPY backend/tests backend/tests
 COPY examples examples
 COPY --from=web /web/dist frontend/dist

@@ -382,6 +382,10 @@ def canvas_graph(sid: str) -> dict:
             stage = (c.get("plan") or {}).get("stage")
             typ = "structures" if stage == "options" else "sweep" if k == "sweep" else "discovery" if k == "discovery" else "investigation"
             title = {"structures": "Option structures", "sweep": f"Sweep: {c.get('what') or c.get('field')}", "discovery": c.get("hypothesis") or "Exploration", "investigation": (c.get("plan") or {}).get("question") or "Investigation"}[typ]
+            if typ == "structures":  # option structures launched from a drafted strategy hang under that draft
+                drafts = [n for n, v in nodes.items() if v["type"] == "strategy_draft"]
+                if drafts and not (c.get("plan") or {}).get("from_plan_key"):
+                    parent = drafts[-1]
             nid = add(f"g{m['id']}", typ, title, parent if parent in nodes else last_q, message_id=m["id"], status=status_of(c.get("runs")), group=True, subtitle={"structures": "Options profitability (stage two)", "sweep": "Parameter sweep", "discovery": "Exploratory grid",
                                                                                                                                                           "investigation": "Related studies"}[typ],
                       stats=[{"label": "Variants", "value": str(len(c.get("runs") or []))}], version_id=c.get("version_id"))
@@ -393,6 +397,30 @@ def canvas_graph(sid: str) -> dict:
                     by_run[r["run_id"]] = child
             else:
                 by_run[c["runs"][0]["run_id"]] = nid
+        elif k == "graph":
+            g = c.get("graph") or {}
+            src_node = next((by_run[r] for r in c.get("derived_from") or [] if r in by_run), None)
+            nid = add(f"gr{m['id']}", "graph", c.get("question") or g.get("question"), src_node or last_q, message_id=m["id"], run_id=(c.get("runs") or [{}])[0].get("run_id"),
+                      status={"awaiting": "idle", "needs_data": "idle", "blocked": "error", "cancelled": "idle"}.get(c.get("state"), status_of(c.get("runs"))), subtitle="Research graph",
+                      stats=[{"label": "Steps", "value": str(len(g.get("nodes") or []) or len(g.get("batch") or []))}, {"label": "Conditions", "value": str(len((g.get("core") or {}).get("clauses") or []))}],
+                      assumptions=(g.get("assumptions") or [])[:4])
+            if src_node and last_q in nodes:
+                edges.append({"id": f"{last_q}>{nid}", "source": last_q, "target": nid})
+            by_source[m["id"]] = nid
+            for r in c.get("runs") or []:
+                if r.get("mode") == "graph":
+                    by_run[r["run_id"]] = nid
+        elif k == "strategy_plan":
+            f = c.get("finding") or {}
+            parent = f"find{f.get('id')}" if f"find{f.get('id')}" in nodes else by_run.get(f.get("run_id")) or last_q
+            last_plan = add(f"sp{m['id']}", "strategy_draft", c.get("label") or "Option structures", parent, message_id=m["id"], status="done" if c.get("launched") else "idle", subtitle="Drafted strategies (not priced)",
+                            stats=[{"label": "Structures", "value": str(len(c.get("variants") or []))}, {"label": "Built on", "value": f.get("evidence") or ""}], summary=(c.get("text") or "")[:240])
+            nodes[last_plan]["plan_message"] = m["id"]
+        elif k == "forward":
+            ex = c.get("experiment") or {}
+            parent = by_run.get(ex.get("source_run_id")) or last_q
+            add(f"fw{ex.get('id')}", "forward", ex.get("name") or "Forward validation", parent, message_id=m["id"], status="done", subtitle=f"Frozen v{ex.get('version')} - forward validation",
+                stats=[{"label": "Active from", "value": ex.get("activation_date") or ""}], experiment_id=ex.get("id"))
         elif k in ("stress", "challenge"):
             parent = by_run.get(c.get("target"))
             nid = add(f"a{m['id']}", "stress" if k == "stress" else "challenge", "Execution stress test" if k == "stress" else "Adversarial review", parent or last_q, message_id=m["id"], run_id=c["runs"][0]["run_id"], status=status_of(c.get("runs")),
@@ -418,6 +446,12 @@ def canvas_graph(sid: str) -> dict:
                 for cd in c.get("candidates") or []:
                     add(f"cand:{c['run_id']}:{cd['key']}", "candidate", cd["label"], grp, run_id=c["run_id"], key=cd["key"], status="done", subtitle=cd.get("status_label"), parent_group=grp,
                         stats=[{"label": "Outcome", "value": cd.get("outcome_text")}, {"label": "Evidence", "value": (cd.get("grade") or {}).get("label")}])
+            elif view in ("graph", "graph_batch") and src in nodes:
+                nodes[src].update(status="done", result_message=m["id"], summary=(c.get("text") or "")[:240],
+                                  stats=[{"label": "Analyses", "value": str(len(c.get("analyses") or c.get("rows") or []))}, {"label": "New trials", "value": str(c.get("trials", ""))}])
+                for f in c.get("findings") or []:
+                    add(f"find{f['id']}", "finding", f["statement"], src, message_id=m["id"], run_id=c.get("run_id"), status="done", subtitle=f"Finding - {f['evidence']}", finding_id=f["id"],
+                        stats=[{"label": "Evidence", "value": f["evidence"]}], summary="; ".join(f.get("why") or [])[:240])
             elif view in ("investigation", "sweep", "discovery") and src in nodes:
                 nodes[src].update(status="done", result_message=m["id"], summary=(c.get("text") or "")[:240])
             elif view in ("challenge", "execution") and src in nodes:
@@ -545,6 +579,32 @@ def collector_run():
     rid = db.create_run("collector", "Data collection cycle", {"trigger": "manual"})
     _jobs().submit(rid, "collector", {"trigger": "manual"})
     return {"id": rid}
+
+
+@router.get("/api/collector/health")
+def collector_health():
+    """One small read-only request to each source the collector uses, and when the unattended daemon last reported."""
+    import time as _t
+
+    from strata.api.settings import get_settings
+    from strata.collector import service as CS
+    from strata.data.providers import sources as S
+
+    def go():
+        cfg = CS.load_config()
+        store = MarketStore()
+        out = {"sources": [CS.health(S.get_source("yahoo", store))], "daemon": {"alive": False, "seconds_ago": None}, "checked_at": db.now()}
+        if cfg["options"]["enabled"]:
+            src = next((x for x in S.option_bar_sources(store) if x.name == cfg["options"]["provider"]), None)
+            if src is not None:
+                ok, why = src.available()
+                out["sources"].append(CS.health(src) if ok else {"source": src.name, "ok": False, "detail": why})
+        hb = get_settings().data_dir / "collector.heartbeat"
+        if hb.exists():
+            age = _t.time() - hb.stat().st_mtime
+            out["daemon"] = {"alive": age < 300, "seconds_ago": round(age)}
+        return out
+    return _guard(go)
 
 
 @router.post("/api/collector/cleanup")

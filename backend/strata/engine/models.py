@@ -71,10 +71,24 @@ class AddRule(BaseModel):
     text: str = ""
 
 
+class EntrySystem(BaseModel):
+    """One of several independent ways into a position. At every signal tick the systems are
+    tried in the order listed and the first whose conditions hold fires; the strategy's own
+    condition tree (when it has rules) must hold as well, as a shared filter. A system may
+    carry its own legs, which then replace the strategy's legs for the position it opens -
+    that is how one strategy trades calls on one signal and puts on another, or a different
+    expiration in a different regime. The trade records which system opened it."""
+    name: str
+    conditions: CondNode = CondNode()
+    legs: Optional[list[LegSpec]] = None
+    text: str = ""
+
+
 class EntryRules(BaseModel):
     conditions: CondNode = CondNode()
     sequence: list[SeqStage] = Field(default_factory=list)
     adds: list[AddRule] = Field(default_factory=list)
+    systems: list[EntrySystem] = Field(default_factory=list)
     max_entries_per_day: int = Field(1, ge=1)
     cooldown_minutes: int = Field(0, ge=0)
     max_open_positions: int = Field(1, ge=1)
@@ -115,11 +129,47 @@ class MaxHold(BaseModel):
 
 
 class UnderlyingExit(BaseModel):
+    """Exits on the UNDERLYING's price. "For" and "against" follow the sign of the position's
+    delta at entry. ATR distances use the daily average true range as it stood at the entry
+    (fixed for the life of the position); an entry whose ATR cannot be computed is skipped
+    and reported. Trailing thresholds follow the best underlying price since entry, so they
+    also act as an initial stop at the same distance; they do not apply to a position that
+    was delta-neutral at entry."""
     enabled: bool = False
     move_against_pct: Optional[float] = None
     move_for_pct: Optional[float] = None
     strike_breach: bool = False
     breach_buffer_pct: float = 0.0
+    atr_period: int = Field(14, ge=2, le=100)
+    target_atr: Optional[float] = Field(None, gt=0)  # exit when the underlying has moved this many ATRs in favour
+    stop_atr: Optional[float] = Field(None, gt=0)  # ... or against
+    trail_pct: Optional[float] = Field(None, gt=0)  # exit when the underlying gives back this % from its best level since entry
+    trail_atr: Optional[float] = Field(None, gt=0)  # the same, in ATRs
+
+    def needs_atr(self) -> bool:
+        return self.enabled and (self.target_atr is not None or self.stop_atr is not None or self.trail_atr is not None)
+
+
+class ExitStage(BaseModel):
+    """A partial exit. Stages are ordered and each fires at most once per position; a later
+    stage cannot fire before an earlier one. `close_pct` is a share of the contracts the
+    position was OPENED with (rounded down, at least one). Full-exit rules are checked first
+    at every tick and always win. After a stage, `then_stop` can move the stop to the entry
+    price ("breakeven": total P&L of the position, realised plus open, at or below zero) or
+    `then_stop_pct` can tighten the premium stop."""
+    name: str = ""
+    when: Optional[str] = None  # rule expression (entry.*, position.* allowed), or one of the two shorthands below
+    profit_pct: Optional[float] = None  # total P&L as % of the premium paid / received at entry
+    underlying_for_pct: Optional[float] = None  # the underlying has moved this % in the position's favour
+    close_pct: float = Field(50.0, gt=0, le=100)
+    then_stop: Optional[Literal["breakeven"]] = None
+    then_stop_pct: Optional[float] = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def _one_trigger(self):
+        if sum(x is not None for x in (self.when, self.profit_pct, self.underlying_for_pct)) != 1:
+            raise ValueError("an exit stage needs exactly one trigger: when, profit_pct or underlying_for_pct")
+        return self
 
 
 class GreekExit(BaseModel):
@@ -151,16 +201,37 @@ class ExitRules(BaseModel):
     underlying: UnderlyingExit = UnderlyingExit()
     greeks: GreekExit = GreekExit()
     leg_rules: list[LegRule] = Field(default_factory=list)
+    stages: list[ExitStage] = Field(default_factory=list)
     custom: Optional[CondNode] = None
     roll: RollRule = RollRule()
     trigger_price: Literal["close_price", "mid"] = "close_price"
 
 
 class Sizing(BaseModel):
-    method: Literal["fixed", "risk_pct", "bp_pct"] = "fixed"
+    """fixed: `contracts`. risk_pct / bp_pct: `pct` of equity over the position's maximum loss
+    / buying-power requirement per unit. expr: `expr` is a rule expression evaluated at the
+    fill, floored to a whole number of units (below one, the entry is skipped and reported).
+    atr_risk: `pct` of equity over the dollar move of one unit for an adverse move of
+    `atr_multiple` ATRs, using the position's delta at entry (skipped when delta or ATR is
+    unknown). Every method is capped at `max_contracts`."""
+    method: Literal["fixed", "risk_pct", "bp_pct", "expr", "atr_risk"] = "fixed"
     contracts: int = Field(1, ge=1)
     pct: float = 2.0
     max_contracts: int = 100
+    expr: Optional[str] = None
+    atr_multiple: float = Field(1.0, gt=0)
+    atr_period: int = Field(14, ge=2, le=100)
+
+
+class DeltaHedge(BaseModel):
+    """Hold shares of the underlying against the position's option delta. At every tick that
+    is `rebalance_minutes` or more after the last hedge trade (and at the entry), the share
+    count is moved to minus the position's current delta when the two differ by more than
+    `band` shares. Share trades use the stock fill model (slippage and commissions apply) and
+    are closed with the position. A leg without a delta at that tick leaves the hedge as it is."""
+    enabled: bool = False
+    rebalance_minutes: int = Field(30, ge=1)
+    band: float = Field(5.0, ge=0)
 
 
 class RegimeSettings(BaseModel):
@@ -177,21 +248,47 @@ class StrategyConfig(BaseModel):
     entry: EntryRules = EntryRules()
     exits: ExitRules = ExitRules()
     sizing: Sizing = Sizing()
+    hedge: DeltaHedge = DeltaHedge()
     allocation: float = Field(1.0, gt=0, le=1.0)
     vol_symbol: Optional[str] = None
     regime: RegimeSettings = RegimeSettings()
+
+    def legs_for(self, system: str | None) -> list[LegSpec]:
+        """The legs a position opened by `system` uses (the strategy's own unless that system brings its own)."""
+        for sy in self.entry.systems:
+            if sy.name == system and sy.legs:
+                return sy.legs
+        return self.legs
 
     @model_validator(mode="after")
     def _check_legs(self):
         if not self.legs:
             raise ValueError("strategy needs at least one leg")
+        for where, legs in [("strategy", self.legs)] + [(f"entry system {sy.name!r}", sy.legs) for sy in self.entry.systems if sy.legs]:
+            ids = [l.id for l in legs]
+            if len(set(ids)) != len(ids):
+                raise ValueError(f"{where}: leg ids must be unique" if where != "strategy" else "leg ids must be unique")
+            for l in legs:
+                if l.strike.method == "leg_offset" and l.strike.ref_leg not in ids:
+                    raise ValueError(f"leg {l.id}: ref_leg {l.strike.ref_leg!r} not found")
         ids = [l.id for l in self.legs]
-        if len(set(ids)) != len(ids):
-            raise ValueError("leg ids must be unique")
-        for l in self.legs:
-            if l.strike.method == "leg_offset" and l.strike.ref_leg not in ids:
-                raise ValueError(f"leg {l.id}: ref_leg {l.strike.ref_leg!r} not found")
         from strata.engine import expr as X
+        sys_names = [sy.name for sy in self.entry.systems]
+        if len(set(sys_names)) != len(sys_names) or any(not n.strip() for n in sys_names):
+            raise ValueError("entry system names must be unique and non-empty")
+        for i, stg in enumerate(self.exits.stages):
+            if stg.when is not None:
+                errs = X.validate(stg.when)
+                if errs:
+                    raise ValueError(f"exit stage {stg.name or i + 1}: {errs[0]}")
+        if self.sizing.method == "expr":
+            if not self.sizing.expr:
+                raise ValueError("sizing by expression needs the expression")
+            errs = X.validate(self.sizing.expr)
+            if errs:
+                raise ValueError(f"sizing expression: {errs[0]}")
+            if X.uses_position(self.sizing.expr):
+                raise ValueError("the sizing expression is evaluated before the position exists, so it cannot read entry.*, position.* or group.*")
         names = [s.name for s in self.entry.sequence]
         if len(set(names)) != len(names) or any(not n.strip() for n in names):
             raise ValueError("sequence stage names must be unique and non-empty")
@@ -235,9 +332,14 @@ class StrategyConfig(BaseModel):
                 walk(c)
         walk(self.entry.conditions)
         walk(self.exits.custom)
+        for sy in self.entry.systems:
+            walk(sy.conditions)
         for st in self.entry.sequence:
             out += [st.when] + list(st.capture.values())
         out += [a.when for a in self.entry.adds]
+        out += [g.when for g in self.exits.stages if g.when]
+        if self.sizing.method == "expr" and self.sizing.expr:
+            out.append(self.sizing.expr)
         return out
 
     def symbols(self) -> set[str]:
@@ -245,6 +347,8 @@ class StrategyConfig(BaseModel):
         from strata.engine import expr as X
         from strata.engine.conditions import extra_symbols
         out = set(extra_symbols(self.entry.conditions)) | set(extra_symbols(self.exits.custom))
+        for sy in self.entry.systems:
+            out |= set(extra_symbols(sy.conditions))
         for src in self.expressions():
             try:
                 out |= X.symbols_used(src)
@@ -277,6 +381,11 @@ class Execution(BaseModel):
     # --- execution stress assumptions (0 = off). Explicit, never inferred from the data:
     extra_slippage_pct: float = Field(0.0, ge=0)  # every option fill this % worse than the quote/print it was priced from
     multi_leg_extra_pct: float = Field(0.0, ge=0)  # additional % against you on each leg of a position with two or more option legs (legs do not fill together)
+    no_entry_first_minutes: int = Field(0, ge=0)  # no entry may fill in the first N minutes after the open (the opening rotation: wide, one-sided markets)
+    no_entry_last_minutes: int = Field(0, ge=0)  # ... or in the last N minutes before the close
+    auction_extra_pct: float = Field(0.0, ge=0)  # any option fill inside either window (exits included: an exit is never blocked) is this % worse
+    expiry_day_extra_pct: float = Field(0.0, ge=0)  # fills of a contract in the final `expiry_day_minutes` of its expiration day are this % worse
+    expiry_day_minutes: int = Field(60, ge=1)
     early_assignment: bool = True
     assignment_extrinsic_threshold: float = 0.05
     physical_settlement: Literal["close_next_open", "intrinsic"] = "close_next_open"

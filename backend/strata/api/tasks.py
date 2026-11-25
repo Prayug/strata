@@ -66,6 +66,15 @@ def execute(rid: str, kind: str, payload: dict, progress, should_cancel) -> dict
     if kind == "hypothesis":
         from strata.research.hypothesis import run_plan, save_plan_result
         return save_plan_result(rid, run_plan(payload["plan"], scope=payload.get("scope"), progress=progress, should_cancel=should_cancel, run_id=rid))
+    if kind == "graph":
+        from strata.research import graph as GR
+        if payload.get("batch"):
+            return GR.save_graph_result(rid, GR.run_batch(payload["batch"], scope=payload.get("scope"), run_id=rid, progress=progress, should_cancel=should_cancel, title=payload.get("title", ""), what=payload.get("what", ""),
+                                                          include_holdout=bool(payload.get("include_holdout"))))
+        return GR.save_graph_result(rid, GR.run_graph(payload["graph"], scope=payload.get("scope"), run_id=rid, progress=progress, should_cancel=should_cancel))
+    if kind == "ml":
+        from strata.research import ml as ML
+        return ML.save_result(rid, ML.run(payload["spec"], scope=payload.get("scope"), run_id=rid, progress=progress, should_cancel=should_cancel))
     if kind in ("stress", "challenge", "sensitivity"):
         from strata.api.results import load_run_result, load_trades
         from strata.data.store import MarketStore
@@ -80,6 +89,7 @@ def execute(rid: str, kind: str, payload: dict, progress, should_cancel) -> dict
             ctx = EX.context_for(target, res, store)
             out = EX.run_stress(ctx["config"], data_dir, ctx["quotes_available"], ctx["eod"], progress=progress, should_cancel=should_cancel)
             out["target"] = target["id"]
+            out["quality"] = EX.quality(load_trades(target["id"]), res.get("meta") or {}, res.get("diagnostics") or {}, ctx["config"], ctx["eod"])
             return EX.save_stress(rid, out)
         if kind == "challenge":
             from strata.research import challenge as CH
@@ -109,6 +119,12 @@ def execute(rid: str, kind: str, payload: dict, progress, should_cancel) -> dict
     if kind == "collector":
         from strata.collector.service import run_once
         return run_once(progress=progress, should_cancel=should_cancel, trigger=payload.get("trigger", "manual"))
+    if kind == "alpaca_validation":
+        from strata.data.providers.market import alpaca_validation
+        out = alpaca_validation(progress=progress, should_cancel=should_cancel, symbol=payload.get("symbol") or "SPY")
+        from strata.data.catalog import invalidate
+        invalidate()
+        return out
     if kind == "provider_benchmark":
         from strata.data.providers.bench import benchmark_source
         return benchmark_source(payload["source"], progress=progress, should_cancel=should_cancel)

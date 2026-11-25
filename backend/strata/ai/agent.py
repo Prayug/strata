@@ -91,6 +91,9 @@ def registry_reference() -> str:
     return "\n".join(f"  {cat}: " + ", ".join(sigs) for cat, sigs in by.items())
 
 
+from strata.ai.agent_v5 import ResearchV5, richer  # noqa: E402
+from strata.research import graph as GRAPH  # noqa: E402
+
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -151,12 +154,18 @@ class AnswerArgs(_Strict):
     text: str = Field(min_length=1, max_length=1500)
 
 
+class GraphArgs(_Strict):
+    nodes: list[dict] = Field(min_length=2, max_length=48)
+    assumptions: list[str] = Field(default_factory=list, max_length=12)
+    unsupported: list[str] = Field(default_factory=list, max_length=12)
+
+
 # name -> (argument schema, ends the turn)
 TOOLS: dict[str, tuple[type[BaseModel], bool]] = {
     "list_datasets": (NoArgs, False), "check_coverage": (CoverageArgs, False), "lookup_functions": (LookupArgs, False), "validate_expression": (ValidateArgs, False), "get_results": (NoArgs, False),
     "propose": (ProposeArgs, True), "sweep": (SweepArgs, True), "investigate": (InvestigateArgs, True), "discover": (DiscoverArgs, True), "show_trades": (ShowTradesArgs, True),
     "out_of_sample": (NoArgs, True), "robustness": (NoArgs, True), "breakdown": (BreakdownArgs, True), "timing": (NoArgs, True), "skipped_signals": (NoArgs, True), "export_report": (NoArgs, True),
-    "answer": (AnswerArgs, True),
+    "answer": (AnswerArgs, True), "research_graph": (GraphArgs, True),
 }
 
 ACTION_SCHEMA = {"type": "object", "properties": {"tool": {"type": "string", "enum": list(TOOLS)}, "args": {"type": "object"}}, "required": ["tool", "args"], "additionalProperties": False}
@@ -188,6 +197,11 @@ DRAFT_GUIDE = """Draft fields (omit or null anything the user did not say - the 
   start, end: ISO dates only if the user limited the period"""
 
 
+def graph_reference() -> str:
+    from strata.ai.nl_graph import llm_instructions
+    return llm_instructions("the one the user names (SPY when none is named)")
+
+
 def system_prompt(store: MarketStore, current: Draft | None) -> str:
     data = json.dumps(tool_list_datasets(store), separators=(",", ":"))[:2000]
     return f"""You are the request interpreter inside Strata, a quantitative research platform. You translate what the user wants into ONE JSON action.
@@ -207,6 +221,8 @@ Final tools (each ends your turn):
   show_trades {{"filter": "all"|"win"|"loss"}} | out_of_sample {{}} | robustness {{}} (is the result statistically meaningful?) | breakdown {{"by": "weekday"|"year"}} | timing {{}} (when the target is usually hit)
   skipped_signals {{}} (signals that did not become trades, with reasons) | export_report {{}}
   answer {{"text": "..."}}   only for a clarifying question or a reply that needs no numbers
+  research_graph {{"nodes": [...], "assumptions": [...], "unsupported": [...]}}   a market question that conditions on several things, on other symbols, on clock times,
+      or asks for controls, comparisons or validation: describe it as a graph of typed primitives (reference at the end). Prefer this to `investigate` for questions about the underlying.
 
 {DRAFT_GUIDE}
 
@@ -217,7 +233,10 @@ Examples: previous_session.return_pct <= -3 | gap_pct <= -0.5 | price > vwap | c
 A "red" day closed below its open (previous_session.open_to_close_pct < 0); a "down" day closed below the prior close (previous_session.return_pct < 0).
 
 Stored data: {data}
-Current draft: {current.model_dump_json(exclude_none=True) if current else "none"}"""
+Current draft: {current.model_dump_json(exclude_none=True) if current else "none"}
+
+RESEARCH GRAPH reference (for the research_graph tool):
+{graph_reference()}"""
 
 
 # ----------------------------------------------------------------------------- interpretation
@@ -359,6 +378,13 @@ def llm_interpret(llm: LLM, text: str, current: Draft | None, history: list[dict
             return {"action": "export"}
         elif tool == "answer":
             return {"action": "answer", "text": args.text.strip()}
+        elif tool == "research_graph":
+            g = {"version": GRAPH.VERSION, "question": text.strip(), "nodes": args.nodes, "assumptions": list(args.assumptions), "unsupported": list(args.unsupported), "planner": llm.name}
+            errs = GRAPH.validate(g)["errors"]
+            if errs:  # the same validator a hand-written graph goes through; the model gets its messages back
+                repair(errs[:10])
+                continue
+            return {"action": "graph", "graph": g}
     raise LLMError("the model did not reach a decision")
 
 
@@ -375,7 +401,7 @@ def is_complex(text: str) -> bool:
 
 
 # ----------------------------------------------------------------------------- the agent
-class Agent:
+class Agent(ResearchV5):
     def __init__(self, jobs, store: MarketStore | None = None, llm_factory=None):
         self.jobs = jobs
         self.store = store or MarketStore()
@@ -485,10 +511,15 @@ class Agent:
     def _rules(self, text: str, current: Draft | None, known: list[str], last_field: str | None, default_symbol: str) -> dict:
         tick = list(dict.fromkeys(NL.TICKERS + [s for s in known if s.isupper()]))
         low = text.lower().strip()
+        # "challenge the results with worse execution assumptions" is about fills, so the execution ladder is checked first
+        if re.search(r"execution (?:uncertainty|stress|risk|assumptions|quality|fidelity)|stress[- ]test (?:the )?(?:execution|fills)|realistic (?:execution|fills)|worse (?:execution|fills)|missed fills|partial fills|order (?:delay|latency)", low):
+            return {"action": "stress"}
         if re.search(r"\bchallenge\b|play devil'?s advocate|what could be wrong|poke holes|how could this be misleading|red[- ]team|be skeptical|critique this", low):
             return {"action": "challenge"}
-        if re.search(r"execution (?:uncertainty|stress|risk|assumptions)|stress[- ]test (?:the )?(?:execution|fills)|realistic (?:execution|fills)|worse (?:execution|fills)|missed fills|partial fills|order delay", low):
-            return {"action": "stress"}
+        sid = getattr(self._tl, "sid", None)
+        v5 = self.v5_route(sid, text, known, tick, default_symbol, current is not None)
+        if v5:
+            return v5
         if re.search(r"(?:test|try|compare|which|what) .*option (?:structures?|positions?|strateg)|option structures?|calls? (?:versus|vs\.?|or) puts? on (?:this|that|these|those|it)|price (?:this|that|it) with options", low):
             return {"action": "structures"}
         rq = RQ.detect(text)
@@ -498,6 +529,11 @@ class Agent:
             r = RS.detect_followup(text, current, tick)
             if r:
                 return r
+        # a question the composable planner can represent and the single-question paths cannot (several conditions, other
+        # symbols, clock times, controls, comparisons, a date range) becomes a research graph; the older paths stay as shortcuts
+        graph = self.v5_graph(text, known, default_symbol)
+        if graph is not None and richer(graph):
+            return {"action": "graph", "graph": graph}
         # broad market questions become a bounded research plan (the Hypothesis Lab) when there is enough history to split
         if re.match(r"(?:please\s+)?(?:(?:investigate|research|study|examine|analy[sz]e|test|check|find out|determine|see)\s+(?:whether|if|how|what|why)|does|do|is|are|what|how|which|compare|hypothesis)\b", low) or "hypothesis" in low:
             sym = RS._sym(text, tick, default_symbol)
@@ -534,6 +570,8 @@ class Agent:
             d = enrich(text, tick, default_symbol)
             if d.sequence or d.adds or d.exit_conditions or d.conditions:
                 return {"action": "new", "draft": d, "sweep": None}
+        if r["action"] == "unknown" and graph is not None:
+            return {"action": "graph", "graph": graph}
         return r
 
     # ---- launching
@@ -1154,6 +1192,30 @@ class Agent:
                 out += self._sweep(sid, v2, d2, r["sweep"]["field"], r["sweep"]["values"], interp, None)
         elif act == "hypothesis":
             out += self._hypothesis(sid, r["plan"], interp, note)
+        elif act == "graph":
+            out += self._graph(sid, r["graph"], interp, note)
+        elif act == "graph_edit":
+            out += self._graph_edit(sid, r, interp, text)
+        elif act == "registry":
+            out += self._registry(sid, version)
+        elif act == "memory":
+            out += self._memory(sid)
+        elif act == "independent":
+            out += self._independent(sid)
+        elif act == "filter_effect":
+            out += self._filter_effect(sid)
+        elif act == "still_hold":
+            out += self._still_hold(sid, r["year"])
+        elif act == "similar":
+            out += self._similar(sid, r["text"])
+        elif act == "combine":
+            out += self._combine(sid, r["text"])
+        elif act == "strategy_from_finding":
+            out += self._strategy_from_finding(sid, bool(r.get("anyway")))
+        elif act == "backtest_plan":
+            out += self._backtest_plan(sid)
+        elif act == "forward":
+            out += self._forward(sid, version)
         elif act == "reason":
             out += self._reason(sid, version, r, text)
         elif act == "challenge":
@@ -1332,11 +1394,17 @@ class Agent:
         llm, _ = self.llm()
         for m in db.list_messages(sid):
             c = m["content"] if isinstance(m["content"], dict) else {}
-            if m["kind"] not in ("plan", "sweep", "run", "investigation", "discovery", "hypothesis", "stress", "challenge") or c.get("finalized") or not c.get("runs"):
+            if m["kind"] == "graph" and not c.get("finalized") and self._advance_graph_message(sid, m):
+                continue
+            if m["kind"] not in ("plan", "sweep", "run", "investigation", "discovery", "hypothesis", "stress", "challenge", "graph") or c.get("finalized") or not c.get("runs"):
                 continue
             refs = list(c.get("compare_with") or []) + list(c["runs"])
             runs = {r["run_id"]: db.get_run(r["run_id"]) for r in refs}
             if any(x is None or x["status"] not in TERMINAL for x in runs.values()):
+                continue
+            if m["kind"] == "graph":
+                out.append(db.add_message(sid, "assistant", "result", self._finalize_graph(sid, c, runs[c["runs"][0]["run_id"]], m["id"])))
+                db.update_message(m["id"], {**c, "finalized": True, "state": "done"})
                 continue
             if m["kind"] in ("hypothesis", "stress", "challenge"):
                 out.append(db.add_message(sid, "assistant", "result", self._finalize_analysis(m["kind"], c, runs[c["runs"][0]["run_id"]], m["id"])))
@@ -1450,7 +1518,10 @@ class Agent:
         if kind == "stress":
             s_ = res["summary"]
             txt = " ".join(res["notes"][:3])
-            return {**base, "view": "execution", "mode": "stress", "text": txt, "caveats": res["notes"], "target": c.get("target"), "label": c["runs"][0]["label"], "summary": s_,
+            q_ = res.get("quality") or {}
+            if q_.get("score") is not None:
+                txt += f" Execution-quality score {q_['score']:.0f} of 100 ({q_['grade']}): this grades the evidence behind the fills, not the result."
+            return {**base, "view": "execution", "mode": "stress", "text": txt, "caveats": res["notes"] + (q_.get("notes") or []), "target": c.get("target"), "label": c["runs"][0]["label"], "summary": s_, "quality": q_,
                     "rows": [{k: r.get(k) for k in ("id", "group", "label", "status", "trades", "missed", "net_pnl", "expectancy", "note")} for r in res["rows"]]}
         return {**base, "view": "challenge", "mode": "challenge", "text": res["verdict"], "caveats": res["notes"], "target": c.get("target"), "label": c["runs"][0]["label"], "counts": res["counts"],
                 "findings": [{k: f[k] for k in ("topic", "name", "severity", "title")} for f in res["findings"]]}

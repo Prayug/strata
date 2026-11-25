@@ -33,6 +33,7 @@ LEVELS = {"vwap": "vwap", "the open": "open", "its open": "open", "the opening p
 LEVEL_RE = "(" + "|".join(sorted((re.escape(k) for k in LEVELS), key=len, reverse=True)) + ")"
 LEVEL_TEXT = {"vwap": "session VWAP", "open": "the session open", "prev_close": "the previous close", "prev_high": "yesterday's high", "prev_low": "yesterday's low", "high": "the session high", "low": "the session low"}
 MARKET_WORDS = re.compile(r"breaks?|broke|crosses|cross(?:ed|ing)?|above|below|higher|lower|drops?|falls?|rises?|rall|red|green|candle|vwap|\bhigh\b|\blow\b|gap|volume|rsi|macd|moving average|\bma\b|vix|%|recover|reclaim|fail|touch|bounce|reverse|outperform|underperform|"
+                          r"\bweak\w*|\bstrong\w*|\bis (?:up|down|flat|positive|negative)\b|declin\w*|sell-?off|sold off|"
                           r"divergen|trend|momentum|volatil|range|support|resistance|pivot|fib|bollinger|squeeze|imbalance|delta|gamma|open interest|skew|term structure|earnings|fomc|cpi|news", re.I)
 
 
@@ -316,9 +317,46 @@ def questions_for(text: str, d: Draft) -> list[dict]:
     return out
 
 
+EXITISH = re.compile(r"\b(target|stop|profits?|loss|exit|sell|close (?:the|it|them|out|at|by)|out by|get out|from (?:the |my )?entry|hold)\b")
+WINDOW = re.compile(r"\b(?:between|from)\s+(?P<a>\d{1,2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?)\s*(?:and|to|until|till|through|-)\s*"
+                    r"(?P<b>\d{1,2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?(?:\s*(?:pacific|pst|pdt|pt|mountain|mst|mdt|mt|central|cst|cdt|ct|eastern|est|edt|et|new york)\b(?:\s*time)?)?)", re.I)
+
+
+def read_window(text: str, d: Draft) -> tuple[int, int] | None:
+    """An entry window ("between 10:00 and 15:00", "from 9:45 to 11:30 Eastern") becomes a condition on the clock.
+    The static reader takes the first clock time it meets as THE entry time; inside a window that time is only
+    where the window starts, so the entry is left to the conditions. Returns the span of text it read."""
+    if d.kind != "options":
+        return None
+    for m in WINDOW.finditer(text):
+        seg = m.group(0)
+        if ":" not in seg and not re.search(r"[ap]\.?m", seg, re.I):
+            continue  # "between 2 and 3" is not a clock window
+        if re.search(r"(exit|sell|close|hold|out)\s*$", text[max(0, m.start() - 16):m.start()].lower().strip()):
+            continue  # a window for the exit is not a window for the entry
+        ts = NL.find_times(seg, None)
+        if len(ts) != 2:
+            continue
+        a, b = sorted(t["minutes"] for t in ts)
+        if not (570 <= a < b <= 960):
+            continue
+        expr = f"time >= hhmm({a // 60}, {a % 60}) and time <= hhmm({b // 60}, {b % 60})"
+        if expr not in {c.expr for c in d.conditions}:
+            d.conditions.append(DraftCondition(expr=expr, text=f"the time is between {a // 60:02d}:{a % 60:02d} and {b // 60:02d}:{b % 60:02d} New York time"))
+        em = 570 if d.entry_time == "open" else 960 if d.entry_time == "close" else (int(d.entry_time[:2]) * 60 + int(d.entry_time[3:]) if d.entry_time and re.fullmatch(r"\d\d:\d\d", d.entry_time) else None)
+        at_start = d.entry_time in {t["et"] for t in ts} or (em is not None and not a <= em <= b)  # the window's own start, or an entry time the window rules out
+        if at_start and not re.search(rf"\b(?:at|enter at|buy at|entry at)\s+{re.escape(m.group('a').strip())}", text[:m.start()] + text[m.end():], re.I):
+            d.entry_time, d.entry_time_stated = None, None
+            d.notes.append(f"\"{seg.strip()}\" is read as a window, not an entry time: the position is opened on the first evaluation between {a // 60:02d}:{a % 60:02d} and {b // 60:02d}:{b % 60:02d} New York time at which every condition holds.")
+        if any(t.get("assumed_tz") for t in ts):
+            d.tz_assumed = ts[0]["assumed_tz"]
+        return m.span()
+    return None
+
+
 def find_unsupported(text: str, spans: list[tuple[int, int]], d: Draft) -> list[str]:
     """Clauses that state a market condition but were not turned into any rule."""
-    out = []
+    out, partly = [], []
     low = text.lower()
     pos = 0
     for part in re.split(r"(?<=[.;!?])\s+|,\s+(?=(?:and|but|then|unless|only|if|when|while|after|once|provided|as long as|except)\b)|\s+(?=(?:but only if|only if|only when|unless|provided that|as long as|except when|when|whenever|while)\b)", text):
@@ -332,14 +370,17 @@ def find_unsupported(text: str, spans: list[tuple[int, int]], d: Draft) -> list[
             continue
         if not re.search(r"\b(if|when|unless|until|after|once|only|while|before|provided|as long as|except|whenever)\b", pl):
             continue
-        if any(s < b and e > a for s, e in spans):
+        over = [(max(s, a) - a, min(e, b) - a) for s, e in spans if s < b and e > a]
+        if over:
+            if d.kind == "options":
+                partly += _remainder(part, over, d.symbol)  # a clause that was only partly read: the rest of it is still owed
             continue
         # the tail of an exit statement ("exit | when SPY moves up 1% from entry or at 12:45") belongs to the exit the static parser read
         if re.search(r"(exit|exits|sell|sells|close|closes|out|profit|profits|stop|stops|target|targets)\s*$", text[max(0, a - 18):a].lower().strip()):
             continue
         used = {x for x in (d.underlying_target_pct, d.underlying_stop_pct, d.premium_target_pct, d.premium_stop_pct, d.underlying_target_abs, d.underlying_stop_abs) if x is not None}
         nums = {float(x) for x in re.findall(r"\d+(?:\.\d+)?", re.sub(r"\d{1,2}:\d{2}", " ", pl))}
-        if used and nums and nums <= used | {float(d.dte or 0)}:
+        if used and nums and nums <= used | {float(d.dte or 0)} and EXITISH.search(pl):
             continue
         # clauses the static parser understands: an exit / hold / time / size statement
         if re.search(r"\b(target|stop|take profit|hold|expir|exit at|sell at|close at|by the close|at the close|at the open|dte|delta|contracts?\b.*\bbuy)\b", pl) and not re.search(r"\b(unless|only if|provided|as long as|except)\b", pl):
@@ -347,7 +388,37 @@ def find_unsupported(text: str, spans: list[tuple[int, int]], d: Draft) -> list[
         out.append(part.strip(" ,.;"))
     # anything the static parser already turned into a rule is not unsupported
     known = " ".join(c.text.lower() for c in list(d.conditions) + list(d.exit_conditions)) + " ".join(s.text.lower() for s in d.sequence)
-    return [u for u in out if not _covered(u.lower(), low, known, d)]
+    res = []
+    for u in out:
+        if not _covered(u.lower(), low, known, d):
+            res.append(u)
+        elif d.kind == "options":  # in a market question the rest of the clause IS the question, so only a strategy is checked
+            res += _remainder(u, [], d.symbol)
+    return list(dict.fromkeys(res + partly))
+
+
+def _remainder(clause: str, read: list[tuple[int, int]], symbol: str = "") -> list[str]:
+    """What is left of a clause once the parts that became rules are taken out. "when SPY gaps down 1% and the
+    moon is full": the gap is a rule, and "the moon is full" is still owed an answer. Only a sub-phrase with real
+    content is returned (two or more words that are not filler, tickers, or exit / time vocabulary)."""
+    from strata.ai import nl_graph as NG
+    spans: list = []
+    NL.find_conditions(clause.lower(), spans)
+    s = clause
+    for a, b in sorted(list(spans) + list(read), reverse=True):
+        s = s[:max(0, a)] + " " * (min(len(s), b) - max(0, a)) + s[min(len(s), b):]
+    s = WINDOW.sub(lambda m: " " * len(m.group(0)), s)
+    s = NL.TIME_RE.sub(lambda m: " " * len(m.group(0)) if (m.group(2) or m.group(3) or m.group(4)) else m.group(0), s)
+    s = re.sub(r"^\s*(?:and\s+|but\s+)?(?:only\s+)?(?:if|when|whenever|while|provided(?:\s+that)?|as long as|after|once)\b", " ", s, flags=re.I)
+    tick = {t.lower() for t in NL.TICKERS} | {symbol.lower()}
+    out = []
+    for bit in NG._clauses_of(s):
+        if EXITISH.search(bit.lower()) or re.search(r"\b(?:buy|sell|enter|contracts?|calls?|puts?|dte|delta|expir\w*|strike|how often|how many|what|backtest|test|show|tell)\b", bit.lower()):
+            continue
+        words = [w for w in re.findall(r"[a-z][a-z'&-]{2,}", bit.lower()) if w not in NG.FILLER and w.rstrip("s") not in NG.FILLER and w not in tick]
+        if len(words) >= 2:
+            out.append(re.sub(r"\s+", " ", bit).strip(" ,.;"))
+    return out
 
 
 def _covered(clause: str, low: str, known: str, d: Draft) -> bool:
@@ -357,6 +428,48 @@ def _covered(clause: str, low: str, known: str, d: Draft) -> bool:
     if found and all(c.expr in exprs or NL._cat_of(c.expr) in {NL._cat_of(e) for e in exprs} for _, c in found):
         return True
     return False
+
+
+def _read_with_research_reader(d: Draft, known: list[str], window: tuple[str, int, int] | None = None) -> None:
+    """A condition the strategy reader did not understand is offered to the research question reader, which knows
+    many more (other symbols, relative performance, gaps, volatility, streaks, weekdays, moving averages). A
+    sub-phrase is accepted only when every word of it was understood and it can be evaluated at the entry
+    instant; each reading is stated in the notes. What is left stays in `unsupported`, in the user's words."""
+    if not d.unsupported or d.kind != "options":
+        return
+    from strata.ai import nl_graph as NG
+    try:
+        from strata.data.store import MarketStore
+        store = MarketStore()
+    except Exception:  # noqa: BLE001
+        store = None
+    left = []
+    have = {c.expr.replace(" ", "") for c in d.conditions}
+    for u in d.unsupported:
+        if re.match(r"\s*(?:unless|except)\b", u.lower()):
+            left.append(u)  # a negated clause is not rewritten here
+            continue
+        phrase = u.replace(window[0], " ") if window and window[0] in u else u  # a clock window in the clause was already read
+        try:
+            got, rest = NG.entry_conditions(phrase, d.symbol, known, store, d.entry_time, partial=True)
+        except Exception:  # noqa: BLE001 - the fallback must never break a request the strategy reader handled
+            got, rest = [], [phrase]
+        if not got:
+            if phrase.strip(" ,.;") and (phrase == u or re.search(r"[a-z]{3,}", re.sub(r"\b(?:and|but|only|when|if|while|then|also|too)\b", " ", phrase.lower()))):
+                left.append(u if phrase == u else phrase.strip(" ,.;"))
+            continue
+        for g in got:
+            if g["expr"].replace(" ", "") not in have:
+                d.conditions.append(DraftCondition(expr=g["expr"], text=g["text"]))
+                have.add(g["expr"].replace(" ", ""))
+        if d.entry_time == "open" and re.match(r"\s*(?:from|off|since|versus|vs)\b", (d.entry_time_stated or "").lower()) and any("from_open" in g["expr"] for g in got):
+            d.entry_time, d.entry_time_stated = None, None
+            d.notes.append("\"from the open\" describes the move, not when to enter (a move from the open is always zero at the open). The position is opened on the first evaluation at which every condition holds.")
+        d.notes.append("Read as: " + "; ".join(f"{g['text']} (`{g['expr']}`)" for g in got) + ". Evaluated at the entry time.")
+        for a_ in dict.fromkeys(a_ for g in got for a_ in g.get("assumptions", [])):
+            d.notes.append(a_)
+        left += [x for x in rest if re.search(r"[a-z]{3,}", x.lower())]
+    d.unsupported = left
 
 
 def enrich(text: str, known: list[str], default_symbol: str = "SPY") -> Draft:
@@ -401,11 +514,15 @@ def enrich(text: str, known: list[str], default_symbol: str = "SPY") -> Draft:
     asks = re.search(r"how often|how frequent|what percent|what fraction|probab|odds of|how many times|how likely|what happens|\bdoes\b|\bdo\b|is there|tend to", low)
     if d.kind == "study" and d.structure is None and trade_words and not asks and (d.sequence or d.adds or d.exit_conditions or d.conditions):
         d.kind, d.study = "options", None
-    d.unsupported = list(dict.fromkeys(r.unsupported + find_unsupported(text, r.spans, d)))
     d.questions = questions_for(text, d)
     for q in d.questions:  # the draft carries the plausible reading until the user answers
         for k, v in q["options"][q["default"]]["patch"].items():
             setattr(d, k, v)
+    # what was not represented is worked out last, from the draft as it now stands: a number is only "already used
+    # by a target or a stop" if it still is one after the questions' default readings were applied
+    wspan = read_window(text, d)
+    d.unsupported = list(dict.fromkeys(r.unsupported + find_unsupported(text, r.spans, d)))
+    _read_with_research_reader(d, known, (text[wspan[0]:wspan[1]], *wspan) if wspan else None)
     if d.kind == "options" and d.structure is None:
         bias = -1 if r.direction < 0 or detect_direction(d) < 0 else 1
         opts = [{"label": "Calls (long)", "patch": {"structure": "long_call"}, "detail": "buy calls: profits if the underlying rises"},

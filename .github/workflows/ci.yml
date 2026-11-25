@@ -32,7 +32,7 @@ jobs:
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - name: Install
-        run: pip install -e "backend[dev]"
+        run: pip install -e "backend[dev,ml]"
       - name: Tests (offline; nothing is downloaded and no credential store is touched)
         working-directory: backend
         run: python -m pytest -p no:warnings -q
@@ -48,7 +48,7 @@ jobs:
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - name: Install
-        run: pip install -e "backend[dev]"
+        run: pip install -e "backend[dev,ml]"
       - name: Same request, same data, same answer; no future information
         working-directory: backend
         run: |
@@ -67,7 +67,7 @@ jobs:
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - name: Install
-        run: pip install -e "backend[dev]"
+        run: pip install -e "backend[dev,ml]"
       - name: Time the research workloads against the committed baseline
         working-directory: backend
         env:
@@ -121,7 +121,7 @@ jobs:
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - name: Install backend
-        run: pip install -e "backend[dev]"
+        run: pip install -e "backend[dev,ml]"
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -178,7 +178,7 @@ jobs:
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - name: Install
-        run: pip install -e "backend[dev]"
+        run: pip install -e "backend[dev,ml]"
       - name: Provider tests
         working-directory: backend
         run: python -m pytest -p no:warnings -rs tests/test_live.py

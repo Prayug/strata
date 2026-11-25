@@ -32,6 +32,7 @@ import re
 import numpy as np
 
 from strata.data.store import MarketStore
+from strata.research import evidence as EV
 from strata.research import ledger as LG
 from strata.research import robust as R
 from strata.research.features import A, CODE_NAMES, FEATURES, OutcomeSpec, Pred, SessionFeatures, T, cond_text, feature_def, get_features, to_study
@@ -321,56 +322,10 @@ def _split(days: list[str], holdout: dict | None) -> dict:
 
 
 def _block(ft: SessionFeatures, ev: dict, pm: np.ndarray, direction: str, reps: int = PLAN_REPS, robust: bool = True) -> dict:
-    """Statistics of one configuration inside one period."""
-    out = ev["outcome"]
-    code = out.code
-    qual = ev["qualifying"] & pm
-    base = ev["evaluable"] & pm
-    res_q = qual & (code != A)
-    res_b = base & (code != A)
-    rest = res_b & ~ev["qualifying"]
-    n, k = int(res_q.sum()), int((code[res_q] == T).sum())
-    bn, bk = int(res_b.sum()), int((code[res_b] == T).sum())
-    dates = np.array(ft.dates)
-    sgn = -1.0 if direction == "down" else 1.0
-    er = out.end_ret
-    b = {"n": n, "hits": k, "probability": (k / n) if n else None, "ambiguous": int((qual & (code == A)).sum()), "sessions": int(qual.sum()),
-         "baseline_n": bn, "baseline_probability": (bk / bn) if bn else None, "lift": (k / n - bk / bn) if n and bn else None,
-         "avg_end_return_pct": float(er[qual].mean()) if qual.any() else None, "rest_avg_end_return_pct": float(er[base & ~ev["qualifying"]].mean()) if (base & ~ev["qualifying"]).any() else None,
-         "ci95": R.wilson(k, n), "p_value": None, "p_iid": None, "clusters": 0, "design_effect": None, "end_return_diff_pct": None, "end_return_p_value": None, "first": None, "last": None}
-    if qual.any():
-        qd = dates[qual]
-        b["first"], b["last"] = str(qd[0]), str(qd[-1])
-    if b["avg_end_return_pct"] is not None and b["rest_avg_end_return_pct"] is not None:
-        b["end_return_diff_pct"] = b["avg_end_return_pct"] - b["rest_avg_end_return_pct"]
-        b["directional_diff_pct"] = sgn * b["end_return_diff_pct"]
-    if not n or not rest.any():
-        return b
-    hq, hr = (code[res_q] == T).astype(float), (code[rest] == T).astype(float)
-    if robust:
-        lt = R.lift_test(hq, dates[res_q], hr, dates[rest], "week", reps)
-        ci = R.cluster_prop_ci(hq, dates[res_q], "week", reps)
-        b.update(p_value=lt["p_value"], p_iid=lt["p_iid"], clusters=lt["cond_clusters"], design_effect=ci["design_effect"], ci95=ci["ci"], lift_ci95=lt["ci"], rest_probability=lt["rest_p"])
-        if direction != "either":
-            md = R.mean_diff_test(er[qual], dates[qual], er[base & ~ev["qualifying"]], dates[base & ~ev["qualifying"]], "week", reps)
-            b["end_return_p_value"] = md["p_value"]
-    else:
-        b["p_iid"] = _two_prop(k, n, int(hr.sum()), int(hr.size))
-        b["clusters"] = int(np.unique(R.cluster_ids(dates[res_q], "week")).size)
-    return b
+    """Statistics of one configuration inside one period (the shared evidence function)."""
+    return EV.of(ft, ev, pm, direction, reps=reps, robust=robust, mean_diff=True)
 
 
-def _two_prop(k1, n1, k2, n2):
-    if not n1 or not n2:
-        return None
-    pp = (k1 + k2) / (n1 + n2)
-    if not 0 < pp < 1:
-        return None
-    from scipy.stats import norm
-    return float(2 * (1 - norm.cdf(abs(k1 / n1 - k2 / n2) / math.sqrt(pp * (1 - pp) * (1 / n1 + 1 / n2)))))
-
-
-# ----------------------------------------------------------------------------- execution
 def run_plan(plan: dict, store: MarketStore | None = None, scope: str | None = None, progress=None, should_cancel=None, run_id: str | None = None) -> dict:
     """Evaluate every configuration of a plan. `scope` is the research session the ledger
     tracks trials and the final test period under; without one the split is local and the
@@ -669,7 +624,7 @@ def observations(res: dict, key: str, store: MarketStore | None = None, period: 
         q &= ft.window(*per[period])
     elif per and not row.get("test"):
         q &= ~ft.window(*per["test"])  # the final test period of a configuration that was not scored on it stays unseen
-    cols = {p.feature: ft.col(p.feature, oc.entry) for p in preds}
+    cols = {p.name: p.values(ft, oc.entry) for p in preds}
 
     def which(d):
         return next((k for k in ("train", "validate", "test") if per.get(k) and per[k][0] <= d <= per[k][1]), None)

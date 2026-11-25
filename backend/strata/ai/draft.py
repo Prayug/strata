@@ -190,6 +190,17 @@ def fmt_time(t: Optional[str], stated: Optional[str] = None) -> str:
     return f"{base} - you said \"{stated}\"" if stated and stated.lower() not in base.lower() else base
 
 
+SESSION_SO_FAR = {"time", "minutes_since_open", "from_open_pct", "max_decline_from_open_pct", "max_rally_from_open_pct", "bounce_from_low_pct"}
+
+
+def _during_session(expr: str) -> bool:
+    try:
+        u = X.names_used(expr)
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(u & SESSION_SO_FAR or {x.split(".", 1)[1] for x in u if "." in x} & SESSION_SO_FAR)
+
+
 def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None = None) -> dict:
     """Draft -> engine configs + an itemised interpretation (stated / assumed / missing)."""
     store = store or MarketStore()
@@ -281,7 +292,9 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
         else:
             add("Position", f"{d.quantity} x {STRUCTURES.get(d.structure, d.structure)}", field="structure")
         add("Entry", fmt_time(d.entry_time, d.entry_time_stated) + (" - once per eligible session" if d.entry_time else " - first signal each session"), "stated" if d.entry_time or d.conditions or d.sequence else "assumed", "entry_time")
-        intraday_rule = any(X.needs_intraday(c.expr) for c in d.conditions) or bool(d.sequence)
+        # a rule that reads the clock, or a move measured from the session's own open, can only become true during the
+        # session: assuming "enter at the open" for it would produce a strategy that can never trade
+        intraday_rule = any(X.needs_intraday(c.expr) or _during_session(c.expr) for c in d.conditions) or bool(d.sequence)
         same_day = bool(d.exit_time) and not d.hold_sessions and not d.exit_weekday
         multi_day = bool(d.hold_sessions or d.exit_weekday or d.hold_to_expiration)
         short_premium = d.structure in ("short_put", "short_call", "bull_put_spread", "bear_call_spread", "iron_condor", "iron_butterfly", "short_strangle", "short_straddle", "covered_call")

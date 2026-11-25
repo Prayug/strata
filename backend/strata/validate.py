@@ -54,7 +54,7 @@ def _trade_key(t: dict) -> tuple:
             tuple((l["right"], l["strike"], l["expiration"], l["side"], l["contracts"], round(l["entry_price"], 6), round(l["exit_price"], 6), l.get("price_source")) for l in t["legs"]))
 
 
-TOTAL = 13
+TOTAL = 14
 
 
 def run_validation(workdir: str | Path | None = None, keep: bool = False, sessions: int = 3, out=print) -> dict:
@@ -103,7 +103,8 @@ def run_validation(workdir: str | Path | None = None, keep: bool = False, sessio
               and step(10, "No simulated data anywhere", lambda: _s10(ctx))
               and step(11, "A hypothesis plan agrees with the session engine and with plain arithmetic", lambda: _s11(ctx))
               and step(12, "Scrambling the future changes no past decision", lambda: _s12(ctx))
-              and step(13, "Sources are verified by live requests, or reported as unverified", lambda: _s13(ctx)))
+              and step(13, "Sources are verified by live requests, or reported as unverified", lambda: _s13(ctx))
+              and step(14, "A question in words becomes a graph that agrees with plain arithmetic", lambda: _s14(ctx)))
         report["ok"] = bool(ok)
     finally:
         report["finished"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -334,7 +335,7 @@ def _s8(ctx: dict) -> str:
     from strata.data.providers.sources import Contract, occ_symbol
     st, ds = ctx["store"], ctx["dataset"]
     src = next(s for s in S.option_bar_sources(st) if s.name == ds.provider)
-    checked, refetched, max_age = 0, 0, 300
+    checked, refetched, max_age, flagged = 0, 0, 300, 0
     with S._client() as client:
         for t in ctx["manual_trades"]:
             d = date.fromisoformat(t["entry_date"])
@@ -351,14 +352,21 @@ def _s8(ctx: dict) -> str:
                     bar = mine.filter(pl.col("end") <= ts).tail(1)  # the last print that had finished by the fill
                     need(not bar.is_empty(), f"{occ}: no stored print at or before the {which} at {ts}")
                     end, close = int(bar["end"][0]), float(bar["close"][0])
-                    need(ts - end <= max_age, f"{occ}: the {which} used a print {ts - end}s old (limit {max_age}s)")
+                    if ts - end > max_age:
+                        # The one case in which the engine may use an older print: the backtest window ended with the exit still waiting for
+                        # a fresh print, so the position was closed at the last known one. That is only acceptable when the trade says so.
+                        need(which == "exit" and "closed_at_last_known_quote" in (t.get("flags") or []),
+                             f"{occ}: the {which} used a print {ts - end}s old (limit {max_age}s) and the trade is not flagged as closed at the last known print")
+                        flagged += 1
                     need(abs(close - px) < 5e-5, f"{occ}: {which} price {px} is not the stored print {close}")
                     again = fresh.filter(pl.col("end") == end)
                     need(not again.is_empty(), f"{occ}: the provider's fresh copy has no bar ending at {end}")
                     need(abs(float(again["close"][0]) - close) < 5e-3, f"{occ}: stored print {close} differs from the provider's fresh copy {float(again['close'][0])}")
                     checked += 1
                 refetched += 1
-    return f"{checked} fill prices recomputed from the stored bars without the engine (each within {max_age}s of its print) and matched against {refetched} freshly downloaded contract histories from {src.label}"
+    note = "each within {0}s of its print".format(max_age) if not flagged else (
+        f"{checked - flagged} within {max_age}s of their print; {flagged} exit{'s' if flagged != 1 else ''} had no fresh print before the window ended and {'are' if flagged != 1 else 'is'} flagged as closed at the last known print")
+    return f"{checked} fill prices recomputed from the stored bars without the engine ({note}) and matched against {refetched} freshly downloaded contract histories from {src.label}"
 
 
 def _s9(ctx: dict) -> str:
@@ -502,3 +510,46 @@ def _s13(ctx: dict) -> str:
     miss = next((s.get("missing_pct") for s in y["steps"] if s.get("dataset") == "1-minute bars"), None)
     return (f"Yahoo verified live: daily history from {depth['daily bars']}, 1-minute bars from {depth.get('1-minute bars')}" + (f" ({miss}% of expected bars missing)" if miss is not None else "")
             + f", {y.get('bars_per_second', 0):,} bars/s. Alpaca: UNVERIFIED (no credentials in this run)")
+
+
+def _s14(ctx: dict) -> str:
+    """V5: a question in plain English becomes a typed research graph. The graph must validate, state what it
+    assumed, leave nothing unread, give a headline frequency equal to a plain loop over the stored daily rows that
+    shares no code with it, keep the final test period out of that number, and compare against matched sessions.
+    A strategy written as a sentence must keep every condition it understood and report the one it did not."""
+    from strata.ai import nl_graph as NG
+    from strata.ai import nl_stateful as NS
+    from strata.research import graph as G
+    st = ctx["store"]
+    known = sorted(st.stored_symbols())
+    g = NG.plan("Does SPY tend to recover after down days of 2% or more, even after controlling for volatility?", known, "SPY", st)
+    need(g is not None, "the question was not turned into a research graph")
+    v = G.validate(g)
+    need(not v["errors"], "the graph does not validate: " + "; ".join(str(e) for e in v["errors"][:2]))
+    need(not g.get("unsupported"), f"part of the question was not read: {g.get('unsupported')}")
+    res = G.run_graph(g, st, scope=None)
+    need(not res["failed"], f"{res['failed']} step(s) of the graph failed")
+    by_kind = {n["result"]["kind"]: n["result"] for n in res["nodes"] if n.get("result")}
+    need({"probability", "matched", "robustness", "validation"} <= set(by_kind), f"the graph is missing an analysis: has {sorted(by_kind)}")
+    pr, val = by_kind["probability"], by_kind["validation"]
+    a, b = pr["window"]
+    need(val["holdout"]["start"] > b, f"the final test period ({val['holdout']['start']} onward) overlaps the sessions that were explored (through {b})")
+    rows = st.read_daily("SPY").sort("date").to_dicts()
+    n = k = 0
+    for i in range(1, len(rows) - 1):
+        if a <= str(rows[i]["date"]) <= b and (rows[i]["close"] / rows[i - 1]["close"] - 1) * 100 <= -2.0:
+            n += 1
+            k += rows[i + 1]["close"] > rows[i]["close"]
+    e = pr["evidence"]
+    need((e["n"], e["hits"]) == (n, k), f"the graph counts {e['hits']} of {e['n']}; plain arithmetic on the daily rows gives {k} of {n}")
+    m = (by_kind["matched"].get("frequency") or {})
+    need(m.get("verdict") in ("persists", "mixed", "not_distinguishable", "reverses", "not_estimable"), f"the matched comparison returned no verdict ({m.get('verdict')})")
+    need(m.get("verdict") == "not_estimable" or 0 < m.get("treated_usable", 0) <= m.get("treated", 0) == e["n"], "the matched comparison is not about the same sessions as the headline")
+    d = NS.enrich("Buy a 0DTE at-the-money SPY call when SPY is below its open and the moon is full, between 10:00 and 15:00 ET. Take profit at 50%, stop at 30%.", known, "SPY")
+    exprs = [c.expr for c in d.conditions]
+    need("from_open_pct < 0" in exprs and any(x.startswith("time >= hhmm(10, 0)") for x in exprs), f"a condition of the described strategy was lost: {exprs}")
+    need(d.unsupported == ["the moon is full"], f"the part that cannot be represented was not reported as such: {d.unsupported}")
+    return (f"{len(g['nodes'])}-step graph, {len(g.get('assumptions', []))} assumption(s) stated, nothing unread. After a 2%+ down day SPY closed higher the next session on {e['hits']} of {e['n']} "
+            f"({a} to {b}): identical by plain arithmetic. Matched comparison: {m['verdict'].replace('_', ' ')}. Final test period from {val['holdout']['start']} untouched. "
+            "A described strategy kept both conditions it understood and reported the one it could not represent")
+

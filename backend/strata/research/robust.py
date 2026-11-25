@@ -316,6 +316,33 @@ def wilson(k: int, n: int, z: float = 1.96) -> list[float | None]:
     return [max(0.0, c - h), min(1.0, c + h)]
 
 
+def two_prop_p(k1: int, n1: int, k2: int, n2: int) -> float | None:
+    """Two-sided p-value of a two-proportion z-test that assumes independent observations
+    (None when it cannot be computed)."""
+    if n1 <= 0 or n2 <= 0:
+        return None
+    pp = (k1 + k2) / (n1 + n2)
+    if not 0 < pp < 1:
+        return None
+    se = math.sqrt(pp * (1 - pp) * (1 / n1 + 1 / n2))
+    if se <= 0:
+        return None
+    from scipy.stats import norm
+    return float(2 * (1 - norm.cdf(abs((k1 / n1 - k2 / n2) / se))))
+
+
+def iid_mean_ci(x, reps: int = 2000, seed: int = 1) -> list[float | None]:
+    """Percentile bootstrap interval of a mean that treats observations as independent.
+    Used only for descriptive tables; conclusions use the cluster intervals."""
+    x = _arr(x)
+    x = x[np.isfinite(x)]
+    if x.size < 3:
+        return [None, None]
+    rng = np.random.default_rng(seed)
+    m = x[rng.integers(0, x.size, (reps, x.size))].mean(axis=1)
+    return [float(np.quantile(m, 0.025)), float(np.quantile(m, 0.975))]
+
+
 def cluster_prop_ci(hits, dates, by: str = "week", reps: int = REPS, seed: int = 7) -> dict:
     """A frequency (hits / observations) with a calendar-cluster interval next to the Wilson
     interval that assumes independence. `design_effect` > 1 means the sample carries less

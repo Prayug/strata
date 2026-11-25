@@ -19,6 +19,7 @@ from __future__ import annotations
 import numpy as np
 
 from strata.data.store import MarketStore
+from strata.research import evidence as EV
 from strata.research import robust as R
 from strata.research.features import A, OutcomeSpec, Pred, T, cond_text, get_features
 
@@ -33,24 +34,12 @@ COMMON = [_param("symbol", "Symbol", "symbol", "SPY"), _param("start", "From", "
 
 
 def _row(ft, preds: list[Pred], oc: OutcomeSpec, pm: np.ndarray, label: str, reps: int = 400) -> dict:
-    ev = ft.evaluate(preds, oc)
-    out = ev["outcome"]
-    q, base = ev["qualifying"] & pm, ev["evaluable"] & pm
-    rq, rb = q & (out.code != A), base & (out.code != A)
-    rest = rb & ~ev["qualifying"]
-    n, k = int(rq.sum()), int((out.code[rq] == T).sum())
-    bn, bk = int(rb.sum()), int((out.code[rb] == T).sum())
-    dates = np.array(ft.dates)
-    er = out.end_ret[q]
-    row = {"label": label, "n": n, "hits": k, "frequency": (k / n) if n else None, "baseline": (bk / bn) if bn else None, "difference": (k / n - bk / bn) if n and bn else None,
-           "avg_return_pct": float(er.mean()) if er.size else None, "median_return_pct": float(np.median(er)) if er.size else None, "thin": n < 30, "ci95": R.wilson(k, n), "p_value": None,
-           "cell": {"preds": [p.dump() for p in preds], "outcome": oc.dump()}, "condition": cond_text(preds, ft.symbol), "evaluated": int(base.sum())}
-    if n and rest.any():
-        hq = (out.code[rq] == T).astype(float)
-        row["ci95"] = R.cluster_prop_ci(hq, dates[rq], "week", reps)["ci"]
-        row["p_value"] = R.lift_test(hq, dates[rq], (out.code[rest] == T).astype(float), dates[rest], "week", reps)["p_value"]
-        if er.size >= 6:
-            row["return_ci95"] = R.cluster_mean_ci(er, dates[q], "week", reps)["ci"]
+    e = EV.of(ft, ft.evaluate(preds, oc), pm, oc.direction, reps=reps, return_ci=True)
+    row = {"label": label, "n": e["n"], "hits": e["hits"], "frequency": e["probability"], "baseline": e["baseline_probability"], "difference": e["lift"],
+           "avg_return_pct": e["avg_end_return_pct"], "median_return_pct": e["median_end_return_pct"], "thin": e["n"] < 30, "ci95": e["ci95"], "p_value": e["p_value"],
+           "cell": {"preds": [p.dump() for p in preds], "outcome": oc.dump()}, "condition": cond_text(preds, ft.symbol), "evaluated": e["evaluated"]}
+    if e["return_ci95"][0] is not None:
+        row["return_ci95"] = e["return_ci95"]
     return row
 
 

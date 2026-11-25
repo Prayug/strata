@@ -196,11 +196,12 @@ test("the collector, source verification and bulk import are operated from the d
   await page.getByRole("tab", { name: /Collector/ }).click();
   await expect(page.getByTestId("collector").getByLabel("Strikes each side")).toHaveValue("6");
   // a source with no credentials is unverified, whatever its tests say
-  await page.getByRole("tab", { name: /Verify sources/ }).click();
-  const src = page.getByTestId("sources-panel");
+  await page.getByTestId("tab-sources").click();
+  const src = page.getByTestId("marketplace");
   await expect(src.getByTestId("source-alpaca").getByTestId("verification")).toContainText("unverified");
-  await expect(src).toContainText("Other legitimate sources");
-  // bulk import: the layout is recognised from the columns, then streamed in
+  await expect(src).toContainText("Files you obtain and import");
+  // bulk import (an advanced tool): the layout is recognised from the columns, then streamed in
+  await page.getByRole("button", { name: /advanced tools/ }).click();
   await page.getByRole("tab", { name: /Bulk import/ }).click();
   const imp = page.getByTestId("bulk-import");
   await imp.getByTestId("import-path").fill(path.join(process.env.E2E_DATA_DIR || "", "fixtures", "vendor_quotes.zip"));

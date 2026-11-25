@@ -1,7 +1,7 @@
 /* Data page panels added in V4: the background collector (settings, coverage calendar, history, storage, quality),
    live verification of what each source actually delivers, and streaming bulk imports with layout recognition. */
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Check, CircleAlert, ExternalLink, FolderSearch, Loader2, Play, Radio, ShieldCheck, ShieldQuestion, Upload } from "lucide-react";
+import { Check, CircleAlert, FolderSearch, Loader2, Play, Radio, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Tip } from "@/components/ui";
@@ -22,6 +22,7 @@ export function CollectorPanel({ onJob }: { onJob: (id: string) => void }) {
   useEffect(() => { if (q.data && !dirty) setCfg(q.data.config); }, [q.data]); // eslint-disable-line
   const save = useMutation({ mutationFn: (c: any) => api.put<any>("/api/collector/config", c), onSuccess: (r) => { setDirty(false); setCfg(r.config); (r.notes || []).forEach((n: string) => toast.info(n)); queryClient.invalidateQueries({ queryKey: ["collector"] }); toast.success("Collector settings saved"); }, onError: (e: any) => toast.error(e.message) });
   const run = useMutation({ mutationFn: () => api.post<{ id: string }>("/api/collector/run"), onSuccess: (r) => { onJob(r.id); queryClient.invalidateQueries({ queryKey: ["collector"] }); }, onError: (e: any) => toast.error(e.message) });
+  const hq = useQuery({ queryKey: ["collector-health"], queryFn: () => api.get<any>("/api/collector/health"), enabled: false, retry: false });
   const d = q.data;
   if (!d || !cfg) return <div className="lab p-4 text-[13px] dim">Loading the collector…</div>;
   const up = (patch: any) => { setCfg((c: any) => ({ ...c, ...patch })); setDirty(true); };
@@ -88,6 +89,29 @@ export function CollectorPanel({ onJob }: { onJob: (id: string) => void }) {
         </div>
         <div className="mt-3 text-xs dim">Strikes are chosen around the close BEFORE each session and trimmed nearest-the-money first when the request budget is reached. Nothing is deleted unless clean-up is switched on. {d.how_to_schedule}</div>
       </Section>
+      <Section title="If a session is missed" sub="what can still be fetched later, and what cannot"
+        right={<button className="btn sm" onClick={() => hq.refetch()} disabled={hq.isFetching} data-testid="collector-health">{hq.isFetching ? <Loader2 className="animate-spin" /> : <Play />}Check the sources now</button>}>
+        <Callout tone="warn" title="Collection only happens while this is running">{d.offline}</Callout>
+        {hq.data && (
+          <div className="mt-3 flex flex-wrap gap-2 text-xs" data-testid="collector-health-result">
+            {hq.data.sources.map((h: any) => <span key={h.source} className={cn("chip", h.ok ? "" : "!border-down/50")}><span className={h.ok ? "text-up" : "text-down"}>{h.ok ? "●" : "✕"}</span>{h.source}: {h.ok ? "reachable" : "not reachable"}{h.seconds !== undefined ? ` in ${h.seconds}s` : ""}{!h.ok && h.detail ? ` (${String(h.detail).slice(0, 80)})` : ""}</span>)}
+            <span className="chip"><span className={hq.data.daemon.alive ? "text-up" : "text-faint"}>{hq.data.daemon.alive ? "●" : "○"}</span>unattended daemon: {hq.data.daemon.alive ? `alive, reported ${hq.data.daemon.seconds_ago}s ago` : hq.data.daemon.seconds_ago === null ? "never started on this machine" : `last reported ${Math.round(hq.data.daemon.seconds_ago / 60)} min ago`}</span>
+          </div>
+        )}
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          {([["pending", "Waiting to be retried", "A failed session is retried with growing delays (30 minutes, doubling, at most a day)."], ["abandoned", "Gave up after repeated failures", "Still fetchable by hand with Collect now while the source keeps it."], ["unrecoverable", "No longer obtainable from this source", "The provider has dropped the data. It is recorded as missing, never filled in."]] as const).map(([k, t, help]) => (
+            <div key={k} className="card-2 px-3 py-2.5">
+              <div className="flex items-baseline justify-between"><span className="text-[12.5px] font-medium">{t}</span><span className={cn("num text-[15px]", (d.queue?.[k]?.length || 0) > 0 && (k === "pending" ? "text-warn" : "text-down"))}>{d.queue?.[k]?.length || 0}</span></div>
+              <div className="mt-0.5 text-[11px] dim">{help}</div>
+              {(d.queue?.[k] || []).slice(0, 5).map((x: any) => <div key={x.id} className="mt-1 text-xs soft" title={x.last_error}>{x.symbol} {x.session} · attempt {x.attempts}{x.not_before && k === "pending" ? ` · next ${ago(x.not_before).replace(" ago", "")}` : ""}</div>)}
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 overflow-auto rounded-lg border border-line">
+          <table className="t" data-testid="recoverability"><thead><tr><th>Data</th><th>Source</th><th>How far back it can be fetched</th><th>After a missed session</th></tr></thead>
+            <tbody>{(d.recoverability || []).map((x: any) => <tr key={x.data}><td className="font-medium">{x.data}</td><td className="soft">{x.source}</td><td className="soft whitespace-normal">{x.window}</td><td className="whitespace-normal dim">{x.after_a_miss}</td></tr>)}</tbody></table>
+        </div>
+      </Section>
       <Section title="Collection history" sub={`${d.history.length} recent cycles`} open={d.history.length > 0}>
         {d.history.length === 0 ? <div className="text-[13px] dim">No cycle has run yet.</div> : (
           <div className="max-h-72 overflow-auto rounded-lg border border-line">
@@ -107,60 +131,6 @@ export function CollectorPanel({ onJob }: { onJob: (id: string) => void }) {
             <tbody>{d.quality.map((x: any) => <tr key={x.symbol}><td>{x.symbol}</td><td className="r num">{x.contract_sessions.toLocaleString()}</td><td className="r num">{x.with_trades?.toLocaleString() ?? "—"}</td><td className="r num">{x.without_trades_pct != null ? `${x.without_trades_pct}%` : "—"}</td><td className="r num">{x.thinly_traded_pct != null ? `${x.thinly_traded_pct}%` : "—"}</td><td className="r num">{x.median_bars_per_contract ?? "—"}</td><td className="num dim">{x.first ? `${x.first} → ${x.last}` : x.note}</td></tr>)}</tbody></table>
         </div>
         <div className="mt-2 text-xs dim">A contract without trades did not print in the session. A thinly traded one printed in fewer than ten minutes, so its last price is often stale; the engine refuses stale prints rather than using them.</div>
-      </Section>
-    </div>
-  );
-}
-
-/* ----------------------------------------------------------------------------- source verification */
-const VER: Record<string, { Icon: any; cls: string }> = { verified: { Icon: ShieldCheck, cls: "text-up border-up/40" }, "partly verified": { Icon: CircleAlert, cls: "text-warn border-warn/40" }, failed: { Icon: CircleAlert, cls: "text-down border-down/40" } };
-
-export function SourcesPanel({ onJob }: { onJob: (id: string) => void }) {
-  const q = useQuery({ queryKey: ["provider-catalog"], queryFn: () => api.get<any>("/api/data/providers/catalog"), refetchInterval: 8000 });
-  const check = useMutation({ mutationFn: (source: string) => api.post<{ id: string }>("/api/data/providers/benchmark", { source }), onSuccess: (r) => onJob(r.id), onError: (e: any) => toast.error(e.message) });
-  if (!q.data) return <div className="lab p-4 text-[13px] dim">Loading sources…</div>;
-  return (
-    <div className="lab mx-auto flex max-w-[1180px] flex-col gap-4 p-1" data-testid="sources-panel">
-      <div><h2>What each source actually delivers</h2><p className="mt-1 max-w-[780px] text-[13.5px] soft">{q.data.note} A live check makes a handful of small read-only requests and records depth, speed, missing bars and entitlements. It stores nothing in your market data.</p></div>
-      <div className="flex flex-col gap-3">
-        {q.data.sources.map((s: any) => {
-          const b = s.benchmark, v = VER[s.verification] || { Icon: ShieldQuestion, cls: "text-warn border-warn/40" };
-          return (
-            <div key={s.name} className="card px-4 py-3.5" data-testid={`source-${s.name}`}>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[14px] font-medium">{s.label}</span>
-                <span className="chip !h-5 !text-[11px]">{s.tier === "free" ? "free, no account" : s.tier === "free_key" ? "free account" : "paid"}</span>
-                <span className={cn("chip !h-6", v.cls)} data-testid="verification"><v.Icon className="size-3.5" />{s.verification}{b?.measured_at ? ` · ${ago(b.measured_at)}` : ""}</span>
-                <span className="flex-1" />
-                <button className="btn sm" disabled={check.isPending} onClick={() => check.mutate(s.name)}><Play />Run the live check</button>
-              </div>
-              <div className="mt-1 text-[13px] soft">{s.description}</div>
-              {!s.available && <div className="mt-1.5 text-xs text-warn">{s.availability}</div>}
-              {b?.reason && <div className="mt-1.5 text-xs text-warn">{b.reason}</div>}
-              <div className="mt-2 grid gap-x-6 gap-y-1 text-xs md:grid-cols-2">
-                <div><div className="mb-0.5 font-medium dim">Documented</div>{s.claim.map((c: any, i: number) => <div key={i} className="dim">· {c.data} {c.observation} {c.resolution}{c.first ? `, ${c.first} → ${c.last}` : ""}{c.note ? ` (${c.note})` : ""}</div>)}</div>
-                <div><div className="mb-0.5 font-medium dim">Measured here</div>
-                  {!b?.steps?.length ? <div className="text-faint">· nothing measured yet</div> : b.steps.map((st: any, i: number) => (
-                    <div key={i} className={st.ok ? "soft" : "text-down"}>{st.ok ? "✓" : "✕"} {st.dataset || st.name}: {st.ok ? [st.rows != null && `${Number(st.rows).toLocaleString()} rows`, st.first && `${st.first} → ${st.last || ""}`, st.missing_pct != null && `${st.missing_pct}% of expected bars missing`, st.contract_coverage_pct != null && `${st.contract_coverage_pct}% of contracts had trades`, `${st.seconds}s`].filter(Boolean).join(" · ") : st.error}</div>
-                  ))}
-                  {(b?.entitlements || []).map((e: any, i: number) => <div key={`e${i}`} className={e.granted ? "text-up" : "text-warn"}>{e.granted ? "✓ granted" : "✕ not granted"}: {e.what} <span className="dim">({String(e.detail).slice(0, 90)})</span></div>)}
-                  {b?.bars_per_second && <div className="dim">· {b.bars_per_second.toLocaleString()} bars per second{Object.keys(b.rate_limits || {}).length ? ` · rate-limit headers: ${Object.entries(b.rate_limits).map(([k, x]) => `${k}=${x}`).join(", ")}` : " · no rate-limit headers sent"}</div>}
-                </div>
-              </div>
-              {(b?.notes || []).map((n: string, i: number) => <div key={i} className="mt-1.5 text-xs dim">· {n}</div>)}
-            </div>
-          );
-        })}
-      </div>
-      <Section title="Other legitimate sources" sub="terms read from public pages, not measured by Strata">
-        <div className="overflow-auto rounded-lg border border-line">
-          <table className="t"><thead><tr><th>Source</th><th>Cost</th><th>Options</th><th>Underlying</th><th>How to use it here</th></tr></thead>
-            <tbody>{q.data.external.map((e: any) => (
-              <tr key={e.name}><td className="whitespace-nowrap"><a className="inline-flex items-center gap-1 text-info hover:underline" href={e.url} target="_blank" rel="noreferrer">{e.name}<ExternalLink className="size-3" /></a><div className="text-[11px] text-faint">{e.integrated === "import" ? "via bulk import" : e.integrated ? "built in" : "not integrated"}</div></td>
-                <td className="max-w-[190px] text-xs soft">{e.cost}</td><td className="max-w-[260px] text-xs soft">{e.options}</td><td className="max-w-[180px] text-xs soft">{e.underlying}</td><td className="max-w-[260px] text-xs dim">{e.how}<div className="text-faint">{e.limits}</div></td></tr>
-            ))}</tbody></table>
-        </div>
-        <div className="mt-2 text-xs dim">Strata never calls a paid service on its own. Paid data enters only as files you bought and import yourself, or after you approve a stated cost.</div>
       </Section>
     </div>
   );

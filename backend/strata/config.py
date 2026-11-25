@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ENGINE_VERSION = "4.0.0"
+ENGINE_VERSION = "5.0.0"
 
 
 def _load_dotenv() -> None:

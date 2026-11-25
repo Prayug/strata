@@ -158,6 +158,9 @@ INDICATORS = {
 }
 
 
+SESSION_ANCHORED = {"vwap"}  # restart with each session, so they have no value until that session's first bar has completed
+
+
 def compute(name: str, params: dict, o, h, l, c, v, session_id) -> dict[str, np.ndarray]:
     p = {**INDICATORS[name]["params"], **(params or {})}
     c = np.ascontiguousarray(c, dtype=np.float64)

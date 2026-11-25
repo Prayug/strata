@@ -16,8 +16,8 @@ Results are stored with the time they were measured. A source whose live check h
 run - for example Alpaca without credentials - is reported as UNVERIFIED, whatever its
 mocked tests say. Nothing is written to the market store by a benchmark.
 
-`EXTERNAL` lists further legitimate sources that Strata can use through the bulk importer
-or does not integrate yet; their terms were read from public pages, not measured.
+The researched list of every legitimate source (free, low-cost, broker, academic, bulk
+files) lives in `market.py`, the provider marketplace, which joins it with these measurements.
 """
 from __future__ import annotations
 
@@ -28,35 +28,7 @@ from datetime import date, datetime, timedelta, timezone
 from strata.config import get_settings
 from strata.core import calendar as cal
 
-BENCHABLE = ["yahoo", "cboe", "yahoo_options", "github_eod", "dolthub", "alpaca"]
-
-EXTERNAL = [
-    {"name": "Alpaca Market Data", "integrated": "alpaca", "cost": "free account", "options": "1-minute option TRADE bars since February 2024 (indicative feed, at least 15 minutes old); no historical quotes on the free plan",
-     "underlying": "1-minute stock bars since 2016 (IEX feed on the free plan; SIP needs a paid plan)", "limits": "200 requests per minute on the free plan", "url": "https://docs.alpaca.markets/docs/historical-option-data",
-     "how": "Connect in Settings, then run the live check on this page."},
-    {"name": "DoltHub post-no-preference/options", "integrated": "dolthub", "cost": "free", "options": "end-of-day option chains (bid/ask, greeks) for US equities and ETFs, 2019 onward; three expirations per date", "underlying": "-",
-     "limits": "public SQL API; large pulls should use a local clone", "url": "https://www.dolthub.com/repositories/post-no-preference/options", "how": "Built in (Data -> Sources)."},
-    {"name": "Cboe DataShop", "integrated": "import", "cost": "paid per file (roughly tens of dollars per symbol-year for end-of-day; more for intervals)", "options": "end-of-day and 1/5/15/30-minute interval bid/ask quotes with greeks, 2004 onward; SPX included",
-     "underlying": "-", "limits": "purchased files, redistribution not allowed", "url": "https://datashop.cboe.com/", "how": "Download the CSV/ZIP and import it: the layout is recognised automatically."},
-    {"name": "OptionsDX", "integrated": "import", "cost": "free downloads with an account (personal use)", "options": "end-of-day and intraday option chains for SPY, QQQ, SPX and others as monthly CSV files", "underlying": "-",
-     "limits": "manual download; check the site's terms for your use", "url": "https://www.optionsdx.com/", "how": "Import the downloaded files or the whole folder: the wide [C_BID]/[P_BID] layout is recognised automatically."},
-    {"name": "historicaloptiondata.com", "integrated": "import", "cost": "paid, one-off (low hundreds of dollars for the full end-of-day history)", "options": "end-of-day chains for all US equity options, 2002 onward; 1-minute data also sold", "underlying": "-",
-     "limits": "purchased files", "url": "https://www.historicaloptiondata.com/", "how": "Import the ZIP archives directly; nothing needs to be extracted."},
-    {"name": "Massive (formerly Polygon.io) flat files", "integrated": "import", "cost": "free tier is limited; flat files need a paid plan (about $29-$199 a month depending on depth)", "options": "minute and day aggregates (TRADE bars) for every contract; quotes on higher plans",
-     "underlying": "minute aggregates", "limits": "5 API calls a minute on the free tier; what the free tier includes for options is described inconsistently, so check the current pricing page", "url": "https://massive.com/pricing",
-     "how": "Import the day or minute aggregate files; tickers of the form O:SPY... are stored as option trade bars."},
-    {"name": "Databento", "integrated": "import", "cost": "pay per use; new accounts receive free credit (about $125)", "options": "full OPRA history: trades, quotes and OHLCV bars per contract", "underlying": "US equities",
-     "limits": "cost is quoted per request before it is confirmed", "url": "https://databento.com/pricing", "how": "Export OHLCV bars as CSV and import them. A direct adapter would call a paid API and is therefore not built in."},
-    {"name": "ThetaData", "integrated": None, "cost": "free tier with limited history; paid tiers from about $40 a month", "options": "end-of-day on the free tier; tick-level trades and quotes on paid tiers", "underlying": "-",
-     "limits": "requires their local terminal application", "url": "https://www.thetadata.net/", "how": "Export to CSV and import; end-of-day exports are recognised."},
-    {"name": "Tradier", "integrated": None, "cost": "free with a brokerage or sandbox account", "options": "current chains and quotes; expired contracts are not kept", "underlying": "daily and intraday bars",
-     "limits": "useful for collecting data going forward, not for history", "url": "https://documentation.tradier.com/", "how": "Not integrated. Strata's collector uses a source that needs no account."},
-    {"name": "Stooq", "integrated": "import", "cost": "free", "options": "-", "underlying": "bulk daily, hourly and 5-minute files for US stocks and ETFs (5-minute history is short)", "limits": "manual bulk download",
-     "url": "https://stooq.com/db/h/", "how": "Import the downloaded ZIP: the <TICKER>,<PER>,<DATE> layout is recognised."},
-    {"name": "FirstRate Data / Kibot", "integrated": "import", "cost": "paid, one-off (tens to low hundreds of dollars per bundle)", "options": "-", "underlying": "1-minute bars for ETFs and stocks back to the 2000s",
-     "limits": "purchased files", "url": "https://firstratedata.com/", "how": "Import the headerless CSV files (date,time,open,high,low,close,volume)."},
-]
-
+BENCHABLE = ["yahoo", "cboe", "yahoo_options", "github_eod", "dolthub", "alpaca", "massive", "alphavantage"]
 
 def _path():
     return get_settings().data_dir / "provider_benchmarks.json"
@@ -135,6 +107,8 @@ def benchmark_source(name: str, progress=None, should_cancel=None, symbol: str =
     pr = _Probe(name)
     ok, status = src.available()
     pr.out["label"], pr.out["tier"] = src.label, src.tier
+    if name == "alphavantage":
+        return _alphavantage(src, pr, ok, progress)
     if not ok:
         pr.out.update(verified=False, status="unverified", reason=f"No live request could be made: {status}. Mocked tests cover the request and parsing logic only; whether this account can actually read the data is unknown.")
         _save(name, pr.out)
@@ -232,6 +206,33 @@ def benchmark_source(name: str, progress=None, should_cancel=None, symbol: str =
             pr.step("latest date", latest)
             pr.step("one chain", chain)
             pr.out["notes"].append("The public dataset lists about three expirations per date, so short-dated and 0DTE contracts are usually absent.")
+        elif name == "massive":
+            found: list = []
+            d0 = [d for d in cal.trading_days(today - timedelta(days=60), today - timedelta(days=30))][-1]
+
+            def contracts():
+                ref = S.previous_close(src.store, symbol, d0 + timedelta(days=1)) or 0
+                cs = src.list_contracts(client, symbol, d0, d0, d0 + timedelta(days=3), ref * 0.99 if ref else 0, ref * 1.01 if ref else 1e9)
+                found.extend(cs[:2])
+                return {"dataset": f"contracts listed on {d0} that have since expired", "contracts": len(cs)}
+            ok_, info = pr.step("expired contract listing", contracts)
+            pr.out["entitlements"].append({"what": "option contract reference data, expired contracts included", "granted": ok_, "detail": info.get("error", f"{info.get('contracts')} contracts")})
+
+            def bars():
+                if not found:
+                    raise RuntimeError("no contract to request aggregates for")
+                df, _st, _n = src.fetch_batch(client, symbol, found[:1], [d0])
+                pr.bars += 0 if df is None else df.height
+                return {"dataset": f"1-minute option aggregates for {found[0].occ} on {d0}", "rows": 0 if df is None else df.height, "first": str(d0), "last": str(d0)}
+            ok_, info = pr.step("minute aggregates of an expired contract", bars)
+            pr.out["entitlements"].append({"what": "historical option minute aggregates", "granted": ok_ and bool(info.get("rows")), "detail": info.get("error", f"{info.get('rows')} bars")})
+
+            def depth():
+                d1 = [d for d in cal.trading_days(today - timedelta(days=725), today - timedelta(days=700))][-1]
+                cs = src.list_contracts(client, symbol, d1, d1, d1 + timedelta(days=3), 0, 1e9)
+                return {"dataset": f"contracts listed on {d1} (about two years ago)", "contracts": len(cs), "first": str(d1) if cs else None}
+            pr.step("history depth (about two years)", depth)
+            pr.out["notes"].append("Trade aggregates only. Bid/ask quotes are a paid tier at this provider and are not read.")
         elif name == "alpaca":
             h = src._h()
             end = datetime.now(timezone.utc) - timedelta(minutes=30)
@@ -293,6 +294,38 @@ def benchmark_source(name: str, progress=None, should_cancel=None, symbol: str =
     return {k: v for k, v in out.items()}
 
 
+def _alphavantage(src, pr: _Probe, has_key: bool, progress=None) -> dict:
+    """Two separate facts: (1) the endpoint and Strata's parser work, verified with the
+    public demo key the documentation itself publishes (IBM only); (2) whether THIS
+    installation can read other symbols, which needs the user's own premium key."""
+    from strata.data.providers import sources as S
+    with S._client() as client:
+        def demo():
+            df = src.fetch(client, "IBM", date(2017, 11, 15), key="demo")
+            pr.bars += df.height
+            ok_rows = df.filter((df["bid"] <= df["ask"]) & df["delta"].is_not_null())
+            return {"dataset": "IBM chain on 2017-11-15 (documentation's demo key)", "rows": df.height, "expirations": int(df["expiration"].n_unique()), "usable_rows": ok_rows.height, "first": "2017-11-15", "last": "2017-11-15"}
+        ok_demo, _ = pr.step("endpoint and parser (public demo key, IBM only)", demo)
+        pr.out["entitlements"].append({"what": "historical option chains - endpoint reachable and parsed", "granted": ok_demo, "detail": "verified with the provider's public demo key, which serves IBM only"})
+        if has_key:
+            def own():
+                d0 = [d for d in cal.trading_days(date.today() - timedelta(days=20), date.today() - timedelta(days=3))][-1]
+                df = src.fetch(client, "SPY", d0)
+                return {"dataset": f"SPY chain on {d0} (your key)", "rows": df.height, "first": str(d0), "last": str(d0)}
+            ok_own, info = pr.step("SPY chain with your key", own)
+            pr.out["entitlements"].append({"what": "historical option chains for SPY with your key", "granted": ok_own and bool(info.get("rows")), "detail": info.get("error", f"{info.get('rows')} rows")})
+        else:
+            pr.out["entitlements"].append({"what": "historical option chains for SPY, QQQ, IWM", "granted": None, "detail": "not tested: no Alpha Vantage key is configured. The endpoint is premium for every symbol except the demo one."})
+    out = pr.done()
+    full = has_key and all(e["granted"] for e in out["entitlements"])
+    out["status"] = "verified" if full else "parser verified (demo symbol only)" if out["steps"] and out["steps"][0]["ok"] else "failed"
+    out["verified"] = bool(full)
+    out["historical_depth"] = [{"dataset": s.get("dataset"), "first": s.get("first"), "last": s.get("last")} for s in out["steps"] if s.get("first")]
+    out["notes"].append("End-of-day chains only (one snapshot per session). SPY, QQQ and IWM are not confirmed until a key with access is configured and this check is run again.")
+    _save("alphavantage", out)
+    return out
+
+
 def catalog(store=None) -> dict:
     """Every source: what it claims, whether it is configured, and what the last live check measured."""
     from strata.data.providers import sources as S
@@ -309,4 +342,4 @@ def catalog(store=None) -> dict:
                      "verification": (b or {}).get("status") or ("unverified" if not ok else "not checked yet"), "benchmark": b,
                      "claim": [{"data": c.get("dtype"), "observation": c.get("obs"), "resolution": c.get("res"), "first": str(c.get("first")) if c.get("first") else None, "last": str(c.get("last")) if c.get("last") else None, "note": c.get("note")}
                                for c in src.capabilities()]})
-    return {"sources": rows, "external": EXTERNAL, "note": "\"Verified\" means a live request from this installation succeeded on the date shown. Anything else is a claim from documentation or from mocked tests."}
+    return {"sources": rows, "note": "\"Verified\" means a live request from this installation succeeded on the date shown. Anything else is a claim from documentation or from mocked tests."}

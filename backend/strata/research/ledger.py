@@ -32,8 +32,13 @@ from strata.api import db
 
 # Kinds of trial that can tune a hypothesis. "option-structure" is deliberately absent: pricing option positions on a
 # condition that was already selected does not re-choose the condition (it is still counted as a trial, because
-# picking the best of several structures is itself a selection - of the structure, not of the pattern).
-TUNING_KINDS = ("study", "backtest", "plan", "sweep", "discovery", "sensitivity", "optimization")
+# picking the best of several structures is itself a selection - of the structure, not of the pattern). The one
+# exception is a final period that has not been scored yet: see _contaminate_if_tuned.
+TUNING_KINDS = ("study", "backtest", "plan", "sweep", "discovery", "sensitivity", "optimization", "graph", "ml")
+# where in the life of an idea a trial sits; the registry reports them separately
+PHASES = ("exploration", "development", "validation", "confirmation", "forward")
+PHASE_OF = {"study": "exploration", "graph": "exploration", "plan": "exploration", "sweep": "exploration", "discovery": "exploration", "sensitivity": "exploration", "ml": "exploration",
+            "backtest": "development", "optimization": "development", "option-structure": "development", "stress": "development", "forward": "forward"}
 MIN_HOLDOUT_SESSIONS = 40  # a fresh holdout smaller than this cannot confirm or reject anything
 IGNORED_KEYS = {"id", "name", "label", "title", "start", "end", "run_id", "created_at", "notes", "interpreter", "approvals"}
 
@@ -63,9 +68,10 @@ def record(scope: str, symbol: str, trials: list[dict], family: str = "") -> dic
         seen = {r[0] for r in con.execute("SELECT DISTINCT key FROM trials WHERE scope=? AND symbol=?", (scope, sym))}
         now = db.now()
         con.executemany(
-            "INSERT INTO trials (scope, symbol, family, kind, key, label, run_id, start, end, metric, value, n, p_value, shown, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO trials (scope, symbol, family, kind, key, label, run_id, start, end, metric, value, n, p_value, shown, created_at, signature, phase) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [(scope, sym, t.get("family") or family, t["kind"], t["key"], (t.get("label") or "")[:200], t.get("run_id"), _iso(t.get("start")), _iso(t.get("end")), t.get("metric"),
-              _num(t.get("value")), t.get("n"), _num(t.get("p_value")), 0 if t.get("shown") is False else 1, now) for t in trials])
+              _num(t.get("value")), t.get("n"), _num(t.get("p_value")), 0 if t.get("shown") is False else 1, now,
+              json.dumps(t["signature"], sort_keys=True) if t.get("signature") else None, t.get("phase") or PHASE_OF.get(t["kind"], "exploration")) for t in trials])
     fresh = [t for t in trials if t["key"] not in seen]
     hit = _contaminate_if_tuned(scope, sym, fresh) if fresh else None
     return {"added": len(trials), "new_configurations": len({t["key"] for t in fresh}), "contaminated": hit}
@@ -209,6 +215,8 @@ def use(hid: int, keys: list[str], run_id: str | None = None, what: str = "") ->
     uses.append({"at": db.now(), "run_id": run_id, "what": what, "keys": list(keys)})
     if h["status"] == "sealed":
         _update(hid, status="used", uses=uses)
+        with db.connect() as con:  # the configurations scored on the final period move from exploration to validation
+            con.executemany("UPDATE trials SET phase='validation' WHERE scope=? AND symbol=? AND key=?", [(h["scope"], h["symbol"], k) for k in keys])
     elif h["status"] == "used" and new:
         _update(hid, status="contaminated", uses=uses, reason=f"{len(new)} further candidate(s) were scored on the final test period after its first results had been shown")
     else:
@@ -218,6 +226,23 @@ def use(hid: int, keys: list[str], run_id: str | None = None, what: str = "") ->
 
 def _contaminate_if_tuned(scope: str, sym: str, fresh: list[dict]) -> dict | None:
     cur = current(scope, sym)
+    if cur is not None and cur["status"] == "sealed":
+        covers = lambda t: t.get("end") is None or _iso(t["end"]) >= cur["start"]  # noqa: E731
+        seen = [t for t in fresh if t["kind"] in TUNING_KINDS and covers(t)]
+        if seen:  # looked at before anything was scored on it: no longer untouched, so it can no longer confirm
+            n = len({t["key"] for t in seen})
+            _update(cur["id"], status="exposed", reason=f"{n} configuration{'s were' if n != 1 else ' was'} evaluated on data that includes this period ({cur['start']} to {cur['end']}) before anything was scored on it")
+            return _pub(get(cur["id"]))
+        # Option positions priced on a condition do not re-choose the condition, so once the pattern HAS been scored on its
+        # final period they are harmless to it (see TUNING_KINDS). Before that, they are a look: an at-the-money call's profit
+        # on those sessions is very nearly the pattern's own outcome there, so the period can no longer test the pattern blind.
+        priced = [t for t in fresh if t["kind"] == "option-structure" and covers(t)]
+        if priced:
+            n = len({t["key"] for t in priced})
+            _update(cur["id"], status="exposed", reason=f"{n} option position{'s were' if n != 1 else ' was'} priced on sessions inside this period ({cur['start']} to {cur['end']}) before the price pattern itself was scored on it; "
+                                                     "their results show how the pattern fared there")
+            return _pub(get(cur["id"]))
+        return None
     if cur is None or cur["status"] != "used":
         return None
     scored = {k for u in (cur.get("uses") or []) for k in u.get("keys", [])}

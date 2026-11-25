@@ -1,17 +1,20 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Check, CircleAlert, Database, Download, ExternalLink, FlaskConical, FolderInput, Loader2, PlugZap, Radio, RefreshCw, ShieldCheck, ShieldQuestion, Table2, Trash2, Upload } from "lucide-react";
+import { CircleAlert, Database, Download, ExternalLink, FlaskConical, FolderInput, Loader2, PlugZap, Radio, RefreshCw, ShieldCheck, ShieldQuestion, Table2, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { C, EChart } from "@/components/charts/EChart";
 import { LWChart, dayTime } from "@/components/charts/LWChart";
 import { Empty, ErrorBox, JobBar, Loading, PageHeader, Panel, SyntheticBadge, Warnings } from "@/components/common";
 import { Button, Field, Input, NumInput, Select, Switch, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui";
-import { api, queryClient, useJob, useMeta } from "@/lib/api";
+import { api, queryClient, useJob } from "@/lib/api";
 import { bytes, cn, compact, etTime, num, pct } from "@/lib/format";
-import { BulkImportPanel, CollectorPanel, SourcesPanel } from "./data/Collection";
+import { useUi } from "@/lib/store";
+import { BulkImportPanel, CollectorPanel } from "./data/Collection";
+import { Marketplace } from "./data/Marketplace";
 
 const refreshData = () => {
-  for (const k of ["catalog", "coverage", "storage", "meta", "symbol", "sources", "collector", "provider-catalog"]) queryClient.invalidateQueries({ queryKey: [k] });
+  for (const k of ["catalog", "coverage", "storage", "meta", "symbol", "sources", "collector", "marketplace", "alpaca-validation", "onboarding"]) queryClient.invalidateQueries({ queryKey: [k] });
 };
 
 export default function DataPage() {
@@ -19,7 +22,9 @@ export default function DataPage() {
   const storage = useQuery({ queryKey: ["storage"], queryFn: () => api.get<any>("/api/data/storage") });
   const [sel, setSel] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
-  const [tab, setTab] = useState("coverage");
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(params.get("tab") || "coverage");
+  const advanced = useUi((u) => u.mode) === "advanced";
   const job = useJob(jobId, (s) => {
     if (s.status === "done") toast.success("Data job finished");
     if (s.status === "error") toast.error(`Data job failed: ${s.message}`);
@@ -40,15 +45,18 @@ export default function DataPage() {
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
         <TabsList>
           <TabsTrigger value="coverage"><Database className="size-3" /> Coverage</TabsTrigger>
-          <TabsTrigger value="datasets"><ShieldCheck className="size-3" /> Datasets &amp; provenance</TabsTrigger>
-          <TabsTrigger value="collector"><Radio className="size-3" /> Collector</TabsTrigger>
+          <TabsTrigger value="sources" data-testid="tab-sources"><ShieldQuestion className="size-3" /> Sources</TabsTrigger>
           <TabsTrigger value="free"><Download className="size-3" /> Get free data</TabsTrigger>
-          <TabsTrigger value="verify"><ShieldQuestion className="size-3" /> Verify sources</TabsTrigger>
-          <TabsTrigger value="bulk"><FolderInput className="size-3" /> Bulk import</TabsTrigger>
+          <TabsTrigger value="collector"><Radio className="size-3" /> Collector</TabsTrigger>
           <TabsTrigger value="chain"><Table2 className="size-3" /> Option chain</TabsTrigger>
-          <TabsTrigger value="providers"><PlugZap className="size-3" /> Paid providers</TabsTrigger>
-          <TabsTrigger value="import"><Upload className="size-3" /> Import one file</TabsTrigger>
-          <TabsTrigger value="sandbox"><FlaskConical className="size-3" /> Developer sandbox</TabsTrigger>
+          {advanced && <>
+            <TabsTrigger value="datasets"><ShieldCheck className="size-3" /> Datasets &amp; provenance</TabsTrigger>
+            <TabsTrigger value="bulk"><FolderInput className="size-3" /> Bulk import</TabsTrigger>
+            <TabsTrigger value="import"><Upload className="size-3" /> Import one file</TabsTrigger>
+            <TabsTrigger value="providers"><PlugZap className="size-3" /> Provider ingestion</TabsTrigger>
+            <TabsTrigger value="sandbox"><FlaskConical className="size-3" /> Developer sandbox</TabsTrigger>
+          </>}
+          {!advanced && <button className="ml-2 text-2xs text-muted hover:text-fg" onClick={() => useUi.getState().set({ mode: "advanced" })} title="Datasets and provenance, bulk and single-file import, provider ingestion and the developer sandbox">+ 5 advanced tools</button>}
         </TabsList>
         <div className="min-h-0 flex-1 overflow-auto">
           <TabsContent value="coverage">
@@ -64,7 +72,7 @@ export default function DataPage() {
           </TabsContent>
           <TabsContent value="datasets"><Datasets /></TabsContent>
           <TabsContent value="collector"><CollectorPanel onJob={setJobId} /></TabsContent>
-          <TabsContent value="verify"><SourcesPanel onJob={setJobId} /></TabsContent>
+          <TabsContent value="sources"><Marketplace onJob={setJobId} /></TabsContent>
           <TabsContent value="bulk"><BulkImportPanel onJob={setJobId} /></TabsContent>
           <TabsContent value="free"><FreeData onJob={setJobId} busy={!!job && ["queued", "running"].includes(job.status)} /></TabsContent>
           <TabsContent value="chain">{rows.some((r) => r.options) ? <ChainPicker rows={rows.filter((r) => r.options)} /> : <Empty title="No option chains stored" icon={Table2}>Download free end-of-day chains under “Get free data”.</Empty>}</TabsContent>

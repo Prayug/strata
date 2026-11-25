@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Blocks, ChevronRight, Copy, FilePlus2, Play, Save, Sigma, Briefcase, FolderOpen } from "lucide-react";
+import { AlertTriangle, Blocks, Briefcase, ChevronRight, Code2, Copy, FilePlus2, FolderOpen, Play, Save, Sigma } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Group, Panel as RPanel, Separator } from "react-resizable-panels";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -120,8 +120,25 @@ export default function Builder() {
     { key: "risk", title: "Sizing, capital & execution", lines: [s.sizing.method === "fixed" ? `${s.sizing.contracts} unit(s)` : `${s.sizing.pct}% ${s.sizing.method === "risk_pct" ? "risk" : "BP"}`, `${b.capital.margin_model === "regt" ? "Reg-T" : "cash"} · $${(b.capital.initial_capital / 1000).toFixed(0)}k`, `${b.execution.fill_model} fills · $${b.execution.commission_per_contract}/ct`] },
   ];
 
+  // parts of the strategy this form has no controls for: they are kept exactly as they are and edited in the IDE
+  const sx = s as any;
+  const beyond = [
+    (sx.entry?.systems || []).length ? `${sx.entry.systems.length} independent entry system${sx.entry.systems.length > 1 ? "s" : ""}` : "",
+    (sx.entry?.sequence || []).length ? `a ${sx.entry.sequence.length}-step entry sequence` : "",
+    (sx.entry?.adds || []).length ? `${sx.entry.adds.length} scale-in rule${sx.entry.adds.length > 1 ? "s" : ""}` : "",
+    (sx.exits?.stages || []).length ? `${sx.exits.stages.length} staged exit${sx.exits.stages.length > 1 ? "s" : ""}` : "",
+    sx.exits?.underlying?.stop_atr || sx.exits?.underlying?.target_atr || sx.exits?.underlying?.trail_pct || sx.exits?.underlying?.trail_atr ? "ATR or trailing exits on the underlying" : "",
+    ["expr", "atr_risk"].includes(sx.sizing?.method) ? "dynamic sizing" : "",
+    sx.hedge?.enabled ? "a delta hedge" : "",
+  ].filter(Boolean);
   return (
     <div className="flex h-full flex-col">
+      {beyond.length > 0 && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-info/30 bg-info/[0.06] px-3 py-1.5 text-xs text-fg-2" data-testid="builder-beyond">
+          <Code2 className="size-3.5 shrink-0 text-info" /><span>This strategy also has {beyond.join(", ")}. They are kept exactly as they are and are part of every backtest; this form has no controls for them.</span>
+          <span className="flex-1" /><Button size="sm" variant="outline" onClick={() => nav("/ide")}>Edit them in the Strategy IDE</Button>
+        </div>
+      )}
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line bg-bg-1 px-3">
         <Blocks className="size-4 text-accent" />
         <Input className="h-7 w-64 bg-transparent border-transparent hover:border-line-2 text-sm font-semibold" value={s.name} onChange={(e) => setStrategy((x) => { x.name = e.target.value; })} />

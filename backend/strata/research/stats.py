@@ -14,28 +14,7 @@ import numpy as np
 CODE = {"t": "target", "s": "stop", "n": "neither", "a": "ambiguous"}
 
 
-def wilson(k: int, n: int, z: float = 1.96) -> list[float | None]:
-    if n == 0:
-        return [None, None]
-    p = k / n
-    d = 1 + z * z / n
-    c = (p + z * z / (2 * n)) / d
-    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
-    return [max(0.0, c - h), min(1.0, c + h)]
-
-
-def two_prop_p(k1: int, n1: int, k2: int, n2: int) -> float | None:
-    """Two-sided p-value of a two-proportion z-test (None when it cannot be computed)."""
-    if n1 <= 0 or n2 <= 0:
-        return None
-    pp = (k1 + k2) / (n1 + n2)
-    if not 0 < pp < 1:
-        return None
-    se = math.sqrt(pp * (1 - pp) * (1 / n1 + 1 / n2))
-    if se <= 0:
-        return None
-    from scipy.stats import norm
-    return float(2 * (1 - norm.cdf(abs((k1 / n1 - k2 / n2) / se))))
+from strata.research.robust import two_prop_p, wilson  # noqa: E402,F401  (one definition; re-exported for callers)
 
 
 def bh_adjust(pvals: list[float | None]) -> list[float | None]:

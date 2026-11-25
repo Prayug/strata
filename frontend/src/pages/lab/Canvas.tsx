@@ -22,6 +22,8 @@ const KIND: Record<string, { label: string; Icon: any; tone: string }> = {
   discovery: { label: "Exploration", Icon: Network, tone: "#c678dd" }, comparison: { label: "Comparison", Icon: GitCompareArrows, tone: "#d19a66" }, validation: { label: "Robustness", Icon: ListChecks, tone: "#98c379" },
   analysis: { label: "Reasoning", Icon: Zap, tone: "#61afef" }, stress: { label: "Execution stress", Icon: Zap, tone: "#d19a66" }, challenge: { label: "Adversarial review", Icon: ShieldAlert, tone: "#ef5350" },
   report: { label: "Report", Icon: FileText, tone: "#d6dce5" },
+  graph: { label: "Research graph", Icon: Network, tone: "#e8a33d" }, finding: { label: "Finding", Icon: Target, tone: "#98c379" }, strategy_draft: { label: "Drafted strategies", Icon: FlaskConical, tone: "#56b6c2" },
+  forward: { label: "Forward validation", Icon: ListChecks, tone: "#4c8dff" },
 };
 const STATUS_WORD: Record<string, string> = { done: "finished", running: "running", queued: "queued", error: "failed", idle: "not run", awaiting_confirmation: "waiting for you", awaiting_answer: "needs an answer", blocked: "blocked", ready: "ready", needs_decision: "data missing" };
 
@@ -66,6 +68,9 @@ ResearchNode.displayName = "ResearchNode";
 const nodeTypes = { research: ResearchNode };
 
 const BRANCHES: Record<string, string[]> = {
+  graph: ["Compare that behavior with QQQ and IWM.", "Show the distribution of price paths following those events.", "Find which historical conditions are associated with that outcome.", "Apply the same idea to QQQ."],
+  finding: ["Build a strategy from the strongest supported finding.", "Check whether I've already tested similar configurations on this holdout.", "Which of our previous findings still hold after 2020?"],
+  strategy_draft: ["Backtest that strategy using observed historical options prices."],
   study: ["Compare that with 2% and 4% down days", "Test option structures on this", "Challenge this result", "How much of the result is explained by volatility?", "Test whether the results hold up out of sample"],
   backtest: ["Stress-test the execution", "Challenge this strategy", "Compare the results with 7DTE calls", "Include commissions and conservative slippage", "Are most profits concentrated in a handful of sessions?"],
 };
@@ -120,6 +125,8 @@ export function Canvas({ sid, stamp, onOpen, onBranch, onSelect, onAnalyse, busy
     if ((n.type === "study" || n.type === "backtest") && n.run_id && n.status === "done") return onOpen({ type: "run", runId: n.run_id, messageId: n.result_message });
     if (n.type === "candidate" || n.type === "tested") { const p = g?.nodes.find((x) => x.type === "plan" && x.run_id === n.run_id); if (p?.result_message) return onOpen({ type: "message", messageId: p.result_message }); }
     if (n.result_message) return onOpen({ type: "message", messageId: n.result_message });
+    if (n.message_id && ["finding", "strategy_draft"].includes(n.type)) return onOpen({ type: "message", messageId: n.message_id });
+    if (n.type === "forward" && (n as any).experiment_id) { window.location.assign(`/forward/${(n as any).experiment_id}`); return; }
     if (n.message_id && ["analysis", "validation", "comparison"].includes(n.type)) return onOpen(n.run_id && n.type !== "analysis" ? { type: "run", runId: n.run_id, tab: n.type === "validation" ? "robustness" : "overview" } : { type: "message", messageId: n.message_id });
     if (n.version_id) return onOpen({ type: "setup", versionId: n.version_id });
   };

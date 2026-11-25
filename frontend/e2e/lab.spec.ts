@@ -154,6 +154,7 @@ test("settings: credentials are write-only and the Alpaca connection is guided",
   expect(body.secret_store.backend).toBe("file");
   // the data page lists each dataset with its provider and observation type
   await page.goto("/data");
+  await page.getByRole("button", { name: /advanced tools/ }).click(); // provenance is an advanced tool: one click shows it
   await page.getByRole("tab", { name: /Datasets/ }).click();
   await expect(page.locator("table.tbl tbody tr").filter({ hasText: "option trade prints" })).toHaveCount(1);
 });

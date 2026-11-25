@@ -236,6 +236,37 @@ def run_benchmarks(quick: bool = False, real: bool = False, out=print) -> dict:
             last = tm.rows[-1]
             last["rows_per_second"] = round(last["rows"] / max(last["seconds"], 1e-6))
 
+            # ----- V5: composed research graphs, the pattern explorer, the IDE's debugger, ML research
+            from strata.ai import nl_graph as NG
+            from strata.research import graph as GR
+            from strata.research import patterns as PT
+            out("research graph (question -> typed graph -> evidence, matched comparison, robustness, validation)")
+            question = "Does BENCH tend to recover after down days of 1.5% or more, even after controlling for volatility?"
+            tm.run("graph_plan", lambda: NG.plan(question, ["BENCH", "BENCHB"], "BENCH", store), repeat=3, what="read a question into a validated research graph")
+            g = NG.plan(question, ["BENCH", "BENCHB"], "BENCH", store)
+            gres = tm.run("graph_run", lambda: GR.run_graph(g, store, scope=None), what=f"run its {len(g['nodes'])} steps on 16 years of sessions")
+            tm.rows[-1]["analyses"] = sum(1 for n in gres["nodes"] if n.get("result"))
+            out("pattern explorer")
+            pres = tm.run("pattern_explore", lambda: PT.explore("BENCH", {"id": "down_day", "x": 1.5}, store, horizon=10), repeat=2, what="every occurrence of an event with forward paths, horizons and regimes")
+            tm.rows[-1]["occurrences"] = pres["n"]
+
+            def dbg():
+                from strata.api import ide as IDE
+                st_cfg = {**cfg["strategies"][0], "entry": {"conditions": {"kind": "group", "op": "and", "children": [{"kind": "cond", "type": "expr", "params": {"expr": "from_open_pct < -0.2"}}]}}}
+                r_ = IDE.debug_session(st_cfg, days[len(days) // 2], store, ["price", "from_open_pct"], "from_open_pct < -0.5")
+                return {"_info": True, "ticks": len(r_.get("timeline") or [])}
+            out("condition debugger")
+            tm.run("ide_debug_session", dbg, what="replay one session's entry rule tick by tick with two watches and a breakpoint")
+            if not quick:
+                from strata.research import ml as ML
+                if ML.available()[0]:
+                    out("ML study (purged cross-validation, placebo, leakage probe, walk-forward signal)")
+                    spec = {"symbol": "BENCH", "outcome": {"entry": "close", "horizon": "sessions:5", "direction": "up", "target": 0.0, "stop": None, "measure": "close"}, "models": ["logistic", "tree"]}
+                    mres = tm.run("ml_study", lambda: ML.run(spec, store), what="two models on 16 years of sessions, scored out of sample")
+                    tm.rows[-1]["rows"] = mres["n"]
+                else:
+                    rec["ml_skipped"] = ML.available()[1]
+
             if not quick:
                 out("concurrent jobs")
                 from concurrent.futures import ProcessPoolExecutor

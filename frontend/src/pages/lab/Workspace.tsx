@@ -17,13 +17,15 @@ import { Composer, InterpreterChip, type ComposerHandle } from "./Landing";
 import { Message, type Actions, type OpenTarget } from "./Messages";
 import { Timeline } from "./Pipeline";
 import { Report, REPORT_TABS } from "./Report";
+import { GraphView, MemoryView, RegistryCheckView, StrategyPlanView } from "./Graph";
 import { AnalysisView, ChallengeView, ExecutionView, HoldoutChip, HypothesisView } from "./Research";
 import { Setup } from "./Setup";
 import { DiscoveryView, InvestigationView, SweepView } from "./Views";
 
 type View = OpenTarget | { type: "compare" } | { type: "canvas" } | null;
-const PENDING = ["plan", "sweep", "run", "investigation", "discovery", "hypothesis", "stress", "challenge"];
-const MSG_VIEWS = ["sweep", "investigation", "discovery", "hypothesis", "execution", "challenge", "analysis"];
+const PENDING = ["plan", "sweep", "run", "investigation", "discovery", "hypothesis", "stress", "challenge", "graph"];
+const MSG_VIEWS = ["sweep", "investigation", "discovery", "hypothesis", "execution", "challenge", "analysis", "graph", "graph_batch"];
+const MSG_KINDS = ["memory", "registry", "strategy_plan"];  // answers that open on the right without being a run result
 const isPending = (m: AiMessage) => PENDING.includes(m.kind) && m.content?.runs?.length > 0 && !m.content.finalized;
 const TAB_OF: Record<string, string> = { robustness: "robustness", skipped: "observations", breakdown: "statistics", timing: "statistics" };
 
@@ -35,6 +37,7 @@ function targetOf(m: AiMessage): { view: View; tab?: string; which?: string } | 
     if (c.view === "failed" || c.view === "export" || !c.run_id) return null;
     return { view: { type: "run", runId: c.run_id, messageId: m.id }, tab: TAB_OF[c.view] || "overview", which: c.view === "skipped" ? "skipped" : undefined };
   }
+  if (MSG_KINDS.includes(m.kind)) return { view: { type: "message", messageId: m.id } };
   if (m.kind === "trades" && c.run_id) return { view: { type: "run", runId: c.run_id }, tab: "observations", which: c.filter === "all" ? "all" : c.mode === "study" ? (c.filter === "win" ? "target" : "neither") : c.filter };
   if (m.kind === "plan" && ["awaiting_confirmation", "awaiting_answer", "blocked"].includes(c.state)) return { view: { type: "setup", versionId: c.version_id } };
   return null;
@@ -46,13 +49,14 @@ function resultName(m: AiMessage, all: AiMessage[]) {
   const c = m.content;
   const kind = { sweep: `Comparison${c.what ? `: ${c.what}` : ""}`, investigation: `${c.plan?.stage === "options" ? "Option structures" : "Investigation"}: ${c.plan?.question || c.plan?.hypothesis || ""}`,
     discovery: `Exploration: ${c.discovery?.hypothesis || c.discovery?.question || ""}`, hypothesis: `Plan: ${c.question || ""}`, execution: `Execution stress: ${strip(c.label || "").replace(/^Execution stress: /, "")}`,
-    challenge: `Review: ${strip(c.label || "").replace(/^Challenge: /, "")}`, analysis: `Answer: ${c.analysis?.title || ""}` }[c.view as string];
+    challenge: `Review: ${strip(c.label || "").replace(/^Challenge: /, "")}`, analysis: `Answer: ${c.analysis?.title || ""}`, graph: `Graph: ${c.question || c.label || ""}`, graph_batch: `Re-test: ${c.label || ""}` }[c.view as string];
   if (kind) return kind.slice(0, 80);
   const asked = [...all].reverse().find((x) => x.role === "user" && x.id < m.id)?.content?.text;
   return `${String(asked || strip(c.label || c.title) || "Result").slice(0, 64)}${c.mode && c.mode !== "study" ? ` (${(MODE_NAME[c.mode] || c.mode).replace("Options · ", "")})` : ""}`;
 }
 
 const STUDY_NEXT = ["Challenge this result", "How much of the result is explained by volatility?", "Test option structures on this", "Compare that with 2% and 4% down days", "What time of day does it usually hit the target?", "Show every qualifying historical session", "Test ATM 0DTE calls on those days using historical option trade prices", "Is this statistically significant?", "Test whether the results hold up out of sample", "Export the complete research report"];
+const GRAPH_NEXT = ["Compare that behavior with QQQ and IWM.", "Show the distribution of price paths following those events.", "Find which historical conditions are associated with that outcome.", "Build a strategy from the strongest supported finding.", "Check whether I've already tested similar configurations on this holdout.", "What have we found so far?"];
 const OPTION_NEXT = ["Challenge this strategy", "Stress-test the execution", "Are most profits concentrated in a handful of sessions?", "Compare the results with 7DTE calls", "Include commissions and conservative slippage", "Show me every skipped signal and why", "Show me the losing trades", "Test whether the results hold up out of sample", "Export the complete research report"];
 
 export function Workspace({ sid }: { sid: string }) {
@@ -155,6 +159,10 @@ export function Workspace({ sid }: { sid: string }) {
     rerun: (version_id, mode) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/run`, { version_id, mode })),
     select: (run_id, key, what) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/hypothesis/select`, { run_id, key, what })),
     analyse: (kind, run_id) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/analysis`, { kind, run_id })),
+    graphDecide: (message_id, choice) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/graph/decide`, { message_id, choice })),
+    ask: (text) => send(text),
+    strategyFrom: (finding_id) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/strategy-from-finding`, { finding_id: finding_id ?? null })),
+    backtestPlan: () => act.mutate(() => api.post(`/api/ai/sessions/${sid}/backtest-plan`, {})),
     busy: act.isPending,
     pinned,
   };
@@ -187,7 +195,8 @@ export function Workspace({ sid }: { sid: string }) {
   const lastRun = [...results].reverse().find((m) => ["single", "compare"].includes(m.content.view));
   const optionRes = lastRun && lastRun.content.mode && lastRun.content.mode !== "study";
   // follow-ups are about the newest study or backtest; a plan's own next steps are the buttons on its candidates
-  const chips = act.isPending || pending || !lastRun || lastRes?.content.view === "hypothesis" ? [] : optionRes ? OPTION_NEXT : STUDY_NEXT;
+  const graphLast = lastRes && ["graph", "graph_batch"].includes(lastRes.content.view) && (!lastRun || lastRes.id > lastRun.id);
+  const chips = act.isPending || pending ? [] : graphLast ? GRAPH_NEXT : !lastRun || lastRes?.content.view === "hypothesis" ? [] : optionRes ? OPTION_NEXT : STUDY_NEXT;
   const planMsg = eff?.type === "setup" ? plans.find((m) => m.content.version_id === eff.versionId) || lastPlan : null;
   const msg = eff?.type === "message" ? messages.find((m) => m.id === eff.messageId) : null;
   const liveRun = [...messages].reverse().find(isPending);
@@ -223,6 +232,10 @@ export function Workspace({ sid }: { sid: string }) {
         {eff?.type === "message" && msg?.content.view === "execution" && <ExecutionView runId={msg.content.run_id} />}
         {eff?.type === "message" && msg?.content.view === "challenge" && <ChallengeView runId={msg.content.run_id} />}
         {eff?.type === "message" && msg?.content.view === "analysis" && <AnalysisView c={msg.content} />}
+        {eff?.type === "message" && msg && ["graph", "graph_batch"].includes(msg.content.view) && <GraphView key={msg.content.run_id} runId={msg.content.run_id} findings={msg.content.findings || []} busy={act.isPending} onStrategy={(id) => actions.strategyFrom(id)} onAsk={send} />}
+        {eff?.type === "message" && msg?.kind === "memory" && <MemoryView key={messages.length} sid={sid} onAsk={send} />}
+        {eff?.type === "message" && msg?.kind === "registry" && <RegistryCheckView c={msg.content} />}
+        {eff?.type === "message" && msg?.kind === "strategy_plan" && <StrategyPlanView c={msg.content} busy={act.isPending} onBacktest={actions.backtestPlan} />}
         {eff?.type === "run" && <Report key={eff.runId} runId={eff.runId} sid={sid} trials={data.trials || 1} tab={tab} setTab={setTab} which={which} setWhich={setWhich} day={day} onDay={(d) => { setDay(d); if (d && tab !== "calendar") setTab("calendar"); }} onAsk={send} onPin={(id) => pin(id)} pinned={pinned.includes(eff.runId)} />}
         {eff?.type === "setup" && planMsg && <Setup plan={planMsg.content} busy={act.isPending} refresh={actions.refresh} onConfirm={actions.confirm} onApply={(draft, run) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/edit`, { draft, run }))} />}
         {eff?.type === "message" && msg?.content.view === "sweep" && <SweepView c={msg.content} onOpen={(id) => go({ view: { type: "run", runId: id }, tab: "overview" })} onPin={(id) => pin(id)} pinned={pinned} />}

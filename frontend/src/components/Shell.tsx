@@ -1,40 +1,91 @@
 import { useQuery } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import {
-  Activity, BarChart3, Blocks, BookOpenText, Briefcase, ChevronsLeft, ChevronsRight, Database, FlaskConical, Grid3x3, Microscope, PlayCircle, Settings as SettingsIcon, Sigma, Sparkles,
+  Activity, BarChart3, Bell, Blocks, BookOpenText, BrainCircuit, Briefcase, ChevronsLeft, ChevronsRight, Code2, Database, FlaskConical, Grid3x3, Library, Microscope, PlayCircle, Scale, Settings as SettingsIcon, Sigma, Snowflake,
+  Sparkles, Waves,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Kbd, Tip } from "@/components/ui";
+import { Kbd, Popover, PopoverContent, PopoverTrigger, Tip } from "@/components/ui";
 import { StatusDot } from "@/components/common";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/format";
+import { api, queryClient } from "@/lib/api";
+import { ago, cn } from "@/lib/format";
 import { useUi } from "@/lib/store";
 
-const NAV = [
-  { to: "/", label: "AI Lab", icon: Sparkles, key: "a", match: ["/lab"] },
-  { to: "/encyclopedia", label: "Market Behaviour", icon: BookOpenText, key: "e" },
-  { to: "/sensitivity", label: "Sensitivity", icon: Grid3x3, key: "n" },
-  { to: "/explore", label: "Market Explorer", icon: Microscope, key: "m" },
-  { to: "/builder", label: "Strategy Builder", icon: Blocks, key: "b", match: ["/strategies"] },
-  { to: "/results", label: "Backtests", icon: BarChart3, key: "r" },
-  { to: "/optimize", label: "Optimization", icon: Sigma, key: "o" },
-  { to: "/replay", label: "Trade Replay", icon: PlayCircle, key: "t" },
-  { to: "/portfolio", label: "Portfolio", icon: Briefcase, key: "p" },
-  { to: "/data", label: "Data", icon: Database, key: "d" },
-  { to: "/settings", label: "Settings", icon: SettingsIcon, key: "s" },
+/* The application is organised around three things people come to do. Everything else supports them.
+     Explore   ask market questions, investigate hypotheses, browse patterns
+     Build     turn an idea into a strategy: in words, with the visual builder, or in the IDE
+     Validate  backtest, challenge, compare, and follow a frozen configuration forward
+   `adv` items are tools for people who want them; simple mode keeps them out of the way (one engine either way). */
+type Item = { to: string; label: string; icon: any; key: string; match?: string[]; adv?: boolean };
+export const GROUPS: { id: string; label: string; hint: string; tone: string; items: Item[] }[] = [
+  { id: "explore", label: "Explore", hint: "Ask questions, investigate, discover", tone: "var(--color-accent)", items: [
+    { to: "/", label: "Ask", icon: Sparkles, key: "a", match: ["/lab"] },
+    { to: "/patterns", label: "Patterns", icon: Waves, key: "w" },
+    { to: "/findings", label: "Knowledge base", icon: Library, key: "k" },
+    { to: "/encyclopedia", label: "Market behaviour", icon: BookOpenText, key: "e", adv: true },
+    { to: "/sensitivity", label: "Sensitivity", icon: Grid3x3, key: "n", adv: true },
+    { to: "/ml", label: "ML research", icon: BrainCircuit, key: "l", adv: true },
+  ] },
+  { id: "build", label: "Build", hint: "Describe, assemble or code a strategy", tone: "var(--color-info)", items: [
+    { to: "/ide", label: "Strategy IDE", icon: Code2, key: "i" },
+    { to: "/builder", label: "Visual builder", icon: Blocks, key: "b", match: ["/strategies"] },
+    { to: "/explore", label: "Data explorer", icon: Microscope, key: "m", adv: true },
+  ] },
+  { id: "validate", label: "Validate", hint: "Backtest, challenge, follow forward", tone: "var(--color-up)", items: [
+    { to: "/results", label: "Backtests", icon: BarChart3, key: "r" },
+    { to: "/forward", label: "Forward validation", icon: Snowflake, key: "f" },
+    { to: "/registry", label: "Experiment registry", icon: Scale, key: "x" },
+    { to: "/optimize", label: "Optimization", icon: Sigma, key: "o", adv: true },
+    { to: "/replay", label: "Trade replay", icon: PlayCircle, key: "t", adv: true },
+    { to: "/portfolio", label: "Portfolio", icon: Briefcase, key: "p", adv: true },
+  ] },
+  { id: "support", label: "", hint: "", tone: "var(--color-muted)", items: [
+    { to: "/data", label: "Data", icon: Database, key: "d" },
+    { to: "/settings", label: "Settings", icon: SettingsIcon, key: "s" },
+  ] },
 ];
+const NAV: Item[] = GROUPS.flatMap((g) => g.items);
+
+function Notifications() {
+  const q = useQuery({ queryKey: ["notifications"], queryFn: () => api.get<{ notifications: any[]; unread: number }>("/api/notifications?limit=30"), refetchInterval: 30_000 });
+  const n = q.data?.unread || 0;
+  const read = async () => { if (n) { await api.post("/api/notifications/read", {}); queryClient.invalidateQueries({ queryKey: ["notifications"] }); } };
+  return (
+    <Popover onOpenChange={(o) => { if (!o) read(); }}>
+      <PopoverTrigger asChild>
+        <button className="relative flex items-center gap-1 hover:text-fg" aria-label={`Notifications${n ? `, ${n} unread` : ""}`} data-testid="notifications">
+          <Bell className={cn("size-3", n > 0 && "text-accent")} />{n > 0 && <span className="num text-accent">{n}</span>}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent side="top" align="end" className="w-[380px] !p-0">
+        <div className="border-b border-line px-3 py-2 text-xs font-medium">What happened while you were away</div>
+        <div className="max-h-[340px] overflow-auto">
+          {(q.data?.notifications || []).length === 0 && <div className="px-3 py-5 text-xs text-muted">Nothing yet. Collection cycles and forward evaluations leave a note here. Strata sends nothing to any outside service.</div>}
+          {(q.data?.notifications || []).map((x) => (
+            <a key={x.id} href={x.link || "#"} className={cn("block border-b border-line/60 px-3 py-2 text-xs hover:bg-bg-2", !x.read && "bg-accent/[0.04]")}>
+              <div className="flex items-center gap-2"><span className={cn("size-1.5 rounded-full", x.level === "error" ? "bg-down" : x.level === "warn" ? "bg-warn" : "bg-up")} /><span className="font-medium text-fg">{x.title}</span><span className="ml-auto shrink-0 text-faint">{ago(x.created_at)}</span></div>
+              {x.body && <div className="mt-0.5 pl-3.5 text-muted">{x.body}</div>}
+            </a>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export function Shell() {
   const nav = useNavigate();
   const loc = useLocation();
-  const { navCollapsed, set } = useUi();
+  const { navCollapsed, mode, set } = useUi();
   const [palette, setPalette] = useState(false);
   const cov = useQuery({ queryKey: ["coverage"], queryFn: () => api.get<any[]>("/api/data/coverage"), staleTime: 60_000 });
   const real = (cov.data || []).filter((r) => !r.synthetic);
   const sandbox = (cov.data || []).filter((r) => r.synthetic);
   const jobs = useQuery({ queryKey: ["jobs"], queryFn: () => api.get<{ active: any[]; recent: any[] }>("/api/jobs"), refetchInterval: 3000 });
   const health = useQuery({ queryKey: ["health"], queryFn: () => api.get<any>("/api/health"), refetchInterval: 15000, retry: false });
+  const advanced = mode === "advanced";
+  const isOn = (n: Item) => (n.to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(n.to)) || (n.match || []).some((m) => loc.pathname.startsWith(m));
 
   useEffect(() => {
     let g = false;
@@ -76,24 +127,54 @@ export function Shell() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex min-h-0 flex-1">
-        <aside className={cn("flex shrink-0 flex-col border-r border-line bg-bg-1 transition-[width] duration-150", navCollapsed ? "w-11" : "w-48")}>
+        <aside className={cn("flex shrink-0 flex-col border-r border-line bg-bg-1 transition-[width] duration-150", navCollapsed ? "w-11" : "w-[196px]")}>
           <div className="flex h-10 items-center gap-2 border-b border-line px-3">
             <svg viewBox="0 0 32 32" className="size-4 shrink-0"><path d="M4 24h24M4 16h16M4 8h8" stroke="#e8a33d" strokeWidth="3.5" /></svg>
             {!navCollapsed && <span className="text-sm font-semibold tracking-wide">STRATA</span>}
           </div>
-          <nav className="flex flex-1 flex-col gap-px p-1.5">
-            {NAV.map((n) => (
-              <Tip key={n.to} content={navCollapsed ? `${n.label}  (g ${n.key})` : null} side="right">
-                <NavLink to={n.to} end={n.to === "/"}
-                  className={({ isActive }) => cn("flex h-7 items-center gap-2.5 rounded-sm px-2 text-xs text-muted hover:bg-bg-3 hover:text-fg transition-colors",
-                    (isActive || (n.match || []).some((m) => loc.pathname.startsWith(m))) && "bg-bg-3 text-fg shadow-[inset_2px_0_0_var(--color-accent)]")}>
-                  <n.icon className="size-3.5 shrink-0" />
-                  {!navCollapsed && <span className="flex-1 truncate">{n.label}</span>}
-                  {!navCollapsed && <span className="font-mono text-[9.5px] text-faint">g{n.key}</span>}
-                </NavLink>
-              </Tip>
-            ))}
+          <nav className="flex flex-1 flex-col overflow-y-auto p-1.5" aria-label="Workflows">
+            {GROUPS.map((grp) => {
+              const items = grp.items.filter((n) => advanced || !n.adv || isOn(n));
+              const here = grp.items.some(isOn);
+              return (
+                <div key={grp.id} className={cn(grp.id === "support" ? "mt-auto pt-2" : "mb-2")} data-testid={`nav-${grp.id}`}>
+                  {grp.label && !navCollapsed && (
+                    <Tip content={grp.hint} side="right">
+                      <div className="flex h-6 items-center gap-1.5 px-2 text-[10.5px] font-semibold uppercase tracking-[0.09em]" style={{ color: here ? grp.tone : "var(--color-faint)" }}>
+                        <span className="size-1 rounded-full" style={{ background: grp.tone, opacity: here ? 1 : 0.5 }} />{grp.label}
+                      </div>
+                    </Tip>
+                  )}
+                  {grp.label && navCollapsed && <div className="mx-auto my-1 h-px w-5" style={{ background: grp.tone, opacity: here ? 0.9 : 0.3 }} />}
+                  <div className="flex flex-col gap-px">
+                    {items.map((n) => (
+                      <Tip key={n.to} content={navCollapsed ? `${n.label}  (g ${n.key})` : null} side="right">
+                        <NavLink to={n.to} end={n.to === "/"}
+                          className={cn("flex h-7 items-center gap-2.5 rounded-sm px-2 text-xs text-muted transition-colors hover:bg-bg-3 hover:text-fg", isOn(n) && "bg-bg-3 text-fg")}
+                          style={isOn(n) ? { boxShadow: `inset 2px 0 0 ${grp.tone}` } : undefined}>
+                          <n.icon className="size-3.5 shrink-0" />
+                          {!navCollapsed && <span className="flex-1 truncate">{n.label}</span>}
+                          {!navCollapsed && <span className="font-mono text-[9.5px] text-faint">g{n.key}</span>}
+                        </NavLink>
+                      </Tip>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </nav>
+          {!navCollapsed && (
+            <div className="border-t border-line px-2 py-1.5">
+              <Tip side="right" content="Simple shows the main path through each workflow. Advanced adds the specialist tools. The calculations are identical in both.">
+                <div className="flex rounded-sm border border-line-2 bg-bg-2 p-0.5 text-2xs" role="group" aria-label="Interface detail" data-testid="mode-toggle">
+                  {(["simple", "advanced"] as const).map((m) => (
+                    <button key={m} onClick={() => { set({ mode: m }); api.put("/api/settings", { settings: { "ui.mode": m } }).catch(() => {}); }}
+                      className={cn("h-5 flex-1 rounded-[2px] capitalize transition-colors", mode === m ? "bg-bg-4 text-fg" : "text-muted hover:text-fg")} aria-pressed={mode === m}>{m}</button>
+                  ))}
+                </div>
+              </Tip>
+            </div>
+          )}
           <button className="flex h-8 items-center gap-2 border-t border-line px-3 text-2xs text-faint hover:text-fg" onClick={() => set({ navCollapsed: !navCollapsed })}>
             {navCollapsed ? <ChevronsRight className="size-3.5" /> : <><ChevronsLeft className="size-3.5" /> Collapse <Kbd>⌘\</Kbd></>}
           </button>
@@ -120,6 +201,7 @@ export function Shell() {
           <span className="flex items-center gap-1"><Database className="size-3" /> real market data: {real.filter((r) => r.symbol !== "VIX").map((r) => r.symbol).slice(0, 6).join(" · ")}</span>
         ) : <NavLink to="/data" className="flex items-center gap-1 text-warn hover:underline"><Database className="size-3" /> no market data stored - get free data</NavLink>)}
         {sandbox.length > 0 && <span className="flex items-center gap-1" title="Simulated sandbox symbols are stored. They are never used unless a strategy names them."><FlaskConical className="size-3 text-synth" /> {sandbox.length} simulated sandbox symbol{sandbox.length > 1 ? "s" : ""}</span>}
+        <Notifications />
         <button onClick={() => setPalette(true)} className="flex items-center gap-1 hover:text-fg"><Kbd>⌘K</Kbd> commands</button>
       </footer>
       {palette && <Palette onClose={() => setPalette(false)} />}

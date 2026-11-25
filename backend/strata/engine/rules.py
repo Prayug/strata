@@ -58,6 +58,7 @@ class RuleStrategy(Strategy):
         self.explicit_minutes = explicit_minutes(cfg.entry.conditions) | explicit_minutes(ex.custom)
         self.tracker = SequenceTracker(cfg.entry.sequence)
         self.add_pending: dict[int, int] = {}  # root position id -> tick at which an add was first attempted (for reporting)
+        self.fired_system: str | None = None  # the entry system behind the signal being worked
         import ast as _ast
         for src in [s.when for s in cfg.entry.sequence] + [a.when for a in cfg.entry.adds]:
             try:
@@ -125,12 +126,20 @@ class RuleStrategy(Strategy):
                 tgt_thr = thr / 100 * pos.basis if ex.profit_target.mode == "pct" else thr
                 if val >= thr:
                     hits.append(("profit_target", f"P&L {pnl:+,.2f} ({pct:+.1f}% of premium) >= target {ex.profit_target.value:g}{'%' if ex.profit_target.mode == 'pct' else ' $/unit'}"))
-            if ex.stop_loss.enabled:
+            tight = pos.meta.get("stop_pct_after_stage")
+            if tight is not None:  # an exit stage tightened the premium stop for what is left of the position
+                stop_thr = -tight / 100 * pos.basis
+                if pct <= -tight:
+                    hits.append(("stop_loss", f"P&L {pnl:+,.2f} ({pct:+.1f}% of premium) <= stop -{tight:g}% (set by exit stage {pos.meta.get('stop_stage', '')})"))
+            elif ex.stop_loss.enabled:
                 thr = ex.stop_loss.value if ex.stop_loss.mode == "pct" else ex.stop_loss.value * u
                 val = pct if ex.stop_loss.mode == "pct" else pnl
                 stop_thr = -thr / 100 * pos.basis if ex.stop_loss.mode == "pct" else -thr
                 if val <= -thr:
                     hits.append(("stop_loss", f"P&L {pnl:+,.2f} ({pct:+.1f}% of premium) <= stop -{ex.stop_loss.value:g}{'%' if ex.stop_loss.mode == 'pct' else ' $/unit'}"))
+            if pos.meta.get("breakeven_after_stage") and pnl <= 0 and not any(r == "stop_loss" for r, _ in hits):
+                stop_thr = 0.0 if stop_thr is None else max(stop_thr, 0.0)
+                hits.append(("stop_loss", f"total P&L {pnl:+,.2f} is back at or below zero (breakeven stop set by exit stage {pos.meta.get('stop_stage', '')})"))
             ts = ex.trailing_stop
             if ts.enabled:
                 scale = pos.basis / 100 if ts.mode == "pct" else u
@@ -167,6 +176,23 @@ class RuleStrategy(Strategy):
                     hits.append(("underlying_stop", f"underlying {spot:.2f} moved {mv:+.2f}% from entry {pos.entry_spot:.2f} ({'abs' if neutral else 'against'} {against:.2f}% >= {ue.move_against_pct:g}%)"))
             if ue.move_for_pct is not None and not neutral and directional >= ue.move_for_pct:
                 hits.append(("underlying_target", f"underlying {spot:.2f} moved {mv:+.2f}% from entry {pos.entry_spot:.2f} in favour >= {ue.move_for_pct:g}%"))
+            atr = pos.meta.get("entry_atr")
+            if atr and not neutral:
+                sgn = 1 if d0 > 0 else -1
+                dist = (spot - pos.entry_spot) * sgn  # dollars in the position's favour
+                if ue.stop_atr is not None and -dist >= ue.stop_atr * atr:
+                    hits.append(("underlying_stop", f"underlying {spot:.2f} is {-dist:.2f} against the position from entry {pos.entry_spot:.2f} >= {ue.stop_atr:g} x ATR({ue.atr_period}) {atr:.2f} fixed at entry"))
+                if ue.target_atr is not None and dist >= ue.target_atr * atr:
+                    hits.append(("underlying_target", f"underlying {spot:.2f} is {dist:.2f} in favour from entry {pos.entry_spot:.2f} >= {ue.target_atr:g} x ATR({ue.atr_period}) {atr:.2f} fixed at entry"))
+            if (ue.trail_pct is not None or (ue.trail_atr is not None and atr)) and not neutral:
+                ser_ = ctx.series(pos.symbol)
+                hi_, lo_ = ser_.range_between(pos.entry_ts, ctx.t)
+                best = max(pos.entry_spot, hi_ if math.isfinite(hi_) else pos.entry_spot) if d0 > 0 else min(pos.entry_spot, lo_ if math.isfinite(lo_) else pos.entry_spot)
+                back = (best - spot) if d0 > 0 else (spot - best)
+                if ue.trail_pct is not None and back >= best * ue.trail_pct / 100:
+                    hits.append(("underlying_stop", f"underlying {spot:.2f} gave back {back / best * 100:.2f}% from its best level since entry {best:.2f} >= trail {ue.trail_pct:g}%"))
+                elif ue.trail_atr is not None and atr and back >= ue.trail_atr * atr:
+                    hits.append(("underlying_stop", f"underlying {spot:.2f} gave back {back:.2f} from its best level since entry {best:.2f} >= {ue.trail_atr:g} x ATR {atr:.2f}"))
             if ue.strike_breach:
                 b = ue.breach_buffer_pct / 100
                 for l in pos.legs:
@@ -228,6 +254,8 @@ class RuleStrategy(Strategy):
             return
         if not fresh:
             return
+        if ex.stages and self._check_stages(ctx, pos, pct, spot):
+            return
         for rule in ex.leg_rules:
             idxs = [i for i, l in enumerate(pos.legs) if l.is_open and (l.leg_id == rule.target or l.group == rule.target)]
             for i in list(idxs):
@@ -246,14 +274,82 @@ class RuleStrategy(Strategy):
             if not pos.is_open:
                 return
 
+    def _check_stages(self, ctx: Context, pos: Position, pct: float, spot: float) -> bool:
+        """Partial exits, in order. Returns True when a stage acted at this tick."""
+        done: list = pos.meta.setdefault("stages_done", [])
+        for si, st in enumerate(self.cfg.exits.stages):
+            if si in done:
+                continue
+            why = None
+            if st.profit_pct is not None:
+                if math.isfinite(pct) and pct >= st.profit_pct:
+                    why = f"P&L {pct:+.1f}% of premium >= {st.profit_pct:g}%"
+            elif st.underlying_for_pct is not None:
+                d0 = sum(l.ratio * (l.entry_greeks[0] if math.isfinite(l.entry_greeks[0]) else 0) * (l.multiplier if l.kind == "option" else 1) for l in pos.legs)
+                mv = (spot / pos.entry_spot - 1) * 100 * (1 if d0 > 0 else -1) if math.isfinite(spot) and abs(d0) >= 5 else float("nan")
+                if math.isfinite(mv) and mv >= st.underlying_for_pct:
+                    why = f"underlying moved {mv:+.2f}% in favour >= {st.underlying_for_pct:g}%"
+            else:
+                res, text = X.explain(st.when, X.Evaluator(ctx, pos))
+                if res is True:
+                    why = text
+            if why is None:
+                return False  # ordered: a later stage waits for this one
+            orig = int(pos.meta.setdefault("original_units", pos.units))
+            n = min(pos.units, max(1, int(orig * st.close_pct / 100)))
+            name = st.name or f"stage {si + 1}"
+            expl = [{"text": f"exit stage {name}: {why} -> close {n} of {pos.units} open unit{'s' if pos.units != 1 else ''}", "passed": True, "stage": True}]
+            if n >= pos.units:
+                done.append(si)
+                pos.exit_explain = expl
+                ctx.close(pos, "stage_exit", explain=expl)
+                return True
+            if not ctx.bt.close_position(pos, f"stage:{name}", ctx, units=n, explain=expl):
+                return True  # no size or no fresh quote for the partial close: the stage stays armed and is tried again
+            done.append(si)
+            pos.meta.setdefault("stage_exits", []).append({"stage": name, "t": ctx.t, "units": n, "why": why, "pnl_pct_then": round(pct, 3) if math.isfinite(pct) else None})
+            if st.then_stop == "breakeven":
+                pos.meta["breakeven_after_stage"], pos.meta["stop_stage"] = True, name
+            if st.then_stop_pct is not None:
+                pos.meta["stop_pct_after_stage"], pos.meta["stop_stage"] = st.then_stop_pct, name
+            return True
+        return False
+
+    def _atr(self, ctx: Context, period: int) -> float | None:
+        try:
+            v = X.Evaluator(ctx).eval(f'atr({int(period)}, "1d")')
+        except X.ExprError:
+            return None
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0 else None
+
+    def _hedge(self, ctx: Context):
+        """Move each open position's hedge shares to minus its option delta (see DeltaHedge)."""
+        h = self.cfg.hedge
+        for pos in ctx.positions():
+            if not pos.is_open or pos.pending_exit:
+                continue
+            last = pos.meta.get("hedge_t")
+            if last is not None and ctx.t - last < h.rebalance_minutes * 60:
+                continue
+            opt = [l for l in pos.legs if l.is_open and l.kind == "option"]
+            if not opt or any(not math.isfinite(l.greeks[0]) or l.stale for l in opt):
+                continue  # a delta that is not known now is never guessed: the hedge stays as it is
+            delta = sum(l.qty * l.multiplier * l.greeks[0] for l in opt)
+            have = sum(l.qty for l in pos.legs if l.kind == "stock" and l.leg_id == "_hedge")
+            want = -round(delta)
+            if abs(want - have) <= h.band and last is not None:
+                continue
+            ctx.bt.hedge_trade(pos, want - have, ctx)
+            pos.meta["hedge_t"] = ctx.t
+
     def _roll(self, ctx: Context, pos: Position, explain):
         if not ctx.close(pos, "roll", explain=explain):
             return
-        sel, why, _ = ctx.select(self.cfg.legs)
+        sel, why, _ = ctx.select(self.cfg.legs_for(pos.meta.get("system")))
         if sel is None:
             ctx.log("roll_failed", f"roll could not reselect contracts: {why}", pos)
             return
-        new, why = ctx.open(sel, pos.units, explain=[{"text": f"rolled from position {pos.id}", "passed": True}], tag="roll")
+        new, why = ctx.open(sel, pos.units, explain=[{"text": f"rolled from position {pos.id}", "passed": True}], tag="roll", meta={k: pos.meta[k] for k in ("system", "entry_atr") if pos.meta.get(k) is not None})
         if new is not None:
             new.roll_group = pos.roll_group or pos.id
             new.roll_count = pos.roll_count + 1
@@ -266,6 +362,35 @@ class RuleStrategy(Strategy):
         s = self.cfg.sizing
         if s.method == "fixed":
             return min(s.contracts, s.max_contracts), ""
+        if s.method == "expr":
+            ev = X.Evaluator(ctx)
+            try:
+                v = ev.eval(s.expr)
+            except X.ExprError as e:
+                return 0, f"sizing expression could not be evaluated: {e}"
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                return 0, "sizing expression not evaluable: " + (", ".join(sorted(ev.missing)) or "it is not a number")
+            n = min(int(math.floor(v)), s.max_contracts)
+            return (n, "") if n >= 1 else (0, f"sizing expression gives {v:g} units (below one)")
+        if s.method == "atr_risk":
+            atr = self._atr(ctx, s.atr_period)
+            ch0, _ = ctx.chain()
+            mult0 = ctx.bt.metas[self.symbol].multiplier
+            dl = 0.0
+            for x in sel:
+                if x.row < 0:
+                    dl += x.leg.sign * x.leg.quantity
+                    continue
+                g = float(ch0.delta[x.row])
+                if not math.isfinite(g):
+                    return 0, "sizing: the contract's delta is not available at the fill, so the ATR risk of one unit is unknown"
+                dl += x.leg.sign * x.leg.quantity * mult0 * g
+            if atr is None:
+                return 0, f"sizing: ATR({s.atr_period}) cannot be computed yet (not enough daily history)"
+            risk = abs(dl) * atr * s.atr_multiple
+            budget = s.pct / 100 * ctx.account.equity() * self.allocation
+            n = min(int(budget // risk) if risk > 0 else 0, s.max_contracts)
+            return (n, "") if n >= 1 else (0, f"sizing: {s.pct:g}% budget {budget:,.0f} < risk per unit {risk:,.0f} ({s.atr_multiple:g} x ATR {atr:.2f} x delta {abs(dl):.0f})")
         ch, _ = ctx.chain()
         mult = ctx.bt.metas[self.symbol].multiplier
         spot = ctx.price()
@@ -329,6 +454,11 @@ class RuleStrategy(Strategy):
             # only while they are recent (max_trade_age_seconds) - never a later print.
             after_signal = trades or snap_t >= ready_t or (ex.latency_seconds == 0 and pd["signal_t"] - snap_t <= max_age)
             eligible = fresh_now and after_signal
+        in_auction = (ex.no_entry_first_minutes and ctx.minute < 570 + ex.no_entry_first_minutes) or (ex.no_entry_last_minutes and ctx.minute >= ctx.close_minute - ex.no_entry_last_minutes)
+        if in_auction:
+            if waited_out:
+                self._expire(ctx, f"the order could only have filled inside the {'opening' if ctx.minute < 570 + (ex.no_entry_first_minutes or 0) else 'closing'} window, where entries are not allowed under these execution assumptions", "auction_window")
+            return
         if not eligible:
             if ch is None:
                 self._expire(ctx, f"no option {'trade data' if trades else 'chain'} is stored for {self.symbol} on this session", "no_option_data")
@@ -340,7 +470,8 @@ class RuleStrategy(Strategy):
                     detail = f"next option quote is {(nxt[0] - pd['signal_t']) / 60:.0f} min after the signal" if nxt else "no later option quote this session"
                     self._expire(ctx, f"no option quote within {ex.max_fill_delay_minutes:g} min of the signal ({detail})", "no_quote")
             return
-        sel, why, _details = ctx.select(self.cfg.legs)
+        legs_spec = self.cfg.legs_for(pd.get("system"))
+        sel, why, _details = ctx.select(legs_spec)
         if sel is None:
             if trades and not waited_out:
                 pd["last_reason"] = why  # keep the order working: the contract may print in the next minutes
@@ -357,6 +488,12 @@ class RuleStrategy(Strategy):
                 self._reject(ctx, pd, "no_contract", why)
             return
         self.pending = None
+        ue = self.cfg.exits.underlying
+        entry_atr = self._atr(ctx, ue.atr_period) if ue.needs_atr() else None
+        if ue.needs_atr() and entry_atr is None:
+            # an exit that cannot be computed is not replaced by another one: the entry is skipped and reported
+            self._reject(ctx, pd, "no_atr", f"ATR({ue.atr_period}) cannot be computed at this entry (not enough daily history), and the exit rules depend on it")
+            return
         units, why = self._units(ctx, sel)
         if units < 1:
             self._reject(ctx, pd, "capital", why)
@@ -372,11 +509,15 @@ class RuleStrategy(Strategy):
             sel_expl.append({"text": f"{x.leg.id}: {x.leg.side} {x.leg.right} {x.leg.dte}DTE target {target} -> {x.strike:g}{x.leg.right} exp {x.expiration - ctx.today_num}d, delta {ch.delta[x.row]:+.3f}, " + (f"last trade {ch.mid[x.row]:.2f} printed {int(ctx.t - ch.quote_ts[x.row])}s earlier (no bid/ask exists in trade data)" if ch.trade_based[x.row] else f"bid/ask {ch.bid[x.row]:.2f}/{ch.ask[x.row]:.2f}"), "passed": True, "selection": True})
         delay = ctx.t - pd["signal_t"]
         timing = [{"text": f"signal {cal.fmt_hhmm(pd['minute'])} ET -> filled {cal.fmt_hhmm(ctx.minute)} ET ({delay / 60:.0f} min later, first eligible option quote)", "passed": True, "selection": True}] if delay else []
-        pos, why = ctx.open(sel, units, explain=pd["explain"] + timing + sel_expl, meta={"signal_ts": pd["signal_t"], "signal_price": pd.get("signal_price"), "lot": 1, **self._entry_state(ctx), **(pd.get("state") or {})})
+        pos, why = ctx.open(sel, units, explain=pd["explain"] + timing + sel_expl, meta={"signal_ts": pd["signal_t"], "signal_price": pd.get("signal_price"), "lot": 1, **self._entry_state(ctx), **(pd.get("state") or {}),
+                                                                                         **({"system": pd["system"]} if pd.get("system") else {}), **({"entry_atr": entry_atr} if entry_atr else {})})
         if pos is None:
             self._reject(ctx, pd, "rejected", why, "entry_rejected")
             return
+        pos.meta["original_units"] = pos.units
         self.entries_today += 1
+        if self.cfg.hedge.enabled:
+            self._hedge(ctx)
 
     def check_entry(self, ctx: Context):
         if self.pending:
@@ -397,7 +538,7 @@ class RuleStrategy(Strategy):
         if not ok:
             return
         ctx.bt.diag.signals += 1
-        self.pending = {"signal_t": ctx.t, "minute": ctx.minute, "explain": explain, "signal_price": ctx.price(), "state": self.tracker.completed if self.tracker else None}
+        self.pending = {"signal_t": ctx.t, "minute": ctx.minute, "explain": explain, "signal_price": ctx.price(), "state": self.tracker.completed if self.tracker else None, "system": self.fired_system}
         self._try_fill(ctx)
 
     def entry_signal(self, ctx: Context) -> tuple[bool, list[dict]]:
@@ -415,10 +556,21 @@ class RuleStrategy(Strategy):
                 self.na_today |= {f"sequence: missing {m}" for m in missing}
             if not done:
                 return False, seq_expl
+        self.fired_system = None
         ok, explain, na = evaluate(e.conditions, ctx)
         if na:
             self.na_today |= {x.split("[not evaluable: ")[-1].rstrip("]") if "[not evaluable: " in x else x for x in na}
-        return ok, seq_expl + explain
+        if not e.systems or not ok:
+            return ok, seq_expl + explain
+        # independent entry systems: the first one, in the order listed, whose own conditions hold
+        for sy in e.systems:
+            ok2, expl2, na2 = evaluate(sy.conditions, ctx)
+            if na2:
+                self.na_today |= {f"{sy.name}: " + (x.split("[not evaluable: ")[-1].rstrip("]") if "[not evaluable: " in x else x) for x in na2}
+            if ok2:
+                self.fired_system = sy.name
+                return True, seq_expl + explain + [{"text": f"entry system: {sy.name}" + (f" - {sy.text}" if sy.text else ""), "passed": True, "system": sy.name}] + expl2
+        return False, seq_expl + explain
 
     def _entry_state(self, ctx: Context) -> dict:
         """Facts recorded on the position at entry so exit and add rules can refer to them later."""
@@ -434,9 +586,11 @@ class RuleStrategy(Strategy):
         ch, si = ctx.chain()
         if ch is None or si < 0:
             return None, "no option data at this time"
-        specs = {l.id: l for l in self.cfg.legs}
+        specs = {l.id: l for l in self.cfg.legs_for(root.meta.get("system"))}
         out = []
         for l in root.legs:
+            if l.leg_id == "_hedge":
+                continue  # hedge shares belong to their own lot
             spec = specs.get(l.leg_id)
             if spec is None:
                 return None, f"leg {l.leg_id} is not part of the strategy definition"
@@ -470,7 +624,7 @@ class RuleStrategy(Strategy):
                 if rule.contract == "same":
                     sel, why = self._same_contracts(ctx, root)
                 else:
-                    sel, why, _ = ctx.select(self.cfg.legs)
+                    sel, why, _ = ctx.select(self.cfg.legs_for(root.meta.get("system")))
                 key = root.id * 100 + ri
                 if sel is None:
                     if key not in self.add_pending:  # report once; keep trying while the rule holds
@@ -481,7 +635,8 @@ class RuleStrategy(Strategy):
                 expl = [{"text": f"add #{made + 1} to position {root.id}: {rule.text + ': ' if rule.text else ''}{text}", "passed": True, "add": True}]
                 pos, why = ctx.open(sel, rule.quantity, explain=expl, tag="add",
                                     meta={"signal_ts": self.add_pending.pop(key, ctx.t), "signal_price": ctx.price(), "group": root.id, "lot": lot, "add_rule": ri,
-                                          "seq": root.meta.get("seq"), "refs": root.meta.get("refs"), **self._entry_state(ctx)})
+                                          "seq": root.meta.get("seq"), "refs": root.meta.get("refs"), **self._entry_state(ctx),
+                                          **{k: root.meta[k] for k in ("system", "entry_atr") if root.meta.get(k) is not None}})
                 if pos is None:
                     ctx.bt.diag.skip(f"add rejected: {why}")
                     ctx.log("add_rejected", f"add to position {root.id} rejected: {why}", root)
@@ -497,3 +652,5 @@ class RuleStrategy(Strategy):
             self.check_exits(ctx, pos)
         self.check_adds(ctx)
         self.check_entry(ctx)
+        if self.cfg.hedge.enabled:
+            self._hedge(ctx)

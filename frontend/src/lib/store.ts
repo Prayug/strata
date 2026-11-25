@@ -46,11 +46,15 @@ export function normalizeStrategy(s: Partial<StrategyConfig>): StrategyConfig {
     if (d && typeof d === "object" && !Array.isArray(d)) (exits as any)[k] = { ...d, ...((s.exits as any)?.[k] || {}) };
   }
   const withIds = (n: CondNode): CondNode => ({ ...n, id: n.id || Math.random().toString(36).slice(2, 8), enabled: n.enabled ?? true, children: (n.children || []).map(withIds) });
+  // Fields this editor has no control for (entry sequences, scale-ins, entry systems, staged exits, a hedge) are
+  // carried through untouched: opening a strategy in the visual builder must never drop part of it.
   return {
+    ...(s as any),
     name: s.name || "Untitled strategy",
     symbol: s.symbol || "SPY",
     legs: (s.legs || []).map((l) => ({ kind: "option", dte_mode: "nearest", min_bid: 0, ...l, quantity: l.quantity ?? 1, strike: { unit: "points", ref_leg: null, ...l.strike } })),
     entry: {
+      ...((s.entry as any) || {}),
       conditions: withIds(s.entry?.conditions || rootGroup()),
       max_entries_per_day: s.entry?.max_entries_per_day ?? 1, cooldown_minutes: s.entry?.cooldown_minutes ?? 0,
       max_open_positions: s.entry?.max_open_positions ?? 1, reentry_after: s.entry?.reentry_after ?? ["any"],
@@ -132,10 +136,11 @@ export const useBuilder = create<BuilderState>()(
 
 interface UiState {
   navCollapsed: boolean;
+  mode: "simple" | "advanced";  // how much of each screen is shown; never which engine computes it
   lastRunId: string | null;
   returnMode: "dollars" | "pct" | "risk";
   set: (p: Partial<Omit<UiState, "set">>) => void;
 }
 export const useUi = create<UiState>()(
-  persist((set) => ({ navCollapsed: false, lastRunId: null, returnMode: "dollars", set: (p) => set(p) }), { name: "strata-ui-v1" }),
+  persist((set) => ({ navCollapsed: false, mode: "simple", lastRunId: null, returnMode: "dollars", set: (p) => set(p) }), { name: "strata-ui-v1", version: 2, migrate: (st: any) => ({ mode: "simple", ...st }) }),
 );

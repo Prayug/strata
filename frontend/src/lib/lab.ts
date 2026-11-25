@@ -72,3 +72,10 @@ export function useRunResult(id: string | null | undefined) {
 export function resultMessages(messages: AiMessage[]) {
   return messages.filter((m) => m.kind === "result" && m.content?.run_id);
 }
+
+/** Start a notebook with a first question (the workspace reads it once and sends it). Returns the notebook path. */
+export async function openNotebook(text: string, title?: string): Promise<string> {
+  const s = await api.post<any>("/api/ai/sessions", { title: (title || text).slice(0, 70) });
+  sessionStorage.setItem(`lab-first-${s.id}`, text);
+  return `/lab/${s.id}`;
+}

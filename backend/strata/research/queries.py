@@ -17,25 +17,17 @@ from scipy import stats as sst
 
 from strata.core import calendar as cal
 from strata.data.store import MarketStore
+from strata.research import robust as R
 
 
-def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
-    if n == 0:
-        return (float("nan"), float("nan"))
-    p = k / n
-    d = 1 + z * z / n
-    c = (p + z * z / (2 * n)) / d
-    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
-    return (c - h, c + h)
+def wilson(k: int, n: int) -> tuple[float, float]:
+    lo, hi = R.wilson(k, n)
+    return (float("nan"), float("nan")) if lo is None else (lo, hi)
 
 
 def boot_ci(x: np.ndarray, n: int = 2000, seed: int = 1) -> tuple[float, float]:
-    x = x[np.isfinite(x)]
-    if x.size < 3:
-        return (float("nan"), float("nan"))
-    rng = np.random.default_rng(seed)
-    means = x[rng.integers(0, x.size, (n, x.size))].mean(axis=1)
-    return float(np.quantile(means, 0.025)), float(np.quantile(means, 0.975))
+    lo, hi = R.iid_mean_ci(x, n, seed)
+    return (float("nan"), float("nan")) if lo is None else (lo, hi)
 
 
 def describe(x: np.ndarray) -> dict:

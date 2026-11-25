@@ -328,10 +328,11 @@ class Context:
 
 class Backtester:
     def __init__(self, cfg: BacktestConfig, store: MarketStore | None = None, strategies: list[Strategy] | None = None,
-                 progress=None, should_cancel=None, record_paths: bool = True, signals_only: bool = False):
+                 progress=None, should_cancel=None, record_paths: bool = True, signals_only: bool = False, extra_symbols: set[str] | None = None):
         from strata.engine.rules import RuleStrategy
 
         self.cfg = cfg
+        self.extra_symbols = {x.upper() for x in (extra_symbols or ())}
         self.store = store or MarketStore()
         self.ex = cfg.execution
         self.signals_only = signals_only  # evaluate entry rules on the underlying only; no option data is read
@@ -378,6 +379,7 @@ class Backtester:
             c = getattr(s, "cfg", None)
             if c is not None:
                 syms |= c.symbols()  # every other symbol a rule reads, e.g. QQQ.prev_high
+        syms |= self.extra_symbols  # symbols only an observer reads (a debugger watch), never the rules
         bench = cfg.benchmark or opt_syms[0]
         syms.add(bench)
         self.bench = bench
@@ -543,6 +545,21 @@ class Backtester:
                             self.leg_cols[k].append(float(val) if val is not None else math.nan)
 
     # ------------------------------------------------------------------ orders
+    def _situational(self, px: float, side: int, t: int, exp_close: int | None = None) -> float:
+        """Auction-window and expiration-day surcharges on an option fill (side +1 buy, -1 sell).
+        Both are explicit assumptions from the execution settings; with the defaults they do nothing."""
+        ex = self.ex
+        if not (ex.auction_extra_pct or ex.expiry_day_extra_pct):
+            return px
+        c = self.ctx
+        minute = 570 + (t - self._t_open) // 60 if getattr(self, "_t_open", None) is not None else c.minute
+        extra = 0.0
+        if ex.auction_extra_pct and ((ex.no_entry_first_minutes and minute < 570 + ex.no_entry_first_minutes) or (ex.no_entry_last_minutes and minute >= c.close_minute - ex.no_entry_last_minutes)):
+            extra += ex.auction_extra_pct
+        if ex.expiry_day_extra_pct and exp_close is not None and 0 <= exp_close - t <= ex.expiry_day_minutes * 60:
+            extra += ex.expiry_day_extra_pct
+        return max(0.0, px * (1 + side * extra / 100.0)) if extra else px
+
     def open_position(self, strat: Strategy, sel: list[Selected], units: int, ctx: Context, explain: list, tag: str, meta: dict):
         ex = self.ex
         ch = self.chains.get(strat.symbol)
@@ -590,6 +607,7 @@ class Backtester:
             px = X.fill_price(float(ch.bid[i]), float(ch.ask[i]), sign, ex)
             if ex.multi_leg_extra_pct and sum(1 for z in sel if z.row >= 0) >= 2:
                 px = max(0.0, px * (1 + sign * ex.multi_leg_extra_pct / 100.0))
+            px = self._situational(px, sign, ctx.t, int(cal.session_bounds(from_day_num(int(ch.exp[i])))[1].timestamp()) if ex.expiry_day_extra_pct else None)
             tb = bool(ch.trade_based[i])
             if tb:  # trade print, no quote: the print plus an explicit slippage assumption
                 px = max(0.0, px * (1 + sign * ex.trade_bar_slippage_pct / 100.0))
@@ -607,6 +625,7 @@ class Backtester:
                           entry_ask=float(ch.ask[i]), entry_mid=float(ch.mid[i]), entry_iv=float(ch.iv[i]), entry_greeks=g)
             ls.bid, ls.ask, ls.mid, ls.iv, ls.greeks, ls.quote_ts = ls.entry_bid, ls.entry_ask, ls.entry_mid, ls.entry_iv, g, int(ch.quote_ts[i])
             ls.trade_based = ls.entry_trade_based = tb
+            ls.entry_volume, ls.entry_size = int(ch.volume[i]), int(ch.ask_size[i] if sign > 0 else ch.bid_size[i])
             ls.exp_close = int(cal.session_bounds(from_day_num(ls.exp))[1].timestamp())
             legs.append(ls)
         comm += ex.commission_per_order
@@ -673,6 +692,7 @@ class Backtester:
             px = X.fill_price(l.bid, l.ask, -int(np.sign(q)), self.ex)
             if self.ex.multi_leg_extra_pct and sum(1 for z in pos.legs if z.kind == "option") >= 2:
                 px = max(0.0, px * (1 - int(np.sign(q)) * self.ex.multi_leg_extra_pct / 100.0))
+            px = self._situational(px, -int(np.sign(q)), t, l.exp_close)
             if getattr(l, "trade_based", False):
                 px = max(0.0, px * (1 - int(np.sign(q)) * self.ex.trade_bar_slippage_pct / 100.0))
             flow = q * l.multiplier * px
@@ -693,11 +713,14 @@ class Backtester:
         self.account.slippage += slip
         return flow
 
-    def close_position(self, pos: Position, reason: str, ctx: Context, leg_idx: list[int] | None = None, explain: list | None = None, ignore_liquidity: bool = False) -> bool:
+    def close_position(self, pos: Position, reason: str, ctx: Context, leg_idx: list[int] | None = None, explain: list | None = None, ignore_liquidity: bool = False, units: int | None = None) -> bool:
         """Close the whole position (or a subset of legs) at the current snapshot. Returns
         True when everything requested was filled; otherwise the remainder is retried at
-        the next snapshot."""
+        the next snapshot. With `units`, exactly that many units are closed and the rest of
+        the position stays open (a staged exit); it either fills in full or not at all."""
         t = ctx.t
+        if units is not None:
+            return self._scale_out(pos, reason, ctx, int(units), explain)
         # legs at/after their expiration close cannot be traded; they settle after the close
         targets = [i for i, l in enumerate(pos.legs) if l.is_open and (leg_idx is None or i in leg_idx) and t < l.exp_close]
         if not targets:
@@ -722,7 +745,9 @@ class Backtester:
             size = l.bid_size if l.qty > 0 else l.ask_size
             cap = math.inf if ignore_liquidity else X.liquidity_cap(size, l.volume, self.ex)
             caps.append(cap // abs(l.ratio) if math.isfinite(cap) else math.inf)
-        open_units = min((abs(pos.legs[i].qty) // max(abs(pos.legs[i].ratio), 1) for i in targets), default=0)
+        open_units = min((abs(pos.legs[i].qty) // max(abs(pos.legs[i].ratio), 1) for i in targets if pos.legs[i].leg_id != "_hedge"), default=0)
+        if open_units == 0 and any(pos.legs[i].leg_id == "_hedge" for i in targets):
+            open_units = 1  # only hedge shares are left: close them
         n_units = int(min([open_units] + caps)) if caps else open_units
         if n_units <= 0 and open_units > 0:
             pos.pending_exit = reason if leg_idx is None else pos.pending_exit
@@ -732,7 +757,7 @@ class Backtester:
             return False
         for i in targets:
             l = pos.legs[i]
-            n = abs(l.qty) if n_units >= open_units else abs(l.ratio) * n_units
+            n = abs(l.qty) if (n_units >= open_units or l.leg_id == "_hedge") else abs(l.ratio) * n_units
             if n > 0:
                 self._close_leg(pos, l, int(n), t, reason)
         if explain:
@@ -751,6 +776,63 @@ class Backtester:
         elif full and leg_idx is None:
             pos.pending_exit = None
         return full
+
+    def _scale_out(self, pos: Position, reason: str, ctx: Context, units: int, explain: list | None) -> bool:
+        t = ctx.t
+        legs = [l for l in pos.legs if l.is_open and l.leg_id != "_hedge" and t < l.exp_close]
+        if units < 1 or units >= pos.units or not legs:
+            return False
+        if any(l.stale or not math.isfinite(l.mid) for l in legs):
+            return False
+        for l in legs:
+            if l.kind == "stock":
+                continue
+            cap = X.liquidity_cap(l.bid_size if l.qty > 0 else l.ask_size, l.volume, self.ex)
+            if math.isfinite(cap) and cap // max(abs(l.ratio), 1) < units:
+                return False  # not enough displayed size for the whole stage: nothing is filled, the stage is tried again
+        for l in legs:
+            self._close_leg(pos, l, int(abs(l.ratio) * units), t, reason)
+        pos.units -= units
+        pos.flags.add("scaled_out")
+        self.diag.scale_outs = getattr(self.diag, "scale_outs", 0) + 1
+        self._update_position_values(pos)
+        self.log(t, "scale_out", f"{reason}: closed {units} unit{'s' if units != 1 else ''}, {pos.units} left open", pos, {"explain": explain} if explain else None)
+        return True
+
+    def hedge_trade(self, pos: Position, d_shares: float, ctx: Context) -> None:
+        """Buy (+) or sell (-) shares of the underlying inside a position, as its delta hedge."""
+        d = int(round(d_shares))
+        if d == 0:
+            return
+        spot = ctx.price(pos.symbol)
+        if not math.isfinite(spot):
+            return
+        sign = 1 if d > 0 else -1
+        px = X.stock_fill_price(spot, sign, self.ex)
+        comm = X.stock_commission(d, self.ex)
+        leg = next((l for l in pos.legs if l.leg_id == "_hedge"), None)
+        if leg is None:
+            leg = LegState("_hedge", "stock", False, 0.0, -1, -1, 0, 1.0, "hedge", qty=0, entry_price=px, entry_bid=spot, entry_ask=spot, entry_mid=spot, entry_greeks=(1.0, 0.0, 0.0, 0.0))
+            pos.legs.append(leg)
+        leg.qty += d
+        leg.bid = leg.ask = leg.mid = spot
+        leg.stale = False
+        flow = -d * px
+        pos.exit_cash += flow  # hedge cash flows are part of the position's realised result
+        pos.commissions += comm
+        pos.slippage += abs(px - spot) * abs(d)
+        self.account.cash += flow - comm
+        self.account.commissions += comm
+        self.account.slippage += abs(px - spot) * abs(d)
+        h = pos.meta.setdefault("hedge", {"trades": 0, "shares_traded": 0, "cash": 0.0})
+        h["trades"] += 1
+        h["shares_traded"] += abs(d)
+        h["cash"] += flow
+        h["shares"] = leg.qty
+        pos.flags.add("delta_hedged")
+        self._update_position_values(pos)
+        if len(self.events_log) < 20000:
+            self.log(ctx.t, "hedge", f"{'bought' if d > 0 else 'sold'} {abs(d)} shares at {px:.2f} (hedge now {leg.qty:+d} shares)", pos)
 
     def _finalize(self, pos: Position, t: int, reason: str):
         pos.exit_ts = t
@@ -1068,6 +1150,9 @@ class Backtester:
             ctx.day_minutes = {570 + (t - t_open) // 60 for t in clock}
             self._day_max_bp = self.account.bp_used()
             self._day_max_pos = len(self.account.positions)
+            self._t_open = t_open
+            self._day_open_equity = self.account.equity()
+            self._peak_equity = max(getattr(self, "_peak_equity", self._day_open_equity), self._day_open_equity)
             for s in self.strategies:
                 ctx.strategy = s
                 s.on_day_start(ctx)
@@ -1084,6 +1169,7 @@ class Backtester:
                     ctx.strategy = s
                     s.on_snapshot(ctx)
                 self.margin_check(t)
+                self._peak_equity = max(self._peak_equity, self.account.equity())
                 self._day_max_bp = max(self._day_max_bp, self.account.bp_used())
                 self._day_max_pos = max(self._day_max_pos, len(self.account.positions))
                 self.intraday_equity["t"].append(t)
@@ -1293,6 +1379,8 @@ def trade_record(p: Position, bt: Backtester) -> dict:
             "entry_print": _num(l.entry_mid) if getattr(l, "entry_trade_based", False) else None, "exit_print": _num(l.exit_mid) if getattr(l, "entry_trade_based", False) else None,
             "entry_price": _num(l.entry_price), "entry_bid": None if getattr(l, "entry_trade_based", False) else _num(l.entry_bid),
             "entry_ask": None if getattr(l, "entry_trade_based", False) else _num(l.entry_ask), "entry_mid": _num(l.entry_mid),
+            "entry_volume": getattr(l, "entry_volume", None) if getattr(l, "entry_volume", -1) is not None and getattr(l, "entry_volume", -1) >= 0 else None,
+            "entry_displayed_size": getattr(l, "entry_size", None) if getattr(l, "entry_size", -1) is not None and getattr(l, "entry_size", -1) >= 0 else None,
             "entry_iv": _num(l.entry_iv), "entry_delta": _num(l.entry_greeks[0]), "entry_gamma": _num(l.entry_greeks[1]),
             "entry_theta": _num(l.entry_greeks[2]), "entry_vega": _num(l.entry_greeks[3]),
             "exit_price": _num(l.exit_price), "exit_bid": None if getattr(l, "entry_trade_based", False) else _num(l.exit_bid),
@@ -1324,6 +1412,7 @@ def trade_record(p: Position, bt: Backtester) -> dict:
         "entry_vix": _num(p.entry_vix), "entry_iv": _num(p.entry_iv), "entry_regime": p.entry_regime,
         "max_profit": _num(mp), "max_loss": _num(ml), "flags": sorted(p.flags), "roll_group": p.roll_group, "roll_count": p.roll_count,
         "group": p.meta.get("group") or (p.id if p.meta.get("lot", 1) == 1 else None), "lot": p.meta.get("lot", 1),
+        "system": p.meta.get("system"), "original_units": p.meta.get("original_units", p.units), "stage_exits": p.meta.get("stage_exits") or [], "hedge": p.meta.get("hedge"), "entry_atr": _num(p.meta.get("entry_atr")),
         "legs": legs, "entry_explain": p.entry_explain, "exit_explain": p.exit_explain, "meta": p.meta,
     }
 

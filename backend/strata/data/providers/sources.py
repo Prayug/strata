@@ -72,6 +72,11 @@ def _client() -> httpx.Client:
 TRADING_PATHS = ("/orders", "/positions", "/transfers", "/ach_relationships", "/watchlists", "/account/activities", "/account/configurations")
 
 
+def _redact(text: str) -> str:
+    """Remove anything that looks like a credential in a URL from a message (some providers only accept their key as a query parameter)."""
+    return re.sub(r"(?i)\b(api_?key|token|key|secret|access_token)=[^&\s'\"]+", r"\1=[redacted]", str(text))
+
+
 def http_get(client: httpx.Client, url: str, params: dict | None = None, headers: dict | None = None, retries: int = 4) -> httpx.Response:
     if any(x in httpx.URL(url).path for x in TRADING_PATHS):
         raise SourceError("refused: Strata only reads market data and never calls a trading endpoint")
@@ -85,12 +90,12 @@ def http_get(client: httpx.Client, url: str, params: dict | None = None, headers
                 last = SourceError(f"HTTP {r.status_code} from {httpx.URL(url).host}")
                 continue
             if r.status_code >= 400:
-                raise SourceError(f"HTTP {r.status_code} from {httpx.URL(url).host}: {r.text[:200]}")
+                raise SourceError(f"HTTP {r.status_code} from {httpx.URL(url).host}: {_redact(r.text[:200])}")
             return r
         except httpx.HTTPError as e:
             last = e
             time.sleep(1 + attempt)
-    raise SourceError(f"request failed after {retries} attempts: {last}")
+    raise SourceError(f"request failed after {retries} attempts: {_redact(last)}")
 
 
 class Throttle:
@@ -313,6 +318,11 @@ class Yahoo(Source):
             rows.append((t, float(o), float(h), float(l), float(c), float(q["volume"][i] or 0)))
         df = pl.DataFrame(rows, schema=["ts", "open", "high", "low", "close", "volume"], orient="row")
         return df.with_columns(pl.from_epoch("ts", time_unit="s").dt.replace_time_zone("UTC").cast(pl.Datetime("us", "UTC"))).unique("ts", keep="last").sort("ts")
+
+    def health(self) -> dict:
+        with _client() as client:
+            self._chart(client, "SPY", range="5d", interval="1d")
+        return {"detail": "chart endpoint reachable"}
 
     def plan(self, dataset, symbols, start, end):
         n = len(symbols)
@@ -1235,7 +1245,233 @@ class Alpaca(OptionBarSource):
         return out
 
 
-SOURCES: dict[str, type[Source]] = {s.name: s for s in (Yahoo, Cboe, GithubEod, DoltHub, YahooOptions, Alpaca)}
+# ============================================================================ Alpha Vantage (end-of-day chains by date)
+class AlphaVantage(Source):
+    """HISTORICAL_OPTIONS: the full option chain of one symbol on one past session (bid, ask,
+    sizes, volume, open interest, implied volatility and greeks), any date since 2008-01-01.
+    The endpoint is premium for every symbol except the documentation's own example (IBM with
+    the public `demo` key), which is what the live check uses to verify the parser."""
+    name, label, tier = "alphavantage", "Alpha Vantage historical option chains", "paid"
+    url = "https://www.alphavantage.co/documentation/#historical-options"
+    license = "Alpha Vantage terms of service (personal use on individual plans)"
+    description = "End-of-day option chains for any US symbol on any session since 2008: one request per symbol and date. Needs a premium key (from $49.99 a month, 75 requests a minute)."
+    datasets = [{"id": "options_eod", "label": "End-of-day chains by date", "resolution": "EOD", "coverage": "2008 onward, any US-listed symbol", "quote_type": "quotes"}]
+    API = "https://www.alphavantage.co/query"
+    FIRST = date(2008, 1, 2)
+    rate = 1.0  # 75 requests a minute on the entry premium plan; one a second keeps well inside it
+
+    def _key(self) -> str:
+        from strata.api.settings import get_secret
+        return get_secret("ALPHAVANTAGE_API_KEY") or ""
+
+    def available(self):
+        return (bool(self._key()), "key configured" if self._key() else "needs a premium Alpha Vantage key (Settings -> Data connections)")
+
+    def capabilities(self, today=None):
+        today = today or datetime.now(cal.ET).date()
+        return [_cap("options", "quote", "EOD", self.FIRST, today - timedelta(days=1), note="full chains with greeks; one request per symbol-session; premium endpoint")]
+
+    @staticmethod
+    def parse_chain(payload: dict) -> pl.DataFrame:
+        """The provider's rows -> Strata's option quote columns. Raises SourceError with the
+        provider's own message when the response is a notice instead of data."""
+        rows = payload.get("data")
+        if not isinstance(rows, list):
+            msg = payload.get("Information") or payload.get("Note") or payload.get("Error Message") or payload.get("message") or "no data in the response"
+            raise SourceError(f"Alpha Vantage returned no option chain: {str(msg)[:240]}")
+        if not rows:
+            return pl.DataFrame(schema={"_d": pl.Date})
+
+        def f(x):
+            try:
+                return float(x)
+            except (TypeError, ValueError):
+                return None
+        df = pl.DataFrame([{"_d": r["date"], "expiration": r["expiration"], "strike": f(r["strike"]), "right": "C" if str(r["type"]).lower().startswith("c") else "P", "bid": f(r.get("bid")), "ask": f(r.get("ask")),
+                            "bid_size": f(r.get("bid_size")), "ask_size": f(r.get("ask_size")), "last": f(r.get("last")), "volume": f(r.get("volume")), "open_interest": f(r.get("open_interest")),
+                            "iv": f(r.get("implied_volatility")), "delta": f(r.get("delta")), "gamma": f(r.get("gamma")), "theta": f(r.get("theta")), "vega": f(r.get("vega"))} for r in rows])
+        df = df.with_columns(pl.col("_d").str.to_date(), pl.col("expiration").str.to_date(), pl.col("bid_size").cast(pl.Int32, strict=False), pl.col("ask_size").cast(pl.Int32, strict=False))
+        return df.filter(pl.col("bid").is_not_null() & pl.col("ask").is_not_null() & (pl.col("expiration") >= pl.col("_d")))
+
+    def fetch(self, client, sym: str, d: date | None, key: str | None = None) -> pl.DataFrame:
+        params = {"function": "HISTORICAL_OPTIONS", "symbol": sym, **({"date": d.isoformat()} if d else {})}
+        r = http_get(client, self.API, params={**params, "apikey": key or self._key()})
+        return self.parse_chain(r.json())
+
+    def plan(self, dataset, symbols, start, end):
+        days = [d for d in cal.trading_days(max(start or self.FIRST, self.FIRST), end or date.today() - timedelta(days=1))]
+        n = len(days) * max(1, len(symbols))
+        return {"source": self.name, "dataset": dataset, "requests": n, "est_seconds": int(n / self.rate), "est_bytes": n * 600_000, "cost": 0.0,
+                "note": "One request per symbol and session. The requests themselves are not charged; the endpoint needs a premium subscription to be active."}
+
+    def ingest(self, dataset, symbols, start=None, end=None, progress=None, should_cancel=None, force=False):
+        ok, msg = self.available()
+        if not ok:
+            raise SourceError(msg)
+        out = {"source": self.name, "dataset": dataset, "symbols": {}}
+        thr = Throttle(self.rate)
+        with _client() as client:
+            for sym in symbols:
+                ensure_symbol(self.store, sym, has_options=True)
+                ds = self.store.option_dataset(sym, "quote", provider=self.name)
+                have = set(self.store.option_days(sym, "quote", provider=self.name)) if ds is not None else set()
+                days = [d for d in cal.trading_days(max(start or self.FIRST, self.FIRST), end or date.today() - timedelta(days=1)) if force or d not in have]
+                rep = out["symbols"].setdefault(sym, {"sessions_written": 0, "sessions_skipped": 0, "rows": 0, "rejected_crossed": 0, "empty": 0})
+                for k, d in enumerate(days):
+                    if should_cancel and should_cancel():
+                        raise Cancelled()
+                    if progress:
+                        progress(k / max(1, len(days)), f"{sym} {d}")
+                    thr.wait()
+                    df = self.fetch(client, sym, d)
+                    df = df.filter(pl.col("_d") == d) if not df.is_empty() else df
+                    if df.is_empty():
+                        rep["empty"] += 1
+                        continue
+                    px = previous_close(self.store, sym, d + timedelta(days=1))
+                    n_src = df.height
+                    df, q = clean_chain(df.with_columns(pl.lit(px, dtype=pl.Float64).alias("underlying_price")))
+                    rep["rejected_crossed"] += q["rejected_crossed"]
+                    close = cal.session_bounds(d)[1]
+                    part = df.drop("_d").with_columns(pl.lit(close).dt.convert_time_zone("UTC").cast(pl.Datetime("us", "UTC")).alias("ts"))
+                    self.store.write_option_day(sym, d, part.with_columns(pl.col("ts").alias("quote_ts")), provider=self.name, res="EOD", status="complete", source=f"HISTORICAL_OPTIONS {sym} {d}",
+                                                expected_rows=n_src, **self.desc(limitations=EOD_LIMITS))
+                    rep["sessions_written"] += 1
+                    rep["rows"] += part.height
+                _finish(self.store, sym)
+        if progress:
+            progress(1.0, "done")
+        return out
+
+
+# ============================================================================ Massive, formerly Polygon.io (option minute aggregates)
+class Massive(OptionBarSource):
+    """Per-contract 1-minute option TRADE aggregates, including contracts that have expired.
+    The free Options Basic plan advertises two years of history at five requests a minute,
+    which makes selective downloads (only the contracts a strategy's signals need) possible
+    without a subscription. Quotes are a paid tier; this source never reads them."""
+    name, label, tier = "massive", "Massive (formerly Polygon.io) option aggregates", "free_key"
+    url = "https://massive.com/options"
+    license = "Massive market data terms (individual use)"
+    description = "1-minute option trade aggregates for listed and expired contracts. Free Options Basic key: about two years of history, 5 requests a minute. Trade prints only: no bid/ask."
+    datasets = [{"id": "option_trades", "label": "Option 1-minute trade aggregates", "resolution": "1m", "coverage": "about 2 years on the free plan", "quote_type": "trades"}]
+    API = "https://api.polygon.io"  # api.massive.com serves the same API
+    batch_size = 1
+    FREE_DAYS = 730
+
+    @property
+    def rate(self) -> float:  # requests per second
+        from strata.api.settings import get_setting
+        return float(get_setting("massive.requests_per_minute") or 5) / 60.0
+
+    def _key(self) -> str:
+        from strata.api.settings import get_secret
+        return get_secret("POLYGON_API_KEY") or ""
+
+    def available(self):
+        return (bool(self._key()), "key configured" if self._key() else "needs a free Massive (Polygon) key (Settings -> Data connections)")
+
+    def _h(self) -> dict:
+        if not self._key():
+            raise SourceError("Massive API key not configured (Settings -> Data connections)")
+        return {"Authorization": f"Bearer {self._key()}"}  # the key travels in a header, never in the URL
+
+    def bars_window(self, today=None):
+        today = today or datetime.now(cal.ET).date()
+        return today - timedelta(days=self.FREE_DAYS), today - timedelta(days=1)
+
+    def capabilities(self, today=None):
+        a, b = self.bars_window(today)
+        return [_cap("options", "trade", "1m", a, b, note="trade aggregates per contract, expired contracts included; history depth and delay depend on the plan (free: about 2 years, end of day)")]
+
+    def extra_limits(self):
+        return ["Free plan: 5 requests a minute and data available after the session ends. Trade prints only; the bid/ask at those moments is not observed."]
+
+    def _pages(self, client, url: str, params: dict):
+        n = 0
+        while url:
+            d = http_get(client, url, params=params, headers=self._h()).json()
+            n += 1
+            yield d
+            url, params = d.get("next_url"), None
+            if n >= 200:
+                raise SourceError("pagination did not finish after 200 pages")
+
+    @staticmethod
+    def parse_contract(c: dict) -> Contract:
+        occ = str(c["ticker"]).removeprefix("O:")
+        root = parse_occ(occ)[0]
+        extra = c.get("additional_underlyings") or []
+        return Contract(occ, root, date.fromisoformat(c["expiration_date"]), float(c["strike_price"]), "C" if c["contract_type"] == "call" else "P", multiplier=float(c.get("shares_per_contract") or 100),
+                        style=c.get("exercise_style") or "american", adjusted=bool(extra) or bool(re.search(r"\d$", root)) or float(c.get("shares_per_contract") or 100) != 100, provider_id=c.get("ticker"),
+                        source="Massive /v3/reference/options/contracts")
+
+    def list_contracts(self, client, sym, as_of, exp_from, exp_to, strike_lo, strike_hi, rights=("C", "P")):
+        """Definitions valid on `as_of`: the reference endpoint is asked as of that date, for
+        both contracts still listed today and contracts that have since expired."""
+        exp_from = max(exp_from, as_of)
+        ck = self.cache / "contracts" / (hashlib.sha256(f"{sym}|{as_of}|{exp_from}|{exp_to}|{strike_lo}|{strike_hi}".encode()).hexdigest()[:24] + ".json")
+        today = datetime.now(cal.ET).date()
+        if ck.exists() and (exp_to < today or time.time() - ck.stat().st_mtime < 43200):
+            raw = json.loads(ck.read_text())
+        else:
+            raw = {}
+            for expired in ("true", "false"):
+                params = {"underlying_ticker": sym, "as_of": as_of.isoformat(), "expired": expired, "expiration_date.gte": exp_from.isoformat(), "expiration_date.lte": exp_to.isoformat(),
+                          "strike_price.gte": strike_lo, "strike_price.lte": strike_hi, "limit": 1000}
+                for page in self._pages(client, f"{self.API}/v3/reference/options/contracts", params):
+                    for c in page.get("results") or []:
+                        raw[c["ticker"]] = c
+            ck.parent.mkdir(parents=True, exist_ok=True)
+            ck.write_text(json.dumps(raw))
+        out = [self.parse_contract(c) for c in raw.values()]
+        return sorted([c for c in out if c.right in rights and c.expiration >= as_of and not c.adjusted], key=lambda c: (c.expiration, c.right, c.strike))
+
+    def batches(self, todo):
+        """One request per contract, covering every session wanted for it (the range endpoint takes a date span)."""
+        by: dict[str, tuple[Contract, list[date]]] = {}
+        for d, cs in todo.items():
+            for c in cs:
+                by.setdefault(c.occ, (c, []))[1].append(d)
+        return [([c], sorted(ds)) for c, ds in sorted(by.values(), key=lambda x: x[0].occ)]
+
+    def fetch_batch(self, client, sym, contracts, sessions):
+        c = contracts[0]
+        a, b = min(sessions), max(sessions)
+        rows, pages = [], 0
+        url = f"{self.API}/v2/aggs/ticker/O:{c.occ}/range/1/minute/{a.isoformat()}/{b.isoformat()}"
+        for page in self._pages(client, url, {"adjusted": "false", "sort": "asc", "limit": 50000}):
+            pages += 1
+            for x in page.get("results") or []:
+                rows.append((int(x["t"]), c.occ, c.expiration, c.strike, c.right, float(x["o"]), float(x["h"]), float(x["l"]), float(x["c"]), int(x.get("v") or 0),
+                             int(x["n"]) if x.get("n") is not None else None, float(x["vw"]) if x.get("vw") is not None else None))
+        if rows:
+            df = pl.DataFrame(rows, schema=["ts", "occ", "expiration", "strike", "right", "open", "high", "low", "close", "volume", "trade_count", "vwap"], orient="row")
+            df = df.with_columns(pl.from_epoch("ts", time_unit="ms").dt.replace_time_zone("UTC").cast(pl.Datetime("us", "UTC")))
+            wanted = set(sessions)
+            df = df.filter(pl.col("ts").dt.convert_time_zone("America/New_York").dt.date().is_in(pl.Series(sorted(wanted)).implode()))
+        else:
+            df = pl.DataFrame(schema=TRADE_SCHEMA)
+        return df, {(d, c.occ): "ok" for d in sessions}, pages
+
+    def plan(self, dataset, symbols, start, end):
+        days = len(cal.trading_days(start or date.today() - timedelta(days=30), end or date.today()))
+        return {"source": self.name, "dataset": dataset, "requests": None, "est_seconds": None, "cost": 0.0, "sessions": days,
+                "note": "Requests depend on how many contracts the strategy's signals need; the research pipeline counts them before anything is downloaded."}
+
+    def ingest(self, dataset, symbols, start=None, end=None, progress=None, should_cancel=None, force=False):
+        ok, msg = self.available()
+        if not ok:
+            raise SourceError(msg)
+        a, b = self.bars_window()
+        out = {"source": self.name, "dataset": dataset, "symbols": {}}
+        for sym in symbols:
+            wanted = self.bulk_wanted(sym, max(start or a, a), min(end or b, b))
+            out["symbols"][sym] = self.acquire(sym, wanted, progress=progress, should_cancel=should_cancel, force=force)
+        return out
+
+
+SOURCES: dict[str, type[Source]] = {s.name: s for s in (Yahoo, Cboe, GithubEod, DoltHub, YahooOptions, Alpaca, Massive, AlphaVantage)}
 
 
 def get_source(name: str, store: MarketStore | None = None) -> Source:
@@ -1246,7 +1482,7 @@ def get_source(name: str, store: MarketStore | None = None) -> Source:
 
 def option_bar_sources(store: MarketStore | None = None) -> list[OptionBarSource]:
     """Sources of option trade bars in order of preference (deepest history first)."""
-    return [SOURCES[n](store) for n in ("alpaca", "yahoo_options")]
+    return [SOURCES[n](store) for n in ("alpaca", "massive", "yahoo_options")]
 
 
 def quickstart(symbols: list[str] | None = None, store: MarketStore | None = None, progress=None, should_cancel=None, intraday: bool = True) -> dict:

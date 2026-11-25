@@ -32,6 +32,7 @@ from strata.engine.expr import Evaluator, ExprError
 from strata.engine.market import Events, IvHistory, UnderlyingSeries, day_num, from_day_num
 from strata.engine.models import CondNode, RegimeSettings, SeqStage
 from strata.engine.sequence import SequenceTracker
+from strata.research.robust import iid_mean_ci, wilson
 
 
 class Level(BaseModel):
@@ -103,23 +104,8 @@ class _Host:
             self.iv_hist[cfg.symbol] = IvHistory.load(store, cfg.symbol)
 
 
-def wilson(k: int, n: int, z: float = 1.96) -> list[float | None]:
-    if n == 0:
-        return [None, None]
-    p = k / n
-    d = 1 + z * z / n
-    c = (p + z * z / (2 * n)) / d
-    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
-    return [max(0.0, c - h), min(1.0, c + h)]
-
-
 def _boot(x: np.ndarray, seed: int = 1) -> list[float | None]:
-    x = x[np.isfinite(x)]
-    if x.size < 3:
-        return [None, None]
-    rng = np.random.default_rng(seed)
-    m = x[rng.integers(0, x.size, (2000, x.size))].mean(axis=1)
-    return [float(np.quantile(m, 0.025)), float(np.quantile(m, 0.975))]
+    return iid_mean_ci(x, 2000, seed)
 
 
 def _f(x):

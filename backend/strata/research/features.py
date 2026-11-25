@@ -162,9 +162,58 @@ class Pred:
     def dump(self) -> dict:
         return {"feature": self.feature, "op": self.op, "value": self.value, **({"hi": self.hi} if self.hi is not None else {})}
 
+    @property
+    def name(self) -> str:
+        return self.feature
+
+    def values(self, ft: "SessionFeatures", entry: str) -> np.ndarray:
+        return ft.col(self.feature, entry)
+
+    def truth(self, ft: "SessionFeatures", entry: str) -> tuple[np.ndarray, np.ndarray]:
+        """(condition holds, value is known) per session at the entry tick."""
+        x = self.values(ft, entry)
+        fin = np.isfinite(x)
+        return self.mask(x) & fin, fin
+
     @staticmethod
-    def load(d: dict) -> "Pred":
+    def load(d: dict) -> "Pred | ExprPred":
+        if "feature" not in d and d.get("expr"):
+            return ExprPred(d["expr"], d.get("text") or d.get("label") or "")
         return Pred(d["feature"], d["op"], float(d["value"]), None if d.get("hi") is None else float(d["hi"]))
+
+
+@dataclass(frozen=True)
+class ExprPred:
+    """A condition written directly in the rule language (anything the strategy engine can
+    evaluate), read at the entry tick by the rule engine itself. Catalog features stay on the
+    vectorised path (`Pred`); this is the general case that needs no new feature definition."""
+    src: str
+    label: str = ""
+
+    @property
+    def name(self) -> str:
+        return self.label or self.src
+
+    @property
+    def feature(self) -> str:  # so code that lists the features of a condition keeps working
+        return "@" + self.src
+
+    def values(self, ft: "SessionFeatures", entry: str) -> np.ndarray:
+        return ft.engine_values(self.src, entry, cache=True)
+
+    def truth(self, ft: "SessionFeatures", entry: str) -> tuple[np.ndarray, np.ndarray]:
+        x = self.values(ft, entry)
+        fin = np.isfinite(x)
+        return (x > 0.5) & fin, fin
+
+    def expr(self, base: str, entry: str) -> str:
+        return self.src
+
+    def text(self, base: str = "SPY") -> str:
+        return self.label or self.src
+
+    def dump(self) -> dict:
+        return {"expr": self.src, "text": self.label}
 
 
 def cond_text(preds: list[Pred], base: str = "SPY") -> str:
@@ -458,10 +507,14 @@ class SessionFeatures:
             self._ctx = ctx
         return self._ctx
 
-    def engine_values(self, expr: str, entry: str, sessions: np.ndarray | None = None) -> np.ndarray:
+    def engine_values(self, expr: str, entry: str, sessions: np.ndarray | None = None, cache: bool = False) -> np.ndarray:
         """Evaluate a rule-language expression with the rule engine at the entry tick of each
-        session (NaN where it is not evaluable). Slow path: used for intraday features and tests."""
+        session (NaN where it is not evaluable). Slow path: used for intraday features,
+        free-form conditions and tests."""
         from strata.engine.expr import Evaluator, ExprError
+        ck = ("@" + expr, entry)
+        if cache and sessions is None and ck in self._cols:
+            return self._cols[ck]
         ctx = self._context()
         s = self.ser
         tick, ok = self._tick(entry)
@@ -487,6 +540,8 @@ class SessionFeatures:
                 out[i] = float(v)
             elif isinstance(v, (int, float)) and math.isfinite(v):
                 out[i] = float(v)
+        if cache and sessions is None:
+            self._cols[ck] = out
         return out
 
     # ----- outcomes
@@ -664,9 +719,7 @@ class SessionFeatures:
         any_false = np.zeros(self.n, bool)
         all_known = np.ones(self.n, bool)
         for p in preds:
-            x = self.col(p.feature, oc.entry)
-            fin = np.isfinite(x)
-            m = p.mask(x) & fin
+            m, fin = p.truth(self, oc.entry)
             any_false |= fin & ~m
             all_known &= fin
             qual &= m

@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { MODE_NAME, type AiMessage, type PlanItem, type Question, type RunRef } from "@/lib/lab";
 import { Callout, ModeBadge, StatusChip, T } from "./bits";
+import { ForwardCard, GradeBadge, GraphCard } from "./Graph";
 import { Timeline, usePipeline } from "./Pipeline";
 
 export type OpenTarget =
@@ -22,6 +23,10 @@ export interface Actions {
   rerun: (versionId: number, mode: string) => void;
   select: (runId: string, key: string, what: "study" | "options") => void;
   analyse: (kind: "stress" | "challenge", runId: string) => void;
+  graphDecide: (messageId: number, choice: string) => void;
+  ask: (text: string) => void;
+  strategyFrom: (findingId?: number) => void;
+  backtestPlan: () => void;
   busy: boolean;
   pinned: string[];
 }
@@ -271,6 +276,30 @@ export function Message({ m, a }: { m: AiMessage; a: Actions }) {
       </Card>
     );
   }
+  if (m.kind === "graph") {
+    const runs: RunRef[] = c.runs || [];
+    return (
+      <GraphCard c={c} busy={a.busy} onDecide={(choice) => a.graphDecide(m.id, choice)}>
+        {!c.finalized && runs[0] && <div className="mt-3 border-t border-line pt-3"><JobLine r={runs[0]} onDone={a.refresh} /></div>}
+      </GraphCard>
+    );
+  }
+  if (["memory", "registry", "strategy_plan", "forward"].includes(m.kind)) {
+    const label = { memory: "Research memory", registry: "Experiment registry", strategy_plan: "Finding to strategy", forward: "Forward validation" }[m.kind as string];
+    return (
+      <Card data-testid={`msg-${m.kind}`} tone={m.kind === "strategy_plan" && !c.launched ? "accent" : undefined}>
+        <div className="mb-2 flex items-center gap-2"><span className="eyebrow">{label}</span>{c.finding && <GradeBadge g={c.finding.evidence} className="!h-5 !text-[11px]" />}<span className="flex-1" /><span className="text-[11px] text-faint" title="Assembled from stored runs; no language model wrote this.">calculated</span></div>
+        <div className="text-[13.5px] soft"><T>{c.text}</T></div>
+        {m.kind === "forward" && c.experiment && <ForwardCard ex={c.experiment} />}
+        {m.kind !== "forward" && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button className="btn sm" data-testid="open-view" onClick={() => a.open({ type: "message", messageId: m.id })}><FileText />{{ memory: "Open the memory", registry: "Open the registry check", strategy_plan: "Open the drafted structures" }[m.kind as string]}</button>
+            {m.kind === "strategy_plan" && !c.launched && <button className="btn primary sm" disabled={a.busy} onClick={a.backtestPlan}><FlaskConical />Backtest on observed option prices</button>}
+          </div>
+        )}
+      </Card>
+    );
+  }
   if (["hypothesis", "stress", "challenge"].includes(m.kind)) {
     const runs: RunRef[] = c.runs || [];
     return (
@@ -314,6 +343,24 @@ export function Message({ m, a }: { m: AiMessage; a: Actions }) {
     const runId: string | undefined = c.run_id;
     const pinned = runId ? a.pinned.includes(runId) : false;
     const cov = c.coverage;
+    if (v === "graph" || v === "graph_batch") {
+      return (
+        <Card data-testid={`result-${v}`}>
+          <div className="mb-2 flex items-center gap-2"><span className="eyebrow">{v === "graph" ? "What the analysis found" : "Re-tested"}</span><span className="flex-1" /><span className="text-[11px] text-faint" title="Assembled from the engine's numbers; no language model wrote this.">calculated</span></div>
+          <div className="text-[13.5px] soft"><T>{c.text}</T></div>
+          {(c.findings || []).length > 0 && (
+            <div className="mt-3 flex flex-col gap-1.5" data-testid="findings">
+              {c.findings.slice(0, 4).map((f: any) => <div key={f.id} className="flex items-start gap-2.5 rounded-lg border border-line px-3 py-2"><GradeBadge g={f.evidence} /><div className="min-w-0 text-[12.5px] soft">{f.statement}</div></div>)}
+            </div>
+          )}
+          {c.ledger?.contaminated && <Callout tone="warn" className="mt-3" title="The final test period is no longer untouched">{c.ledger.contaminated.reason}</Callout>}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button className="btn sm" data-testid="open-view" onClick={() => a.open({ type: "message", messageId: m.id })}><FileText />{v === "graph" ? "Open the full analysis" : "Open the table"}</button>
+            {(c.findings || []).some((f: any) => f.convertible) && <button className="btn quiet sm" disabled={a.busy} onClick={() => a.strategyFrom()}><FlaskConical />Draft option strategies</button>}
+          </div>
+        </Card>
+      );
+    }
     if (v === "hypothesis" || v === "execution" || v === "challenge" || v === "analysis") {
       const SEVG: Record<string, string> = { high: "✕", medium: "!", low: "·", ok: "✓", na: "–" };
       return (
@@ -346,7 +393,7 @@ export function Message({ m, a }: { m: AiMessage; a: Actions }) {
           )}
           {v === "execution" && c.summary && (
             <div className="mt-2.5 grid grid-cols-3 gap-2 text-xs">
-              {[["Signal only", c.summary.signal_net_pnl], ["As simulated", c.summary.simulated_net_pnl], ["Adverse", c.summary.adverse_net_pnl]].map(([l, x]: any) => (
+              {[["Best case", c.summary.best_net_pnl ?? c.summary.signal_net_pnl], ["As simulated", c.summary.simulated_net_pnl], ["Adverse", c.summary.adverse_net_pnl]].map(([l, x]: any) => (
                 <div key={l} className="rounded-lg bg-bg-2 px-2.5 py-1.5"><div className="dim">{l}</div><div className={cn("num text-[13px]", (x ?? 0) >= 0 ? "text-up" : "text-down")}>{x == null ? "—" : `${x < 0 ? "-" : ""}$${Math.abs(x).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}</div></div>
               ))}
             </div>

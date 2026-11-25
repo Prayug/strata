@@ -48,6 +48,7 @@ FORMATS: dict[str, dict] = {
     "cboe_eod": {"kind": "option_quotes", "label": "Cboe DataShop end-of-day option quotes", "need": {"underlying_symbol", "quote_date", "expiration", "strike", "option_type", "bid_eod", "ask_eod"}},
     "cboe_interval": {"kind": "option_quotes", "label": "Cboe DataShop interval option quotes", "need": {"underlying_symbol", "quote_datetime", "expiration", "strike", "option_type", "bid", "ask"}},
     "historicaloptiondata": {"kind": "option_quotes", "label": "historicaloptiondata.com option quotes", "need": {"underlying", "optionroot", "type", "expiration", "quotedate", "strike", "bid", "ask"}},
+    "wrds_optionmetrics": {"kind": "option_quotes", "label": "OptionMetrics IvyDB option prices (WRDS export)", "need": {"date", "exdate", "cp_flag", "strike_price", "best_bid", "best_offer"}},
     "dolthub": {"kind": "option_quotes", "label": "DoltHub option_chain export", "need": {"act_symbol", "expiration", "strike", "call_put", "bid", "ask", "date"}},
     "thetadata_eod": {"kind": "option_quotes", "label": "ThetaData end-of-day option export", "need": {"root", "expiration", "strike", "right", "bid", "ask", "date"}},
     "polygon_options": {"kind": "option_trades", "label": "Polygon / Massive option aggregates (flat files)", "need": {"ticker", "open", "high", "low", "close", "volume", "window_start"}, "ticker_prefix": "O:"},
@@ -70,7 +71,7 @@ OCC_RE = r"^(?:O:)?\s*([A-Z][A-Z0-9.]{0,5})\s*(\d{6})([CP])(\d{8})$"
 def detect(columns: list[str], sample: pl.DataFrame | None = None) -> str | None:
     """Layout id for a header (and, to tell option tickers from stock tickers, a few rows)."""
     cols = {c.strip().lower() for c in columns}
-    for fid in ("optionsdx", "cboe_eod", "cboe_interval", "historicaloptiondata", "dolthub", "thetadata_eod", "stooq", "yahoo"):
+    for fid in ("optionsdx", "cboe_eod", "cboe_interval", "historicaloptiondata", "wrds_optionmetrics", "dolthub", "thetadata_eod", "stooq", "yahoo"):
         if FORMATS[fid]["need"] <= cols:
             return fid
     if FORMATS["polygon_options"]["need"] <= cols:
@@ -243,6 +244,14 @@ def normalise(df: pl.DataFrame, fmt: str, tz: str = "America/New_York", symbol: 
         out = df.select(_eod_ts(_date(pl.col("quotedate"), t["quotedate"])).alias("ts"), _date(pl.col("expiration"), t["expiration"]).alias("expiration"), num("strike").alias("strike"), pl.col("type").cast(pl.String).alias("right"),
                         num("bid").alias("bid"), num("ask").alias("ask"), opt("volume").alias("volume"), opt("openinterest").alias("open_interest"), opt("impliedvol").alias("iv"), opt("delta").alias("delta"),
                         opt("gamma").alias("gamma"), opt("theta").alias("theta"), opt("vega").alias("vega"), opt("underlying_last").alias("underlying_price"))
+    elif fmt == "wrds_optionmetrics":
+        # the academic export: strikes are in thousandths of a dollar, and `symbol` is the OPTION's symbol, so the underlying comes from ticker / root
+        sym_col = first(("ticker", "root"))
+        found = str(df[sym_col][0]).strip() if sym_col and df.height else None
+        opt = lambda n: num(n) if n in df.columns else pl.lit(None, dtype=f)  # noqa: E731
+        out = df.select(_eod_ts(_date(pl.col("date"), t["date"])).alias("ts"), _date(pl.col("exdate"), t["exdate"]).alias("expiration"), (num("strike_price") / 1000).alias("strike"), pl.col("cp_flag").cast(pl.String).alias("right"),
+                        num("best_bid").alias("bid"), num("best_offer").alias("ask"), opt("volume").alias("volume"), opt("open_interest").alias("open_interest"), opt("impl_volatility").alias("iv"), opt("delta").alias("delta"),
+                        opt("gamma").alias("gamma"), opt("theta").alias("theta"), opt("vega").alias("vega"), pl.lit(None, dtype=f).alias("underlying_price"))
     elif fmt in ("dolthub", "thetadata_eod", "generic_option_quotes"):
         sym_col = first(("act_symbol", "root", "underlying", "underlying_symbol"))
         found = str(df[sym_col][0]) if sym_col and df.height else None

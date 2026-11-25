@@ -21,6 +21,12 @@ const Strategies = lazy(() => import("@/pages/Strategies"));
 const DataPage = lazy(() => import("@/pages/DataPage"));
 const Sensitivity = lazy(() => import("@/pages/research/Sensitivity"));
 const Encyclopedia = lazy(() => import("@/pages/research/Encyclopedia"));
+const Patterns = lazy(() => import("@/pages/explore/Patterns"));
+const Findings = lazy(() => import("@/pages/explore/Findings"));
+const MlLab = lazy(() => import("@/pages/explore/MlLab"));
+const Ide = lazy(() => import("@/pages/build/Ide"));
+const Forward = lazy(() => import("@/pages/validate/Forward"));
+const Registry = lazy(() => import("@/pages/validate/Registry"));
 
 const S = (el: React.ReactNode) => <Suspense fallback={<Loading />}>{el}</Suspense>;
 
@@ -48,6 +54,14 @@ const router = createBrowserRouter([
       { path: "sensitivity", element: S(<Sensitivity />) },
       { path: "encyclopedia", element: S(<Encyclopedia />) },
       { path: "encyclopedia/:id", element: S(<Encyclopedia />) },
+      { path: "patterns", element: S(<Patterns />) },
+      { path: "findings", element: S(<Findings />) },
+      { path: "ml", element: S(<MlLab />) },
+      { path: "ml/:id", element: S(<MlLab />) },
+      { path: "ide", element: S(<Ide />) },
+      { path: "forward", element: S(<Forward />) },
+      { path: "forward/:id", element: S(<Forward />) },
+      { path: "registry", element: S(<Registry />) },
     ],
   },
 ]);

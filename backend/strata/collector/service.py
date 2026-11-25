@@ -18,13 +18,28 @@ there is no code path here, or in the sources it uses, that can reach a trading 
 
 Honest bookkeeping: a session the collector did not reach while the data was still
 available is recorded as MISSED, with the reason; it is never filled in afterwards.
+
+Unattended operation
+  restarts      a cycle that was cut off (power loss, container restart) is found by its
+                stale heartbeat and marked interrupted; the next cycle carries on, skipping
+                every contract-session already stored
+  recovery      when cycles were missed, the next one reaches back over the sessions since
+                the last successful cycle and collects whatever the provider still serves;
+                what it no longer serves is reported as unrecoverable, with the reason
+  retry queue   a symbol-session that failed is queued in the database and retried with
+                increasing delays; after `max_attempts` it is given up and reported
+  health        each provider is probed with one small request before it is used, so an
+                outage costs one request instead of a budget
+  integrity     every file a cycle wrote is read back and checked against its index
+  notifications each cycle leaves a note in the interface (Strata sends nothing outward)
 """
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import polars as pl
 
@@ -40,8 +55,10 @@ DEFAULT = {
     "run_after": "16:20",  # New York time, on trading days
     "frequency_hours": 24,
     "lookback_sessions": 3,
+    "recover_sessions": 10,  # after missed cycles, how far back the next one reaches (bounded by what the provider still serves)
+    "max_attempts": 5,  # a symbol-session that keeps failing is given up after this many cycles
     "max_requests_per_cycle": 1500,
-    "rate_per_second": {"yahoo": 2.0, "yahoo_options": 4.0, "alpaca": 3.0},
+    "rate_per_second": {"yahoo": 2.0, "yahoo_options": 4.0, "alpaca": 3.0, "massive": 0.083},
     "storage_limit_gb": 20.0,
     "cleanup": {"enabled": False, "keep_underlying_1m_days": 0, "keep_option_trade_days": 0},
 }
@@ -89,15 +106,17 @@ def save_config(new: dict) -> dict:
     o["strike_pct"] = min(max(float(o["strike_pct"]), 0.25), 10.0)
     o["max_strikes_each_side"] = min(max(int(o["max_strikes_each_side"]), 1), 40)
     o["rights"] = [r for r in ("C", "P") if r in [str(x).upper()[:1] for x in o["rights"]]] or ["C", "P"]
-    if o["provider"] not in ("yahoo_options", "alpaca"):
-        raise ValueError("the option provider must be yahoo_options or alpaca")
+    if o["provider"] not in ("yahoo_options", "alpaca", "massive"):
+        raise ValueError("the option provider must be yahoo_options, alpaca or massive")
     cfg["max_requests_per_cycle"] = min(max(int(cfg["max_requests_per_cycle"]), 50), 20000)
     cfg["storage_limit_gb"] = max(float(cfg["storage_limit_gb"]), 0.5)
     cfg["lookback_sessions"] = min(max(int(cfg["lookback_sessions"]), 1), 20)
+    cfg["recover_sessions"] = min(max(int(cfg["recover_sessions"]), 0), 60)
+    cfg["max_attempts"] = min(max(int(cfg["max_attempts"]), 1), 20)
     cfg["frequency_hours"] = min(max(float(cfg["frequency_hours"]), 1), 168)
     cal.parse_hhmm(cfg["run_after"])
     for k in cfg["rate_per_second"]:
-        cfg["rate_per_second"][k] = min(max(float(cfg["rate_per_second"][k]), 0.2), 10.0)
+        cfg["rate_per_second"][k] = min(max(float(cfg["rate_per_second"][k]), 0.05), 10.0)
     set_setting("collector.config", json.dumps(cfg))
     no_opts = [s for s in cfg["symbols"] if s not in STRIKE_STEP]
     return {"config": cfg, "notes": [f"Option contracts are only collected for {', '.join(STRIKE_STEP)}: their strike grids are configured. {', '.join(no_opts)} will have underlying bars collected only."] if no_opts and o["enabled"] else []}
@@ -136,18 +155,166 @@ def wanted_contracts(store: MarketStore, sym: str, sessions: list[date], cfg: di
     return out, info
 
 
+STALE_SECONDS = 900  # a running cycle with no heartbeat for this long was cut off
+
+
+def recover_interrupted() -> list[int]:
+    """Mark cycles that were cut off (no heartbeat for a while) as interrupted so a new one can start."""
+    now = datetime.now(timezone.utc)
+    out = []
+    with db.connect() as con:
+        for r in con.execute("SELECT id, started_at, report FROM collector_runs WHERE status='running'").fetchall():
+            try:
+                rep = json.loads(r["report"] or "{}")
+            except json.JSONDecodeError:
+                rep = {}
+            beat = rep.get("heartbeat") or r["started_at"]
+            try:
+                age = (now - datetime.fromisoformat(beat)).total_seconds()
+            except ValueError:
+                age = STALE_SECONDS + 1
+            if age > STALE_SECONDS:
+                rep.setdefault("notes", []).append("This cycle stopped without finishing (the process was restarted or lost power). What it had stored is kept; the next cycle continues from there.")
+                con.execute("UPDATE collector_runs SET status='interrupted', finished_at=?, report=? WHERE id=?", (db.now(), json.dumps(rep, default=str), r["id"]))
+                out.append(int(r["id"]))
+    return out
+
+
+def _other_running(own: int | None = None) -> dict | None:
+    with db.connect() as con:
+        r = con.execute("SELECT id, started_at, report FROM collector_runs WHERE status='running'" + (" AND id != ?" if own else "") + " ORDER BY id DESC LIMIT 1", ([own] if own else [])).fetchone()
+    return dict(r) if r else None
+
+
+def _beat(run_id: int, rep: dict) -> None:
+    rep["heartbeat"] = db.now()
+    with db.connect() as con:
+        con.execute("UPDATE collector_runs SET report=? WHERE id=?", (json.dumps({"heartbeat": rep["heartbeat"], "pid": os.getpid(), "requests": rep.get("requests", 0)}), run_id))
+
+
+# ----------------------------------------------------------------------------- the retry queue
+def _backoff(attempts: int) -> timedelta:
+    return timedelta(minutes=min(24 * 60, 30 * 2 ** max(0, attempts - 1)))  # 30 min, 1 h, 2 h, ... capped at a day
+
+
+def enqueue(kind: str, symbol: str, session: date, provider: str, error: str, max_attempts: int = 5) -> dict:
+    """Record a symbol-session that failed; it is retried with increasing delays."""
+    now = datetime.now(timezone.utc)
+    with db.connect() as con:
+        row = con.execute("SELECT id, attempts FROM collector_queue WHERE kind=? AND symbol=? AND session=? AND item=''", (kind, symbol, session.isoformat())).fetchone()
+        n = (row["attempts"] if row else 0) + 1
+        status = "abandoned" if n >= max_attempts else "pending"
+        nb = (now + _backoff(n)).isoformat(timespec="seconds")
+        if row:
+            con.execute("UPDATE collector_queue SET attempts=?, status=?, last_error=?, not_before=?, provider=?, updated_at=? WHERE id=?", (n, status, error[:300], nb, provider, db.now(), row["id"]))
+        else:
+            con.execute("INSERT INTO collector_queue (kind, symbol, session, item, provider, status, attempts, last_error, not_before, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (kind, symbol, session.isoformat(), "", provider, status, n, error[:300], nb, db.now(), db.now()))
+    return {"attempts": n, "status": status, "not_before": nb}
+
+
+def resolve(kind: str, symbol: str, session: date, status: str = "done", note: str = "") -> None:
+    with db.connect() as con:
+        con.execute("UPDATE collector_queue SET status=?, last_error=?, updated_at=? WHERE kind=? AND symbol=? AND session=? AND status IN ('pending', 'abandoned')", (status, note[:300], db.now(), kind, symbol, session.isoformat()))
+
+
+def queue(status: str | None = None, limit: int = 200) -> list[dict]:
+    with db.connect() as con:
+        return [dict(r) for r in con.execute("SELECT * FROM collector_queue" + (" WHERE status=?" if status else "") + " ORDER BY id DESC LIMIT ?", ([status] if status else []) + [int(limit)])]
+
+
+def due_sessions(symbol: str, now: datetime | None = None) -> list[date]:
+    now = now or datetime.now(timezone.utc)
+    with db.connect() as con:
+        rows = con.execute("SELECT session, not_before FROM collector_queue WHERE kind='options' AND symbol=? AND status='pending'", (symbol,)).fetchall()
+    return sorted(date.fromisoformat(r["session"]) for r in rows if not r["not_before"] or datetime.fromisoformat(r["not_before"]) <= now)
+
+
+# ----------------------------------------------------------------------------- health and integrity
+def health(src) -> dict:
+    """One small request to a provider before it is used. A source without a probe is assumed reachable."""
+    fn = getattr(src, "health", None)
+    if fn is None:
+        return {"source": getattr(src, "name", "?"), "ok": True, "detail": "no probe"}
+    t0 = time.time()
+    try:
+        info = fn() or {}
+        return {"source": src.name, "ok": True, "seconds": round(time.time() - t0, 2), "detail": info.get("detail", "reachable")}
+    except Exception as e:  # noqa: BLE001
+        return {"source": src.name, "ok": False, "seconds": round(time.time() - t0, 2), "detail": f"{type(e).__name__}: {e}"[:200]}
+
+
+def integrity(store: MarketStore, sym: str, provider: str, sessions: list[date]) -> dict:
+    """Read back what is stored for these sessions and check it against the index:
+    readable files, one row per (time, contract), bar counts that match, times inside the
+    session, positive prices."""
+    out = {"symbol": sym, "sessions_checked": 0, "problems": []}
+    try:
+        idx = store.option_bar_index(sym, provider=provider)
+    except Exception as e:  # noqa: BLE001
+        return {**out, "problems": [f"the index could not be read: {e}"[:200]]}
+    if idx is None or idx.is_empty():
+        return out
+    for d in sessions:
+        want = idx.filter((pl.col("date") == d) & (pl.col("status") == "ok"))
+        if want.is_empty():
+            continue
+        out["sessions_checked"] += 1
+        try:
+            df = store.read_option_bars(sym, d, provider=provider)
+        except Exception as e:  # noqa: BLE001
+            out["problems"].append(f"{d}: the stored file cannot be read ({type(e).__name__})")
+            continue
+        if df is None or df.is_empty():
+            out["problems"].append(f"{d}: the index lists {want.height} contracts with trades but no bars are stored")
+            continue
+        dup = df.height - df.unique(subset=["ts", "occ"]).height
+        if dup:
+            out["problems"].append(f"{d}: {dup} duplicate bars")
+        a, b = (x.astimezone(timezone.utc) for x in cal.session_bounds(d))
+        outside = df.filter((pl.col("ts") < a) | (pl.col("ts") > b)).height
+        if outside:
+            out["problems"].append(f"{d}: {outside} bars lie outside the session")
+        if df.filter((pl.col("close") <= 0) | (pl.col("high") < pl.col("low"))).height:
+            out["problems"].append(f"{d}: bars with a non-positive price or high below low")
+        got = {r["occ"]: r["n"] for r in df.group_by("occ").agg(pl.len().alias("n")).to_dicts()}
+        bad = [r["occ"] for r in want.to_dicts() if got.get(r["occ"], 0) != r["bars"]]
+        if bad:
+            out["problems"].append(f"{d}: {len(bad)} contract{'s' if len(bad) != 1 else ''} whose stored bars do not match the index (first: {bad[0]})")
+    return out
+
+
+RECOVERABILITY = [
+    {"data": "Daily bars (underlying, VIX)", "source": "Yahoo, Cboe", "window": "the whole history, at any time", "after_a_miss": "Fully recoverable."},
+    {"data": "60-minute bars (underlying)", "source": "Yahoo", "window": "about 730 days back", "after_a_miss": "Recoverable for about two years."},
+    {"data": "5-minute bars (underlying)", "source": "Yahoo", "window": "about 60 days back", "after_a_miss": "Recoverable for about two months, then gone from this source."},
+    {"data": "1-minute bars (underlying)", "source": "Yahoo", "window": "about 30 days back, 7 days per request", "after_a_miss": "Recoverable for about a month, then gone from this source. A free Alpaca key reaches 2016."},
+    {"data": "Option 1-minute trade bars", "source": "Yahoo", "window": "contracts still listed, or expired within about a day; the last ~7 days of bars",
+     "after_a_miss": "A contract that has expired more than about a day ago is PERMANENTLY unavailable from this source. Same-day (0DTE) contracts must be collected on the day itself or the next morning."},
+    {"data": "Option 1-minute trade bars", "source": "Alpaca (free key)", "window": "any contract, back to February 2024", "after_a_miss": "Recoverable at any time."},
+    {"data": "Option 1-minute trade aggregates", "source": "Massive (free key)", "window": "any contract, about two years back", "after_a_miss": "Recoverable for about two years."},
+    {"data": "Option bid/ask quotes during the session", "source": "no free source", "window": "not available", "after_a_miss": "Cannot be collected by Strata at all without a paid feed; it is never estimated."},
+    {"data": "End-of-day option quotes", "source": "public archive (to December 2025), DoltHub (2019 onward)", "window": "static archive; DoltHub updates daily", "after_a_miss": "Recoverable."},
+]
+
+
 def run_once(progress=None, should_cancel=None, trigger: str = "manual", store: MarketStore | None = None, today: date | None = None) -> dict:
     """One collection cycle. Returns the report that is also stored in the collection history."""
     from strata.data.catalog import invalidate
     from strata.data.providers import sources as S
     if not _lock.acquire(blocking=False):
         raise RuntimeError("a collection cycle is already running in this process")
+    recover_interrupted()
+    other = _other_running()
+    if other is not None:
+        _lock.release()
+        raise RuntimeError(f"another collector process is running (cycle {other['id']}, started {other['started_at']}); two cycles never run at once")
     store = store or MarketStore()
     cfg = load_config()
     started = db.now()
     with db.connect() as con:
-        run_id = con.execute("INSERT INTO collector_runs (started_at, status, trigger, report) VALUES (?,?,?,?)", (started, "running", trigger, "{}")).lastrowid
-    rep = {"trigger": trigger, "started_at": started, "symbols": {}, "requests": 0, "bars": 0, "errors": [], "notes": [], "bytes_before": store.storage_bytes()}
+        run_id = con.execute("INSERT INTO collector_runs (started_at, status, trigger, report) VALUES (?,?,?,?)", (started, "running", trigger, json.dumps({"heartbeat": started, "pid": os.getpid()}))).lastrowid
+    rep = {"trigger": trigger, "started_at": started, "symbols": {}, "requests": 0, "bars": 0, "errors": [], "notes": [], "bytes_before": store.storage_bytes(), "health": [], "integrity": [], "recovered": [], "unrecoverable": []}
     status = "done"
     t0 = time.time()
     try:
@@ -162,10 +329,21 @@ def run_once(progress=None, should_cancel=None, trigger: str = "manual", store: 
                 return rep
         last_done = today if cal.is_trading_day(today) and datetime.now(cal.ET) >= cal.session_bounds(today)[1] else cal.next_trading_day(today, -1)
         sessions = [d for d in cal.trading_days(last_done - timedelta(days=cfg["lookback_sessions"] * 2 + 6), last_done)][-cfg["lookback_sessions"]:]
+        # cycles were missed? reach back over the sessions since the last one that finished (bounded), and collect what is still served
+        prev_ok = next((r for r in history(20) if r["status"] in ("done", "partial") and r["id"] != run_id), None)
+        gap: list[date] = []
+        if prev_ok is not None and cfg["recover_sessions"]:
+            since = datetime.fromisoformat(prev_ok["started_at"]).astimezone(cal.ET).date()
+            gap = [d for d in cal.trading_days(since, last_done) if d < sessions[0]][-int(cfg["recover_sessions"]):]
+            if gap:
+                rep["notes"].append(f"No cycle finished between {since} and now: reaching back over {len(gap)} earlier session{'s' if len(gap) != 1 else ''} ({gap[0]} to {gap[-1]}) to collect what the provider still serves.")
         syms = cfg["symbols"]
         ysrc = S.get_source("yahoo", store)
         opt_src = next((s for s in S.option_bar_sources(store) if s.name == cfg["options"]["provider"]), None)
         budget = int(cfg["max_requests_per_cycle"])
+        hy = health(ysrc)
+        ho = health(opt_src) if opt_src is not None and cfg["options"]["enabled"] and opt_src.available()[0] else None
+        rep["health"] = [h for h in (hy, ho) if h and h.get("detail") != "no probe"]
         for i, sym in enumerate(syms):
             if should_cancel and should_cancel():
                 raise S.Cancelled()
@@ -174,8 +352,11 @@ def run_once(progress=None, should_cancel=None, trigger: str = "manual", store: 
             base = i / len(syms)
             if progress:
                 progress(base, f"{sym}: price bars")
+            _beat(run_id, rep)
             ysrc.rate = cfg["rate_per_second"].get("yahoo", 2.0)
-            for ds in ("daily", "intraday"):
+            if not hy["ok"]:
+                rep["errors"].append(f"{sym} price bars: the provider did not answer its health probe ({hy['detail']}); skipped this cycle")
+            for ds in ("daily", "intraday") if hy["ok"] else ():
                 try:
                     r = ysrc.ingest(ds, [sym], should_cancel=should_cancel)
                     one["underlying"][ds] = {k: v for k, v in (r.get("symbols", {}).get(sym) or r).items() if isinstance(v, (int, float, str, list)) and k != "symbol"} if isinstance(r, dict) else {}
@@ -187,8 +368,21 @@ def run_once(progress=None, should_cancel=None, trigger: str = "manual", store: 
             if opt_src is None or not opt_src.available()[0]:
                 one["options"] = {"skipped": f"{cfg['options']['provider']} is not available: {opt_src.available()[1] if opt_src else 'unknown source'}"}
                 continue
+            if ho is not None and not ho["ok"]:
+                one["options"] = {"skipped": f"{opt_src.name} did not answer its health probe ({ho['detail']}); this cycle's sessions are queued for retry"}
+                rep["errors"].append(f"{sym} options: provider unreachable; queued for retry")
+                for d in sessions:
+                    enqueue("options", sym, d, opt_src.name, ho["detail"], cfg["max_attempts"])
+                continue
             a, b = opt_src.bars_window(today)
-            wanted, info = wanted_contracts(store, sym, [d for d in sessions if a <= d <= b], cfg, today)
+            retry = [d for d in due_sessions(sym) if d not in sessions]
+            target = sorted(set(sessions) | set(gap) | set(retry))
+            wanted, info = wanted_contracts(store, sym, [d for d in target if a <= d <= b], cfg, today)
+            lost = [d for d in target if not (a <= d <= b) or (d in wanted and not wanted[d])]
+            for d in lost:
+                wanted.pop(d, None)
+                rep["unrecoverable"].append({"symbol": sym, "date": d.isoformat(), "reason": f"{opt_src.name} no longer serves the contracts of this session (its window is {a} to {b}, and expired contracts drop out)"})
+                resolve("options", sym, d, "unrecoverable", "the provider no longer serves this session's contracts")
             est = opt_src.estimate(wanted, sym) if wanted else {"requests": 0, "pairs_to_fetch": 0, "pairs_cached": 0, "pairs_requested": 0}
             share = max(50, (budget - rep["requests"]) // max(1, len(syms) - i))
             if est["requests"] > share and wanted:
@@ -206,6 +400,21 @@ def run_once(progress=None, should_cancel=None, trigger: str = "manual", store: 
                 rep["bars"] += int(r.get("bars") or 0)
                 if r.get("pairs_failed"):
                     rep["errors"].append(f"{sym}: {r['pairs_failed']} contract-sessions failed and will be retried next cycle")
+                    for d in wanted:
+                        q_ = enqueue("options", sym, d, opt_src.name, "; ".join((r.get("errors") or ["request failed"])[:2]), cfg["max_attempts"])
+                        if q_["status"] == "abandoned":
+                            rep["notes"].append(f"{sym} {d}: given up after {q_['attempts']} failed cycles.")
+                else:
+                    for d in wanted:
+                        resolve("options", sym, d)
+                    rec = [d for d in wanted if d in gap or d in retry]
+                    if rec and (r.get("pairs_ok") or r.get("pairs_cached")):
+                        rep["recovered"] += [{"symbol": sym, "date": d.isoformat()} for d in rec]
+                chk = integrity(store, sym, opt_src.name, sorted(wanted)) if wanted and hasattr(store, "read_option_bars") else None
+                if chk is not None and (chk["sessions_checked"] or chk["problems"]):
+                    rep["integrity"].append(chk)
+                    if chk["problems"]:
+                        rep["errors"].append(f"{sym}: integrity check found {len(chk['problems'])} problem(s): {chk['problems'][0]}")
             except S.Cancelled:
                 raise
             except S.SourceError as e:
@@ -229,11 +438,39 @@ def run_once(progress=None, should_cancel=None, trigger: str = "manual", store: 
         rep["bytes_after"] = store.storage_bytes()
         rep["seconds"] = round(time.time() - t0, 1)
         rep["status"] = status
+        if status in ("done", "partial"):
+            try:  # sessions that have just arrived are the forward evidence of any frozen experiment
+                from strata.research import forward as FW
+                rep["forward"] = FW.evaluate_active(store)
+            except Exception as e:  # noqa: BLE001
+                rep["forward"] = [{"status": "error", "error": f"{type(e).__name__}: {e}"[:200]}]
         with db.connect() as con:
             con.execute("UPDATE collector_runs SET finished_at=?, status=?, report=? WHERE id=?", (db.now(), status, json.dumps(rep, default=str), run_id))
+        _notify(rep, status)
         _lock.release()
         if progress:
             progress(1.0, "done")
+
+
+def _notify(rep: dict, status: str) -> None:
+    """One note per cycle in the interface; a second one when something needs attention."""
+    try:
+        from strata.api import notify as N
+        syms = ", ".join(rep.get("symbols") or []) or "nothing"
+        if status == "done":
+            N.add("collector", f"Collected {rep.get('bars', 0):,} option bars ({syms})", f"{rep.get('requests', 0)} requests in {rep.get('seconds', 0)} s." + (f" Recovered {len(rep['recovered'])} earlier session(s)." if rep.get("recovered") else ""), "info", "/data?tab=collector")
+        elif status == "partial":
+            N.add("collector", f"Collection finished with {len(rep.get('errors') or [])} problem(s)", "; ".join((rep.get("errors") or [])[:3]) + ". Failed sessions are queued and retried.", "warn", "/data?tab=collector")
+        elif status in ("error", "skipped"):
+            N.add("collector", "Collection did not run" if status == "skipped" else "Collection failed", "; ".join((rep.get("notes") or [])[:1] + (rep.get("errors") or [])[:2]), "error", "/data?tab=collector")
+        if rep.get("unrecoverable"):
+            u = rep["unrecoverable"]
+            N.add("collector", f"{len(u)} session(s) can no longer be collected", f"{u[0]['symbol']} {u[0]['date']}" + (f" and {len(u) - 1} more" if len(u) > 1 else "") + f": {u[0]['reason']}. They are recorded as missed; nothing is filled in.", "warn", "/data?tab=collector")
+        for f in rep.get("forward") or []:
+            if f.get("status") == "evaluated":
+                N.add("forward", f"Forward experiment evaluated: {f.get('name', '')[:80]}", f"{f.get('forward_sessions')} forward session(s) through {f.get('last')}.", "info", f"/forward/{f.get('id')}")
+    except Exception:  # noqa: BLE001  (a note that cannot be written must not fail the cycle)
+        pass
 
 
 # ----------------------------------------------------------------------------- clean-up
@@ -384,6 +621,8 @@ def state(store: MarketStore | None = None) -> dict:
     return {"config": cfg, "defaults": DEFAULT, "running": running(), "history": hist, "next_due": nd.isoformat() if nd else None, "last": hist[0] if hist else None, "coverage": coverage(store, cfg), "quality": quality(store, cfg),
             "storage": {"total_bytes": store.storage_bytes(), "limit_bytes": int(cfg["storage_limit_gb"] * 1e9), "by_symbol": by},
             "license": [LICENSE_NOTES["yahoo"]] + ([LICENSE_NOTES[prov]] if prov != "yahoo_options" else []),
+            "queue": {"pending": queue("pending", 100), "abandoned": queue("abandoned", 50), "unrecoverable": queue("unrecoverable", 50)}, "recoverability": RECOVERABILITY,
+            "offline": "Nothing is collected while the computer is asleep or off, or while Strata is not running. Run the collector on a machine that stays on (see README: unattended collection) if gaps matter.",
             "safety": "The collector only reads market data (GET requests). It cannot place, change or read orders: no trading endpoint is reachable from this code.",
             "how_to_schedule": "While the Strata server is running the collector starts by itself after each close. To collect without the app open, schedule `strata collect --once` (cron or launchd) on a machine that stays awake."}
 
@@ -404,6 +643,9 @@ class Scheduler(threading.Thread):
         cfg = load_config()
         if not cfg["enabled"] or running():
             return None
+        recover_interrupted()
+        if _other_running() is not None:
+            return None  # another process (for example the stand-alone collector container) is mid-cycle
         nd = next_due(cfg)
         if nd is None or nd > datetime.now(cal.ET):
             return None

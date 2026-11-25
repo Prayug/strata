@@ -264,6 +264,7 @@ class UnderlyingSeries:
             self.official_closes = int(ok.sum())
         self._tf_cache: dict = {}
         self._ind_cache: dict = {}
+        self._ind_days: dict = {}
         self._memo: dict = {}
 
     def empty(self) -> bool:
@@ -376,6 +377,7 @@ class UnderlyingSeries:
                 ts, end, o, h, l, c, v, dd = self._tf(self.tf_minutes(tf))
                 vals = ind.compute(name, params, o, h, l, c, v, dd)
                 self._ind_cache[key] = (end, vals)
+                self._ind_days[key] = dd
         end, vals = self._ind_cache[key]
         if tf != "1d" and self.resolution(d) > self.tf_minutes(tf) * 60:
             return float("nan")  # the session's bars are coarser than the requested timeframe
@@ -383,6 +385,10 @@ class UnderlyingSeries:
         arr = vals[fld]
         i = int(np.searchsorted(end, t, side="right")) - 1 - offset
         if i < 0 or i >= len(arr):
+            return float("nan")
+        # a session-anchored indicator has no value before the session's first bar has completed: at the opening tick the
+        # last completed bar belongs to the PREVIOUS session, and its VWAP is not "today's VWAP so far"
+        if name in ind.SESSION_ANCHORED and tf != "1d" and int(self._ind_days[key][i]) != day_num(d):
             return float("nan")
         return float(arr[i])
 

@@ -14,6 +14,7 @@ limits stated next to every number.
 
 ## Contents
 - [Quick start](#quick-start)
+- [What V5 adds](#what-v5-adds)
 - [What V4 adds](#what-v4-adds)
 - [What V3 adds](#what-v3-adds)
 - [Four research modes](#four-research-modes)
@@ -50,7 +51,11 @@ Docker: `docker compose up --build` serves the API and built UI on http://localh
 runs the same free download on first start (`STRATA_SKIP_FETCH=1` to skip it).
 
 ### First five minutes
-1. The app opens on the **AI Lab**. Ask *"How often does SPY rise 1% after a 3% down day?"* The
+The sidebar is three workflows: **Explore** (ask, patterns, knowledge base), **Build** (strategy IDE,
+visual builder) and **Validate** (backtests, forward validation, experiment registry). *Simple* shows the
+main path through each; *Advanced* adds the specialist tools. The calculations are the same in both.
+
+1. The app opens on **Ask**. A first run is offered the free download and four questions the stored data can already answer. Ask *"How often does SPY rise 1% after a 3% down day?"* The
    lab shows how it read the question, checks coverage, runs it, and opens a report: the
    frequency with its confidence interval, the baseline on all sessions, a calendar of every
    qualifying session, and the robustness checks.
@@ -65,6 +70,90 @@ runs the same free download on first start (`STRATA_SKIP_FETCH=1` to skip it).
    option contract's own prints underneath; press `?` for the keyboard shortcuts.
 5. **Market Explorer**, **Strategy Builder**, **Backtests** and **Data** remain for working
    by hand. Everything the lab runs appears there too.
+
+## What V5 adds
+V5 removes practical limits rather than adding surface: research is no longer confined to seven
+templates, a strategy can be read and edited as text, what has been tested is tracked across
+every notebook, and the sources of historical options data are laid out with what was actually
+verified. Nothing from V2-V4 was rebuilt.
+
+| Area | What it does |
+| --- | --- |
+| **Research graphs** | A question becomes a typed, validated graph of seventeen primitives (data, feature, filter, combine, event, sequence, forward return, target/stop, conditional probability, matched comparison, distribution, correlation, regression, sweep, robustness, validation, options backtest). The language model, when one is configured, may only propose a graph; the same validator checks it and the deterministic engines run it. No generated code is executed. A step whose input is only known after the outcome starts is refused before anything runs. |
+| **A reader that composes** | Conditions are read as subject x time span x predicate, so "the morning session sold off, QQQ outperformed SPY and VIX rose overnight" needs no template. Vague sizes ("large") are resolved from the symbol's own history and stated as assumptions; words that were not understood are listed, never dropped. The same reader now serves strategy descriptions, so a strategy can use any condition a question can. |
+| **Matched comparisons** | The plain comparison next to three adjusted ones (stratification, nearest neighbours with a caliper, regression adjustment with week-clustered errors) and a balance table. The verdict is "persists", "mixed", "not distinguishable", "reverses" or "not estimable": when the methods disagree it says so. It is association on matched sessions, not causation, and it uses only values known at the decision time. |
+| **Pattern explorer** | Pick an event (fourteen built in, or a custom rule): every occurrence, the fan of price paths after it, forward returns at six horizons with Holm-adjusted tests, regimes, and the years it clusters in. Each look is recorded in the registry. It describes the underlying only; a strategy goes through a tested finding. |
+| **Analyst memory and knowledge base** | Every finished analysis leaves findings with an evidence grade (confirmed, holds but not independent, supported, suggestive, holds on seen data, not confirmed, not supported, insufficient) and the reasons for it. Follow-ups work on what is stored: "apply the same idea to QQQ", "which of our findings still hold after 2020?", "combine the opening-range condition with the volatility filter", "which of these results are actually independent?". With nothing stored it says so. |
+| **Experiment registry** | One record across all notebooks and tools: fingerprints, exact repeats, closely related configurations (same symbol, overlapping inputs and outcome), phases (exploration, development, validation, confirmation, forward), and every held-back final period with who else evaluated those dates. A final period examined by related work elsewhere is never called an independent confirmation, and option positions priced on it before the pattern was scored there count as a look. |
+| **Strategy IDE** | The strategy as text (defaults left out, exact round trip), with syntax colours, completion and inline documentation for the rule language, error markers on the line they belong to, an outline, a form for the selected part with how often a rule was true historically, and a debugger that replays the entry rule on a real session tick by tick with watches and a breakpoint. "Replace this fixed stop with an ATR-based stop" is applied to the selected section only; the changed lines are marked, and an instruction that cannot be expressed changes nothing and says so. |
+| **More of a strategy can be expressed** | Independent entry systems (each may carry its own legs, so calls after a decline and puts after a rally), staged exits with partial closes and a tightened stop, ATR targets and stops, trailing thresholds on the underlying, sizing by expression or by ATR risk, portfolio-level conditions (`portfolio.open_positions`, `portfolio.day_pnl_pct`, ...), a delta hedge in shares, and saved signals (`signal("name")`). Each has a regression test with hand-computed numbers. |
+| **Execution fidelity** | More stress cases (best achievable, impatient, auction windows, expiration-day spreads, early or never assigned) and an execution-quality score built from price evidence, coverage, freshness, liquidity, spread and exits. It never reads the P&L, and a component that cannot be measured is left out and named. |
+| **ML research (optional)** | Logistic, ridge, lasso, tree, forest and gradient-boosted models scored out of sample with purged, embargoed chronological folds and a final test set at the end of history. Reported against the base rate (Brier and log-loss skill), with calibration, a time-shifted placebo, permutation importance and a leakage probe that scrambles the future. Random splits are not offered. The only bridge to a strategy is a saved walk-forward signal, priced by the ordinary backtester. `pip install -e "backend[ml]"`. |
+| **Forward validation** | Freeze a finished backtest or study: the configuration is stored with a hash and the last stored session as its activation date. Only later sessions count; fewer than ten forward observations are reported as a record, not a verdict. A change is a new version with its own date. Paper only: there is no order entry anywhere in Strata. |
+| **Provider marketplace** | Data -> Sources lists twenty-one sources of historical options data with advertised coverage, resolution, price and limits next to what this installation verified with a real request, coverage for SPY, QQQ, IWM and SPX, and a cost estimate for only the observations one strategy needs. Alpaca has a guided connection (credentials, entitlements, an expired contract, its trade bars, a small backtest). |
+| **Collector** | Survives restarts (a cut-off cycle is detected by its heartbeat and resumed), retries failed sessions with growing delays, probes its sources first, checks what it stored, recovers a gap while the source still serves it, and leaves a note in the app. It states what is recoverable after a miss and what is not. |
+| **Three workflows** | Explore, Build and Validate, with a simple and an advanced level, onboarding that says what the stored data can already answer, and an in-app notification list. |
+
+### A real session, start to finish
+These nine requests were typed into the running application on 2026-11-25, in one notebook, on
+downloaded market history (SPY daily bars 1993-2026, QQQ, IWM, VIX, and SPY end-of-day option
+quotes 2020-2025). The numbers are what it answered.
+
+| Request | What came back |
+| --- | --- |
+| *Does SPY tend to recover after large down days, even after controlling for volatility?* | An 11-step graph. "Large" was taken as a fall of 2.25% or more (the largest 5% of declines) and said so. The next close was higher on 116 of 197 such sessions (58.9%) against 53.2% of 6,614 others, p 0.11: within chance. Against sessions matched on realised volatility and the VIX the difference is +12.2 points (95% interval +3.9 to +19.9). Graded **suggestive**. Not a candidate after correction, so the final test period (2020-02-19 onward) was left untouched. |
+| *Compare that behavior with QQQ and IWM.* | Each symbol's own down days, on the one period all three have and that stops before the held-back sessions (2000-05-30 to 2020-02-18): SPY 56.4% of 163 against 54.0%, QQQ 54.5% of 347 against 54.0%, IWM 53.2% of 252 against 53.1%. None distinguishable after correction. |
+| *Show the distribution of price paths following those events.* | 197 paths with percentile bands: median next-session return +0.32%, middle half -1.00% to +1.46% (other sessions: median +0.06%). |
+| *Find which historical conditions are associated with a recovery.* | Eleven values scanned among the 197 sessions. No term is distinguishable from zero after correcting for the number scanned. |
+| *Build a strategy from the strongest supported finding.* | It answered that no finding is graded "supported"; the strongest is "suggestive". It drafted ten option structures so the idea can be tested, priced none, and pointed out that option prices are stored only for dates inside the held-back period. |
+| *Backtest that strategy using observed historical options prices.* | Ten structures on observed end-of-day bid/ask quotes; 52 of the 252 qualifying sessions have option prices and the rest are listed as not testable. At-the-money call, 7 days: 52 trades, net +$56, 44% winners. The put control: -$2,639. Iron condor: -$2,454. The price pattern does not carry over into option profit. |
+| *Challenge the results with worse execution assumptions.* | With no costs the signal shows +$798; as simulated +$56: spread and fees take 93%. The result is zero when every fill is 0.1% worse, and -$762 at 1% worse. Execution-quality score 89 of 100, which grades the evidence behind the fills, not the result. |
+| *Check whether I've already tested similar configurations on this holdout.* | The exact configuration: 5 times in this notebook and in 2 others. Ten closely related ones. The final period is "already seen" (ten option positions were priced on it), and 60 configurations in 5 other notebooks touched those dates, so a result on it would not be an independent confirmation. |
+| *Start a frozen forward-validation experiment.* | The strategy the execution challenge was run on was frozen with its hash; activation 2026-11-25; no forward session exists yet, and it says so. |
+
+### Historical options data: what is advertised and what was verified
+Provider pages were read on 2026-11-25 and are linked from each card in the app. "Verified"
+means a real request from this installation returned the data.
+
+| Source | Cost | Advertised | Verified here |
+| --- | --- | --- | --- |
+| End-of-day option archive (public mirror, MIT) | free | SPY, QQQ, IWM end-of-day chains with bid/ask, greeks, 2008-2025 | **verified** |
+| Yahoo Finance option trade bars | free | 1-minute trade bars for contracts still listed or just expired | **verified** (an expired contract returned nothing) |
+| DoltHub options | free | recent end-of-day chains, about three expirations per date | **verified** |
+| Cboe | free | VIX and index history; delayed chain snapshots | **verified** (index history) |
+| Alpha Vantage | $49.99 a month | end-of-day chains from 2008 | parser verified on the demo symbol only; SPY, QQQ, IWM need a paid key |
+| Alpaca | free key | 1-minute option trade bars from February 2024, expired contracts included; quotes with the $99 plan | **unverified**: no credentials. The guided connection reports "not connected" |
+| Massive (formerly Polygon) | free key; paid tiers | per-contract minute aggregates, 2 to 20+ years by tier | **unverified**: no credentials |
+| Databento OPRA | pay per use, $125 credit | trades, 1-minute bars and 1-minute bid/ask from 2013-04 | **unverified**: no credentials |
+| ThetaData | from $40 a month | 1-minute quotes from 2020 (Value), earlier on higher tiers | **unverified**: needs their terminal |
+| ORATS | subscription or one-time | 1-minute data from 2020-08 | **unverified** |
+| Cboe DataShop, historicaloptiondata.com, OptionsDX, FirstRate, WRDS OptionMetrics, algoseek sample | paid or institutional | files | import only; layouts tested on files written with the documented columns |
+| EODHD, Tradier, IBKR, marketdata.app, QuantConnect | varies | - | not integrated (each card says why) |
+
+SPX index options have no free source; they enter through imported files. Strata never calls a
+paid service by itself: a paid source shows a quoted cost and stops there.
+
+### Unattended collection
+Free sources drop intraday data quickly, so the archive has to be built as time passes. Nothing
+is collected while the machine is asleep or off, or while neither the app nor the collector is
+running. To collect without the app, on any small always-on machine:
+
+```bash
+docker compose --profile collector up -d collector     # collects after each close, restarts with the machine
+docker compose ps                                      # "healthy" while the daemon reports every minute
+backend/.venv/bin/strata collect --daemon              # the same without Docker (systemd, tmux, launchd)
+backend/.venv/bin/strata collect --once                # from cron
+```
+A machine with one shared core and 1 GB of memory is enough; a cycle for three symbols is a few
+hundred requests and tens of megabytes a week. What a missed session costs:
+
+| Data | Can it be fetched later? |
+| --- | --- |
+| Daily bars | always |
+| 60-minute bars | for about two years |
+| 5-minute bars | for about two months |
+| 1-minute bars | for about a month (a free Alpaca key reaches back to 2016) |
+| Option trade bars (Yahoo) | only while the contract is listed, and about a day after it expires. After that it is gone from this source and is recorded as missing, never filled in |
 
 ## What V4 adds
 V4 turns Strata from a tool that answers a question into one that helps decide whether an edge
@@ -141,7 +230,7 @@ give the same answer; a regression test re-opens the hole on purpose and checks 
 catches it.
 
 ### Data sources: what was actually verified
-`strata providers` (and Data -> Verify sources) makes a few small read-only requests per source.
+`strata providers` (and Data -> Sources) makes a few small read-only requests per source.
 Measured from this installation on 2026-11-25:
 
 | Source | Live check | Measured |
@@ -472,8 +561,8 @@ alongside builder runs. JSON `BacktestConfig` files work the same way.
 
 ## Testing & validation
 ```bash
-cd backend && .venv/bin/python -m pytest          # 275 tests, about a minute, no network
-cd backend && .venv/bin/strata validate           # thirteen steps on real observations, ~15 seconds
+cd backend && .venv/bin/python -m pytest          # 367 tests (12 opt-in live ones skip), about a minute, no network
+cd backend && .venv/bin/strata validate           # fourteen steps on real observations, ~15 seconds
 cd backend && .venv/bin/strata bench --check      # performance against the recorded baseline
 cd backend && STRATA_LIVE=1 .venv/bin/python -m pytest tests/test_live.py -rs   # opt-in, per provider
 cd frontend && pnpm build && pnpm e2e             # browser tests (PW_CHANNEL=chrome uses your Chrome)
@@ -554,11 +643,13 @@ Acceptance prompts, run through the browser on real SPY history for this build:
 ```
 backend/strata/
   ai/          draft (schema, compiler), nl_rules + nl_stateful (built-in interpreter), research
-               (investigations, follow-ups), llm (providers), explain (grounded text), agent
+               (investigations, follow-ups), llm (providers), explain (grounded text), agent,
+               nl_graph (the composing reader), agent_v5 (graph, memory and registry follow-ups)
   core/        calendar, Black-Scholes / American pricing, causal indicators
   data/        store (datasets, manifests), migrate, catalog, planner (requirements, coverage,
                selective and adaptive acquisition), importers, bulk (streaming imports),
-               providers/ (free sources, paid adapters, bench = live verification)
+               providers/ (free sources, paid adapters, bench = live verification, market =
+               the provider marketplace and cost estimates)
   engine/      models, market (point-in-time data, trade-print chains), expr (rule language),
                sequence (ordered stages), scan (signals only), rules, selection, execution,
                margin, portfolio, engine (event loop)
@@ -567,14 +658,21 @@ backend/strata/
                V4: robust (dependence-aware statistics), ledger (trials and holdouts), features
                (vectorised session features), hypothesis (plans, option structures), sensitivity,
                encyclopedia, reasoning, challenge (adversarial review), execution (stress ladder)
+               V5: graph (typed research graphs), evidence (the one comparison every analysis
+               uses), matching (matched comparisons), patterns (event explorer), registry
+               (cross-notebook trials and holdouts), memory (findings), ml (optional), forward
+               (frozen experiments), signals (saved signal lists)
   collector/   the background market-data collector
   bench.py     the `strata bench` command
   analytics/ · optimize/ · portfolio/
-  api/         FastAPI app, research_api, launch (jobs + caching), settings (credential stores), db
+  api/         FastAPI app, research_api, v4_api, v5_api, ide (strategy IDE: compact form, section
+               edits, debugger), launch (jobs + caching), settings (credential stores), notify, db
   validate.py  the `strata validate` command
 backend/tests/ unit suite, test_live.py (opt-in), test_reproducibility.py, e2e_seed.py
-frontend/src/  pages/lab (research workspace, Canvas, Research views), pages/research (Sensitivity,
-               Encyclopedia), pages/data (Collector, sources, bulk import), pages/builder, pages/results …
+frontend/src/  pages/lab (research workspace, Canvas, Research and Graph views), pages/explore
+               (Patterns, Findings, MlLab), pages/build (Ide, CodeEditor), pages/validate (Forward,
+               Registry), pages/research (Sensitivity, Encyclopedia), pages/data (Collector,
+               Marketplace, bulk import), pages/builder, pages/results …
 benchmarks/    baseline.json, history.jsonl (backend), frontend.jsonl (browser render times)
 frontend/e2e/  browser tests            .github/workflows/ci.yml
 scripts/       setup.sh · dev.sh · init_db.sh · docker-entrypoint.sh
@@ -595,9 +693,19 @@ scripts/       setup.sh · dev.sh · init_db.sh · docker-entrypoint.sh
 - **Language models.** Cancellation is checked between requests, not in the middle of one.
   Gemini uses JSON mode without a schema. Small local models can be unreliable at structured
   output; what happens then is the fallback setting.
-- **Plans come from templates.** The Hypothesis Lab builds plans for seven families of question
-  (reversals, gaps, opening ranges, the first candle, streaks, large intraday moves, target
-  before stop). Other broad questions are told so rather than guessed at.
+- **The reader composes, but it is still a reader.** Questions are built from subjects, time
+  spans and predicates it knows; a phrase outside them is reported as not understood, and the
+  graph can be written directly or proposed by a configured language model. The seven Hypothesis
+  Lab families remain as shortcuts.
+- **The one worked example found no edge.** The session above is a faithful record: the pattern
+  is "suggestive" at best and does not survive option costs. V5 was built to say that plainly.
+- **Forward validation needs time and a running collector.** An experiment frozen today has no
+  forward evidence until sessions are collected after it; option prices for a past session often
+  cannot be fetched later.
+- **Staged exits, ATR exits and hedges are simulated at the engine's tick**, on the bars and
+  option prices stored. On end-of-day option data only close-to-close behaviour can be priced.
+- **The ML page predicts the underlying's outcome.** It is not an option-profit model, and on the
+  default study it reports no out-of-sample skill.
 - **The option stage is only as wide as the option data.** End-of-day quotes (2020-2025 for SPY)
   can price entries at the close; entries at the open or intraday need trade prints, which
   exist only where they were collected. Coverage is stated per signal and reviewed as a bias.
@@ -606,8 +714,9 @@ scripts/       setup.sh · dev.sh · init_db.sh · docker-entrypoint.sh
 - **The volatility control is coarse.** Four fixed bands of the volatility index's previous close.
 - **Bootstrap intervals are approximations.** They are calibrated in tests at realistic sample
   sizes and still under-cover when dependence is extreme or weeks are few.
-- **The holdout protects a notebook, not a person.** The ledger cannot know what was learned
-  outside it; a new notebook starts with a fresh final period on the same dates.
+- **The registry knows what Strata ran, not what you read elsewhere.** A new notebook's final
+  period on dates other notebooks already evaluated is reported as not independent, but the
+  registry cannot know what was learned outside the application.
 - **The collector needs a machine that is awake** at the close; a laptop that sleeps will miss
   sessions and will say so.
 - **Free intraday underlying history is short** (about a month of 1-minute bars from Yahoo), so

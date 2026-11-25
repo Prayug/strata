@@ -1,6 +1,6 @@
 [project]
 name = "strata"
-version = "0.4.0"
+version = "0.5.0"
 description = "Strata: event-driven options backtesting and research platform"
 requires-python = ">=3.11"
 dependencies = [
@@ -21,6 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-timeout>=2.3"]
 databento = ["databento>=0.40"]
+ml = ["scikit-learn>=1.5"]
 
 [project.scripts]
 strata = "strata.cli:main"
