@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Check, CircleAlert, Database, Download, ExternalLink, FlaskConical, Loader2, PlugZap, RefreshCw, ShieldCheck, Table2, Trash2, Upload } from "lucide-react";
+import { Check, CircleAlert, Database, Download, ExternalLink, FlaskConical, FolderInput, Loader2, PlugZap, Radio, RefreshCw, ShieldCheck, ShieldQuestion, Table2, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { C, EChart } from "@/components/charts/EChart";
@@ -8,9 +8,10 @@ import { Empty, ErrorBox, JobBar, Loading, PageHeader, Panel, SyntheticBadge, Wa
 import { Button, Field, Input, NumInput, Select, Switch, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui";
 import { api, queryClient, useJob, useMeta } from "@/lib/api";
 import { bytes, cn, compact, etTime, num, pct } from "@/lib/format";
+import { BulkImportPanel, CollectorPanel, SourcesPanel } from "./data/Collection";
 
 const refreshData = () => {
-  for (const k of ["catalog", "coverage", "storage", "meta", "symbol", "sources"]) queryClient.invalidateQueries({ queryKey: [k] });
+  for (const k of ["catalog", "coverage", "storage", "meta", "symbol", "sources", "collector", "provider-catalog"]) queryClient.invalidateQueries({ queryKey: [k] });
 };
 
 export default function DataPage() {
@@ -40,10 +41,13 @@ export default function DataPage() {
         <TabsList>
           <TabsTrigger value="coverage"><Database className="size-3" /> Coverage</TabsTrigger>
           <TabsTrigger value="datasets"><ShieldCheck className="size-3" /> Datasets &amp; provenance</TabsTrigger>
+          <TabsTrigger value="collector"><Radio className="size-3" /> Collector</TabsTrigger>
           <TabsTrigger value="free"><Download className="size-3" /> Get free data</TabsTrigger>
+          <TabsTrigger value="verify"><ShieldQuestion className="size-3" /> Verify sources</TabsTrigger>
+          <TabsTrigger value="bulk"><FolderInput className="size-3" /> Bulk import</TabsTrigger>
           <TabsTrigger value="chain"><Table2 className="size-3" /> Option chain</TabsTrigger>
           <TabsTrigger value="providers"><PlugZap className="size-3" /> Paid providers</TabsTrigger>
-          <TabsTrigger value="import"><Upload className="size-3" /> Import files</TabsTrigger>
+          <TabsTrigger value="import"><Upload className="size-3" /> Import one file</TabsTrigger>
           <TabsTrigger value="sandbox"><FlaskConical className="size-3" /> Developer sandbox</TabsTrigger>
         </TabsList>
         <div className="min-h-0 flex-1 overflow-auto">
@@ -59,6 +63,9 @@ export default function DataPage() {
             </>}
           </TabsContent>
           <TabsContent value="datasets"><Datasets /></TabsContent>
+          <TabsContent value="collector"><CollectorPanel onJob={setJobId} /></TabsContent>
+          <TabsContent value="verify"><SourcesPanel onJob={setJobId} /></TabsContent>
+          <TabsContent value="bulk"><BulkImportPanel onJob={setJobId} /></TabsContent>
           <TabsContent value="free"><FreeData onJob={setJobId} busy={!!job && ["queued", "running"].includes(job.status)} /></TabsContent>
           <TabsContent value="chain">{rows.some((r) => r.options) ? <ChainPicker rows={rows.filter((r) => r.options)} /> : <Empty title="No option chains stored" icon={Table2}>Download free end-of-day chains under “Get free data”.</Empty>}</TabsContent>
           <TabsContent value="providers"><Providers onJob={setJobId} /></TabsContent>

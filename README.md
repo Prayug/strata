@@ -14,6 +14,7 @@ limits stated next to every number.
 
 ## Contents
 - [Quick start](#quick-start)
+- [What V4 adds](#what-v4-adds)
 - [What V3 adds](#what-v3-adds)
 - [Four research modes](#four-research-modes)
 - [AI Strategy Lab](#ai-strategy-lab)
@@ -64,6 +65,129 @@ runs the same free download on first start (`STRATA_SKIP_FETCH=1` to skip it).
    option contract's own prints underneath; press `?` for the keyboard shortcuts.
 5. **Market Explorer**, **Strategy Builder**, **Backtests** and **Data** remain for working
    by hand. Everything the lab runs appears there too.
+
+## What V4 adds
+V4 turns Strata from a tool that answers a question into one that helps decide whether an edge
+is real. Nothing from V3 was rebuilt; these sit on top of it.
+
+| Area | What it does |
+| --- | --- |
+| **Hypothesis Lab** | A broad question ("Investigate whether SPY tends to reverse following large down days") becomes a bounded plan stated before anything runs: hypothesis, null, baseline, data needed, every configuration (at most 60), primary measure, minimum sample, and training / validation / final-test periods. All configurations are reported, including the ones that show nothing. |
+| **Research ledger** | Every configuration ever evaluated in a notebook is recorded, shown or not. Significance is corrected for all of them. The final test period has a status (untouched, used once, already seen, contaminated); tuning after its results were shown contaminates it and a new holdout is required. |
+| **Dependence-aware statistics** | Calendar-cluster and block bootstraps, a circular-shift permutation test, Newey-West errors, paired comparisons on identical sessions, Holm / Benjamini-Hochberg / Benjamini-Yekutieli corrections, purged and embargoed cross-validation, uniqueness weights for overlapping holds, regime tables. Thin samples can never be graded above "insufficient". |
+| **Adversarial reviewer** | "Challenge this strategy" examines sixteen ways a result can mislead and runs the experiments that settle them: prices after the decision are scrambled to detect look-ahead, each parameter is nudged, the same position is run without the entry condition, and execution is stressed. |
+| **Execution uncertainty** | The same configuration re-simulated under a ladder of worse assumptions (slippage, order delay, price age, minimum volume, participation, partial and missed fills, multi-leg legging, bid/ask instead of prints). Where only prints exist the spread is reported as unknown, never invented. |
+| **Adaptive contract discovery** | Selections that land on the edge of the downloaded strike band are detected, the band is widened for those sessions and the run repeated. Regression tests require a selective download to choose the same contracts as the complete chain. |
+| **Data** | A background collector that archives intraday bars and option trade prints while free sources still serve them; streaming imports of CSV / ZIP / Parquet in ten vendor layouts; live verification of what each source actually delivers. |
+| **Research surfaces** | A node canvas of each notebook (branch from any result), a sensitivity explorer (two-assumption heatmaps with thin and stable cells marked), and an encyclopedia of twelve market-behaviour studies computed on your stored data. |
+| **Quantitative reasoning** | Questions about a result are answered by deterministic tools: sub-periods, whether two thresholds really differ, cost survival, concentration, how much volatility explains, which assumptions matter most, why options differ from the underlying. |
+| **Benchmarks** | `strata bench` times realistic workloads on a reproducible fixture, records every run with its commit, and fails CI on a regression. |
+
+### The workflow, on real data
+Run in the browser on the stored SPY history (8,514 sessions, 1993-2026); the numbers are what
+the engine computed on 2026-11-25.
+
+1. *"Investigate whether SPY tends to reverse following large down days."*
+2. A plan of **36 configurations** (bound 60): six decline thresholds x five outcomes, plus a
+   split by volatility. Training 1993-2013, validation 2013-2020, final test 2020-02-18 onward.
+3. Daily SPY and VIX history is already stored; nothing needed downloading.
+4. All 36 are evaluated and listed. Five are distinguishable from the baseline after correction;
+   four of those also agree with the validation period and become candidates.
+5. The four that survive are all the same outcome: *1% up before 1% down during the next
+   session* after declines of 1% to 2.5% (for example 38.2% of 186 training sessions against
+   17.5% on all sessions). The plain reversal rows did **not** survive: after a 3% decline the
+   next session closed above its open on 61.8% of 68 sessions against 51.3%, which is within
+   what chance produces once 36 tries and clustering are allowed for.
+6. Taking the 2% version further gives the full study: 104 of 342 sessions (37.8%) against
+   14.9%. The reviewer's verdict on it: about **70% of that difference is explained by when
+   these sessions occur** (93% of them have the volatility index at 20 or more, against 34% of
+   other sessions); within the same volatility band the difference is +7 points.
+7. Option structures on the close-entry form, priced on stored end-of-day bid/ask quotes: 66 of
+   the 342 qualifying sessions have quotes (2020-2025). At-the-money 7DTE call +$1,126
+   (+$17 per trade, 43.9% winners); the put on the same sessions -$4,877; straddle -$3,751;
+   iron condor -$2,799; debit spread -$1,236.
+8. Challenging the best of them: **three serious problems.** Only 19% of signals could be
+   priced; without its three best trades the result is -$2,860; it reaches zero when every fill
+   is 1.1% worse, less than a typical option spread. With whole weeks resampled the average
+   trade's p-value against zero is 0.74.
+9. Chronological validation is built into steps 2-5 (the final period was scored once and is
+   marked "used once"), and the selection itself is cross-validated with purging and an embargo.
+10. Every step is a node on the canvas and a section of the exportable report.
+
+The honest summary of that session: a real pattern in how far SPY moves after a decline, mostly
+a volatility effect, and no evidence of a profitable option position.
+
+### Statistics that allow for dependence
+Large moves cluster, so sessions that qualify together are not independent draws. Each claim
+therefore carries two numbers: the usual one and one from resampling whole calendar weeks
+(extended to blocks of weeks when neighbouring weeks are correlated). The wider interval and the
+larger p-value are the ones used. On simulated data where hits arrive in runs, the independence
+interval covered the true value 62% of the time and the cluster interval 93%; a true null was
+called significant 14.5% of the time by the ordinary test and 7.5% by the cluster test. Those
+calibration checks are part of the test suite.
+
+The ledger counts distinct configurations, so re-running the same one is free and running a
+plan of 36 costs 36. A plan's own drill-down ("Investigate further") is the same configuration
+and does not contaminate the final period; a new threshold tested afterwards does. Option
+positions priced on an already-selected condition are counted as trials but do not re-tune the
+condition.
+
+### Look-ahead
+V4 found and closed one hole in V3's rule language: `close(0)`, `session_high(0)` and negative
+counts such as `return_pct(-1)` addressed a session that had not finished. Counts below one are
+now rejected when a rule is validated and again when it is evaluated. The reviewer's
+future-scramble test alters every price after the decision instant and requires the rule to
+give the same answer; a regression test re-opens the hole on purpose and checks the test
+catches it.
+
+### Data sources: what was actually verified
+`strata providers` (and Data -> Verify sources) makes a few small read-only requests per source.
+Measured from this installation on 2026-11-25:
+
+| Source | Live check | Measured |
+| --- | --- | --- |
+| Yahoo Finance (prices) | verified | daily from 1993-01-29; 60-minute bars from 2023-12-28; 5-minute from 2026-09-01; 1-minute for the last 7 sessions per request; 0% of expected bars missing |
+| Cboe (VIX) | verified | 9,323 daily rows from 1990-01-02 |
+| Yahoo Finance option trades | verified | 8,754 one-minute trade bars for 12 at-the-money contracts; a contract that expired weeks ago returned nothing, so history must be collected while it is served |
+| End-of-day option archive | verified | SPY chains listed for 2008-2025 |
+| DoltHub options | verified | latest chain date 2026-11-24, 214 SPY rows |
+| **Alpaca** | **unverified** | no credentials were available. Its pagination, contract discovery, resume and entitlement checks are covered by mocked tests and an opt-in live test; whether a free account can read what the documentation says has not been confirmed here. |
+
+The paid adapters and the cloud language-model providers are likewise unverified against live
+endpoints. Other legitimate sources (Cboe DataShop, OptionsDX, historicaloptiondata.com, Massive
+flat files, Databento, ThetaData, Stooq, FirstRate / Kibot) are listed in the app with their
+cost and how to use them; they enter through the bulk importer, never through an automatic call.
+
+### The collector
+Off by default. When switched on (Data -> Collector) it runs after each close, or on demand, or
+from cron with `strata collect --once`. It refreshes the watch list's bars and downloads option
+trade bars for 0, 1, 3, 7, 14 and 30 DTE contracts around the previous close, nearest the money
+first, within a request budget and rate limit. It only issues GET requests for market data: the
+single HTTP helper refuses any trading path, and a test scans the code for anything else.
+A session it did not reach while the data was still served is recorded as missed, not filled in.
+One real cycle from this machine: 246 requests in 69 seconds stored 14,797 trade bars for SPY
+and QQQ; 24 contract-sessions failed and were left for the next cycle.
+
+### Benchmarks
+`strata bench` on the fixture (simulated on purpose, so it is reproducible offline):
+
+| Workload | Time |
+| --- | --- |
+| Generate and store 61 sessions of intraday bars and option chains, two symbols | 1.71 s |
+| Load cached bars, build the price series, read one chain | 0.009 s |
+| One backtest, 60 sessions of 30-minute chains | 0.27 s |
+| Sweep of 12 backtests | 2.91 s |
+| Feature table for 16 years of sessions | 0.025 s |
+| Hypothesis plan, 36 configurations with cluster tests | 0.74 s |
+| One configuration, session-by-session engine | 0.121 s |
+| The same configuration, vectorised | 0.0001 s (about 1,200x) |
+| Three backtests in three processes | 0.87 s |
+
+Peak memory 544 MB. The vectorised feature engine is the optimisation the profile called for:
+discovery and maps no longer re-walk every session per configuration, and a test requires it to
+match the session engine exactly. Runs are appended to `benchmarks/history.jsonl`;
+`strata bench --check` compares against `benchmarks/baseline.json` after normalising by a
+calibration loop. The browser suite records how long the sensitivity map takes to render.
 
 ## What V3 adds
 
@@ -319,6 +443,10 @@ strata import file.csv --kind option_quotes --symbol SPY
 strata ingest polygon SPY 2024-01-02 2024-03-28      # paid providers: only when you run it
 strata sandbox                   # SIMULATED developer symbols
 strata validate [--keep]         # prove the whole chain on real observations (see below)
+strata bulk-import PATH [--inspect]   # a file, ZIP or folder in a vendor layout, streamed
+strata collect [--once|--daemon|--status]   # the market-data collector (read-only)
+strata providers [yahoo cboe ...]     # live check of what each source actually delivers
+strata bench [--check] [--real]       # time the research workloads and record the result
 strata migrate [--dry-run]       # move an older data directory to the current layout
 ```
 
@@ -344,8 +472,9 @@ alongside builder runs. JSON `BacktestConfig` files work the same way.
 
 ## Testing & validation
 ```bash
-cd backend && .venv/bin/python -m pytest          # 213 tests, about 25 seconds, no network
-cd backend && .venv/bin/strata validate           # ten steps on real observations, ~10 seconds
+cd backend && .venv/bin/python -m pytest          # 275 tests, about a minute, no network
+cd backend && .venv/bin/strata validate           # thirteen steps on real observations, ~15 seconds
+cd backend && .venv/bin/strata bench --check      # performance against the recorded baseline
 cd backend && STRATA_LIVE=1 .venv/bin/python -m pytest tests/test_live.py -rs   # opt-in, per provider
 cd frontend && pnpm build && pnpm e2e             # browser tests (PW_CHANNEL=chrome uses your Chrome)
 ```
@@ -357,6 +486,23 @@ invented spread), ordered sequences and scale-ins, sequences on coarse bars, pla
 expirations and periods, the clarifying-question and confirmation flows, coverage decisions,
 investigation and discovery statistics, provider retries, cancellation and usage tracking,
 credential storage, and reproducibility of every kind of run.
+
+V4 adds: calibration of the dependence-aware intervals and tests on simulated clustered data;
+purged cross-validation and overlapping holding periods; every session feature against the
+rule-language expression it is tied to, and vectorised outcomes against the session engine; an
+independent plain-Python recomputation of a study; rejection of zero and negative look-backs and
+the future-scramble test (including a deliberately leaky rule it must catch); plan bounds,
+reporting of every configuration, and noise producing no confirmation; ledger counting, holdout
+contamination and the requirement for a new holdout; execution assumptions (slippage, delay,
+volume, participation, partial and missed fills, legging); selective versus complete-chain
+contract selection for six strike methods and adaptive widening; contract adjustments and
+constructed identifiers; streaming imports from a ZIP in bounded memory and out-of-order
+sessions; collector persistence, resumption, request budget, missed sessions and the read-only
+guarantee; and provider verification with and without credentials. `strata validate` gained
+three steps: a plan checked against the session engine and against plain arithmetic on real SPY
+history, the future-scramble test on real data, and live source verification. The browser suite
+gained six tests covering the plan flow, the reviewer, the canvas, the sensitivity map, the
+encyclopedia and the data panels.
 
 **`strata validate`** starts from an empty data directory and uses free, keyless sources only:
 
@@ -411,18 +557,25 @@ backend/strata/
                (investigations, follow-ups), llm (providers), explain (grounded text), agent
   core/        calendar, Black-Scholes / American pricing, causal indicators
   data/        store (datasets, manifests), migrate, catalog, planner (requirements, coverage,
-               selective acquisition), importers, providers/ (free sources + paid adapters)
+               selective and adaptive acquisition), importers, bulk (streaming imports),
+               providers/ (free sources, paid adapters, bench = live verification)
   engine/      models, market (point-in-time data, trade-print chains), expr (rule language),
                sequence (ordered stages), scan (signals only), rules, selection, execution,
                margin, portfolio, engine (event loop)
   research/    pipeline (the seven stages), study, stats, discovery, explain_day, views
                (calendar, observations, comparison), report (HTML / Markdown / CSV)
+               V4: robust (dependence-aware statistics), ledger (trials and holdouts), features
+               (vectorised session features), hypothesis (plans, option structures), sensitivity,
+               encyclopedia, reasoning, challenge (adversarial review), execution (stress ladder)
+  collector/   the background market-data collector
+  bench.py     the `strata bench` command
   analytics/ · optimize/ · portfolio/
   api/         FastAPI app, research_api, launch (jobs + caching), settings (credential stores), db
   validate.py  the `strata validate` command
 backend/tests/ unit suite, test_live.py (opt-in), test_reproducibility.py, e2e_seed.py
-frontend/src/  pages/lab (research workspace), pages/Explorer, pages/builder, pages/results,
-               pages/DataPage, pages/Settings …
+frontend/src/  pages/lab (research workspace, Canvas, Research views), pages/research (Sensitivity,
+               Encyclopedia), pages/data (Collector, sources, bulk import), pages/builder, pages/results …
+benchmarks/    baseline.json, history.jsonl (backend), frontend.jsonl (browser render times)
 frontend/e2e/  browser tests            .github/workflows/ci.yml
 scripts/       setup.sh · dev.sh · init_db.sh · docker-entrypoint.sh
 ```
@@ -442,8 +595,21 @@ scripts/       setup.sh · dev.sh · init_db.sh · docker-entrypoint.sh
 - **Language models.** Cancellation is checked between requests, not in the middle of one.
   Gemini uses JSON mode without a schema. Small local models can be unreliable at structured
   output; what happens then is the fallback setting.
-- **Discovery explores the underlying.** It searches conditions and targets on price history;
-  it does not search over option structures.
+- **Plans come from templates.** The Hypothesis Lab builds plans for seven families of question
+  (reversals, gaps, opening ranges, the first candle, streaks, large intraday moves, target
+  before stop). Other broad questions are told so rather than guessed at.
+- **The option stage is only as wide as the option data.** End-of-day quotes (2020-2025 for SPY)
+  can price entries at the close; entries at the open or intraday need trade prints, which
+  exist only where they were collected. Coverage is stated per signal and reviewed as a bias.
+- **SPX options** have no free source here and no strike grid configured; SPX is supported
+  through imported files.
+- **The volatility control is coarse.** Four fixed bands of the volatility index's previous close.
+- **Bootstrap intervals are approximations.** They are calibrated in tests at realistic sample
+  sizes and still under-cover when dependence is extreme or weeks are few.
+- **The holdout protects a notebook, not a person.** The ledger cannot know what was learned
+  outside it; a new notebook starts with a fresh final period on the same dates.
+- **The collector needs a machine that is awake** at the close; a laptop that sleeps will miss
+  sessions and will say so.
 - **Free intraday underlying history is short** (about a month of 1-minute bars from Yahoo), so
   intraday rules have small samples until more history is loaded. Sessions without fine enough
   bars are excluded and counted, not treated as "no signal".

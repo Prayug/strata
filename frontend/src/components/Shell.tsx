@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import {
-  Activity, BarChart3, Blocks, Briefcase, ChevronsLeft, ChevronsRight, Database, FlaskConical, Microscope, PlayCircle, Settings as SettingsIcon, Sigma, Sparkles,
+  Activity, BarChart3, Blocks, BookOpenText, Briefcase, ChevronsLeft, ChevronsRight, Database, FlaskConical, Grid3x3, Microscope, PlayCircle, Settings as SettingsIcon, Sigma, Sparkles,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -13,6 +13,8 @@ import { useUi } from "@/lib/store";
 
 const NAV = [
   { to: "/", label: "AI Lab", icon: Sparkles, key: "a", match: ["/lab"] },
+  { to: "/encyclopedia", label: "Market Behaviour", icon: BookOpenText, key: "e" },
+  { to: "/sensitivity", label: "Sensitivity", icon: Grid3x3, key: "n" },
   { to: "/explore", label: "Market Explorer", icon: Microscope, key: "m" },
   { to: "/builder", label: "Strategy Builder", icon: Blocks, key: "b", match: ["/strategies"] },
   { to: "/results", label: "Backtests", icon: BarChart3, key: "r" },

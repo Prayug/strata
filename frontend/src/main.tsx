@@ -19,6 +19,8 @@ const Optimize = lazy(() => import("@/pages/Optimize"));
 const Portfolio = lazy(() => import("@/pages/Portfolio"));
 const Strategies = lazy(() => import("@/pages/Strategies"));
 const DataPage = lazy(() => import("@/pages/DataPage"));
+const Sensitivity = lazy(() => import("@/pages/research/Sensitivity"));
+const Encyclopedia = lazy(() => import("@/pages/research/Encyclopedia"));
 
 const S = (el: React.ReactNode) => <Suspense fallback={<Loading />}>{el}</Suspense>;
 
@@ -43,6 +45,9 @@ const router = createBrowserRouter([
       { path: "portfolio/:id", element: S(<Portfolio />) },
       { path: "strategies", element: S(<Strategies />) },
       { path: "data", element: S(<DataPage />) },
+      { path: "sensitivity", element: S(<Sensitivity />) },
+      { path: "encyclopedia", element: S(<Encyclopedia />) },
+      { path: "encyclopedia/:id", element: S(<Encyclopedia />) },
     ],
   },
 ]);

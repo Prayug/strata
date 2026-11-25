@@ -1,0 +1,94 @@
+{
+ "at": "2026-11-25T13:24:09.251720+00:00",
+ "commit": "5e70d3f",
+ "engine_version": "4.0.0",
+ "calibration_seconds": 0.0737,
+ "machine": "Darwin arm64",
+ "workloads": [
+  {
+   "name": "cold_ingest",
+   "seconds": 1.712,
+   "what": "generate and store 61 sessions of intraday bars and option chains for two symbols",
+   "normalised": 23.229
+  },
+  {
+   "name": "cached_load",
+   "seconds": 0.0091,
+   "what": "read stored bars, build the price series, read one session's option chain",
+   "bars": 23790,
+   "normalised": 0.123
+  },
+  {
+   "name": "single_backtest",
+   "seconds": 0.2651,
+   "what": "put credit spread, 60 sessions of 30-minute chains",
+   "trades": 21,
+   "normalised": 3.597
+  },
+  {
+   "name": "sweep_12",
+   "seconds": 2.9102,
+   "what": "12 backtests over expiration and delta, one process",
+   "backtests": 12,
+   "trades": 261,
+   "normalised": 39.487
+  },
+  {
+   "name": "feature_table_build",
+   "seconds": 0.0255,
+   "what": "load 16 years of daily bars and build the session feature table",
+   "normalised": 0.346
+  },
+  {
+   "name": "hypothesis_plan",
+   "seconds": 0.7412,
+   "what": "36 configurations with calendar-cluster tests on 16 years of sessions",
+   "configurations": 36,
+   "normalised": 10.057
+  },
+  {
+   "name": "condition_scan",
+   "seconds": 0.3991,
+   "what": "39 single-condition configurations",
+   "normalised": 5.415
+  },
+  {
+   "name": "study_engine_one",
+   "seconds": 0.1207,
+   "what": "one configuration evaluated session by session through the rule engine",
+   "normalised": 1.638
+  },
+  {
+   "name": "vectorised_one",
+   "seconds": 0.0001,
+   "what": "the same configuration from the session feature table",
+   "normalised": 0.001
+  },
+  {
+   "name": "multi_symbol_study",
+   "seconds": 0.2572,
+   "what": "the same study on two symbols",
+   "symbols": 2,
+   "qualifying": 1311,
+   "normalised": 3.49
+  },
+  {
+   "name": "bulk_import",
+   "seconds": 0.0913,
+   "what": "stream a CSV of option quotes into per-session files",
+   "rows": 127920,
+   "rows_per_second": 1401095,
+   "peak_python_mb": 0.1,
+   "file_mb": 7.9,
+   "normalised": 1.239
+  },
+  {
+   "name": "concurrent_jobs_3",
+   "seconds": 0.8711,
+   "sequential_seconds": 0.7429,
+   "speedup": 0.85,
+   "what": "three backtests in three worker processes (including process start-up)",
+   "normalised": 11.82
+  }
+ ]
+}

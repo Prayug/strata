@@ -104,7 +104,7 @@ def test_the_validation_command_passes_end_to_end(tmp_path, monkeypatch):
         config._settings = before
         os.environ["STRATA_OFFLINE"] = "1"
     assert rep["ok"], [(s["n"], s["name"], s["error"]) for s in rep["steps"] if not s["ok"]]
-    assert [s["n"] for s in rep["steps"]] == list(range(1, 11))
+    assert [s["n"] for s in rep["steps"]] == list(range(1, 14))
 
 
 # ----------------------------------------------------------------------------- Alpaca (free account)
@@ -159,3 +159,46 @@ def test_model_answers_and_reads_a_request_into_the_fixed_tools(live, provider, 
     # the key never appears in anything the app would show or log
     key = os.environ[env]
     assert key not in repr(m) and key not in str(usage)
+
+
+# ----------------------------------------------------------------------------- V4: provider verification
+def test_live_free_sources_are_verified_by_real_requests(tmp_path):
+    """The live check of the keyless sources: what is recorded as 'verified' was actually fetched."""
+    from strata.config import get_settings, override_settings
+    from strata.data.providers import bench as PB
+    old = get_settings().data_dir
+    override_settings(data_dir=tmp_path)
+    try:
+        y = PB.benchmark_source("yahoo")
+        assert y["status"] in ("verified", "partly verified") and y["bars_per_second"] > 0
+        depth = {d["dataset"]: d for d in y["historical_depth"]}
+        assert depth["daily bars"]["first"] < "2000-01-01" and "1-minute bars" in depth
+        assert all(s.get("missing_pct") is not None for s in y["steps"] if s["ok"] and "minute" in s.get("dataset", ""))
+        c = PB.benchmark_source("cboe")
+        assert c["status"] == "verified" and c["steps"][0]["first"].startswith("1990")
+        assert PB.saved()["yahoo"]["measured_at"]
+    finally:
+        override_settings(data_dir=old)
+
+
+def test_live_alpaca_entitlements_are_measured_not_assumed(tmp_path):
+    """Needs ALPACA_API_KEY / ALPACA_API_SECRET. Records which feeds and datasets this account can
+    really read; without credentials the source must be reported as unverified."""
+    import os
+
+    from strata.config import get_settings, override_settings
+    from strata.data.providers import bench as PB
+    have = bool(os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_API_SECRET"))
+    old = get_settings().data_dir
+    override_settings(data_dir=tmp_path)
+    try:
+        r = PB.benchmark_source("alpaca")
+        if not have:
+            assert r["status"] == "unverified" and not r["verified"]
+            pytest.skip("no Alpaca credentials: the integration stays UNVERIFIED")
+        ent = {e["what"]: e["granted"] for e in r["entitlements"]}
+        assert r["verified"] and ent["stock bars, IEX feed"] is True, r
+        assert "option contract definitions, including expired contracts" in ent and "historical option trade bars (indicative feed)" in ent
+        assert any(s["ok"] and s.get("first", "").startswith("2016") for s in r["steps"]) or any("depth" in s["name"] and not s["ok"] for s in r["steps"])
+    finally:
+        override_settings(data_dir=old)

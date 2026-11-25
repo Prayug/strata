@@ -221,12 +221,48 @@ def parse(src: str) -> ast.Expression:
     return tree
 
 
+# look-back counts by function: positional indices (after an optional leading symbol string) and keyword names
+_COUNTS = {
+    "return_pct": ((0,), ("sessions",)), "session_return": ((0,), ("n",)), "open_to_close": ((0,), ("n",)), "close": ((0,), ("n",)), "session_high": ((0,), ("n",)), "session_low": ((0,), ("n",)),
+    "rolling_high": ((0,), ("n",)), "rolling_low": ((0,), ("n",)), "opening_range_high": ((0,), ("minutes",)), "opening_range_low": ((0,), ("minutes",)),
+    "rsi": ((0,), ("n",)), "sma": ((0,), ("n",)), "ema": ((0,), ("n",)), "atr": ((0,), ("n",)), "atr_pct": ((0,), ("n",)), "bb_upper": ((0,), ("n",)), "bb_lower": ((0,), ("n",)), "bb_pctb": ((0,), ("n",)),
+    "rvol": ((0,), ("n",)), "rvol_percentile": ((0, 1), ("n", "lookback")), "volume_ratio": ((1,), ("n",)), "day_volume_ratio": ((0,), ("n",)), "relative_strength": ((2,), ("sessions",)),
+}
+
+
+def _literal(node) -> float | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+        return float(node.value)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        v = _literal(node.operand)
+        return None if v is None else (-v if isinstance(node.op, ast.USub) else v)
+    return None
+
+
+def count_errors(tree: ast.AST) -> list[str]:
+    """Look-back counts written as zero, negative or fractional numbers: they would address a
+    session or bar that has not finished, so they are rejected before anything is evaluated."""
+    out = []
+    for n in ast.walk(tree):
+        if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _COUNTS):
+            continue
+        pos, kws = _COUNTS[n.func.id]
+        args = list(n.args)
+        if args and isinstance(args[0], ast.Constant) and isinstance(args[0].value, str) and n.func.id != "volume_ratio" and n.func.id != "relative_strength":
+            args = args[1:]  # leading symbol
+        vals = [(i, _literal(args[i])) for i in pos if i < len(args)] + [(k.arg, _literal(k.value)) for k in n.keywords if k.arg in kws]
+        for where, v in vals:
+            if v is not None and (v < 1 or v != int(v)):
+                out.append(f"{REGISTRY[n.func.id]['signature']}: the count must be a whole number of 1 or more ({v:g} would read a session or bar that has not finished yet)")
+    return out
+
+
 def validate(src: str) -> list[str]:
     try:
-        parse(src)
-        return []
+        tree = parse(src)
     except ExprError as e:
         return [str(e)]
+    return count_errors(tree)
 
 
 def names_used(src: str) -> set[str]:
@@ -424,7 +460,7 @@ class Evaluator:
         if k in ("vwap", "dist_from_vwap_pct"):
             if s.resolution(c.today) > 300:
                 return self._na("intraday bars (VWAP)")
-            v = s.indicator("vwap", {}, "1m", "value", self.t, c.today)
+            v = s.indicator("vwap", {}, "1m" if s.resolution(c.today) <= 60 else "5m", "value", self.t, c.today)  # from the session's own bars: 1-minute where stored, else 5-minute
             if not math.isfinite(v):
                 return self._na("intraday bars (VWAP)")
             return v if k == "vwap" else (self.name("price") / v - 1) * 100
@@ -642,6 +678,18 @@ class Evaluator:
     def _completed(self, s) -> int:
         return s.completed_day(self.t)
 
+    @staticmethod
+    def _count(n, what: str = "n", lo: int = 1) -> int:
+        """A look-back count. Zero or a negative number would address the session or bar that
+        is still forming (or one in the future), so it is rejected rather than evaluated."""
+        try:
+            k = int(n)
+        except (TypeError, ValueError):
+            raise ExprError(f"{what} must be a whole number") from None
+        if k < lo or k != n:
+            raise ExprError(f"{what} must be a whole number of {lo} or more (it counts completed sessions or bars; {n!r} would read data that does not exist yet)")
+        return k
+
     def f_abs(self, x):
         x = _num(x)
         return None if x is None else abs(x)
@@ -667,7 +715,7 @@ class Evaluator:
 
     def f_return_pct(self, *args, symbol=None, sessions=1):
         sym, rest = self._split(args, symbol)
-        n = int(rest[0]) if rest else int(sessions)
+        n = self._count(rest[0] if rest else sessions, "sessions")
         s = self.ser(sym)
         if s is None:
             return None
@@ -676,7 +724,7 @@ class Evaluator:
 
     def _nth(self, args, n, symbol):
         sym, rest = self._split(args, symbol)
-        n = int(rest[0]) if rest else int(n)
+        n = self._count(rest[0] if rest else n, "n")
         s = self.ser(sym)
         if s is None:
             return None, 0
@@ -780,7 +828,7 @@ class Evaluator:
         s = self.ser()
         if s is None:
             return None
-        n = int(n)
+        n = self._count(n, "n")
         if tf == "1d":
             i = self._completed(s)
             if i + 1 < n:
@@ -805,6 +853,7 @@ class Evaluator:
         s = self.ser()
         if s is None:
             return None
+        minutes = self._count(minutes, "minutes")
         if s.resolution(self.ctx.today) > int(minutes) * 60:
             return self._na("intraday bars (opening range)")
         hi, lo, complete = s.session_range_until(self.ctx.today, self.t, int(minutes))
@@ -878,19 +927,19 @@ class Evaluator:
         return v if math.isfinite(v) else self._na(f"{name}({tf}) history")
 
     def f_rsi(self, n=14, tf="5m"):
-        return self._ind("rsi", {"period": int(n)}, tf)
+        return self._ind("rsi", {"period": self._count(n, "n")}, tf)
 
     def f_sma(self, n=20, tf="1d"):
-        return self._ind("sma", {"period": int(n)}, tf)
+        return self._ind("sma", {"period": self._count(n, "n")}, tf)
 
     def f_ema(self, n=20, tf="1d"):
-        return self._ind("ema", {"period": int(n)}, tf)
+        return self._ind("ema", {"period": self._count(n, "n")}, tf)
 
     def f_atr(self, n=14, tf="1d"):
-        return self._ind("atr", {"period": int(n)}, tf, "value")
+        return self._ind("atr", {"period": self._count(n, "n")}, tf, "value")
 
     def f_atr_pct(self, n=14, tf="1d"):
-        return self._ind("atr", {"period": int(n)}, tf, "pct")
+        return self._ind("atr", {"period": self._count(n, "n")}, tf, "pct")
 
     def f_macd(self, tf="5m"):
         return self._ind("macd", {}, tf, "line")
@@ -902,15 +951,16 @@ class Evaluator:
         return self._ind("macd", {}, tf, "hist")
 
     def f_bb_upper(self, n=20, k=2.0, tf="5m"):
-        return self._ind("bbands", {"period": int(n), "k": float(k)}, tf, "upper")
+        return self._ind("bbands", {"period": self._count(n, "n", 2), "k": float(k)}, tf, "upper")
 
     def f_bb_lower(self, n=20, k=2.0, tf="5m"):
-        return self._ind("bbands", {"period": int(n), "k": float(k)}, tf, "lower")
+        return self._ind("bbands", {"period": self._count(n, "n", 2), "k": float(k)}, tf, "lower")
 
     def f_bb_pctb(self, n=20, k=2.0, tf="5m"):
-        return self._ind("bbands", {"period": int(n), "k": float(k)}, tf, "pctb")
+        return self._ind("bbands", {"period": self._count(n, "n", 2), "k": float(k)}, tf, "pctb")
 
     def _rvol_series(self, s, n):
+        n = self._count(n, "n", 2)
         key = ("rvol", int(n))
         if key not in s._memo:
             r = np.diff(np.log(s.d_c))
@@ -934,7 +984,7 @@ class Evaluator:
             return None
         i = self._completed(s)
         arr = self._rvol_series(s, n)
-        w = arr[max(0, i - int(lookback)):i]
+        w = arr[max(0, i - self._count(lookback, "lookback")):i]
         w = w[np.isfinite(w)]
         if i < 0 or not math.isfinite(arr[i]) or w.size < 20:
             return self._na("volatility history")
@@ -947,6 +997,7 @@ class Evaluator:
         m = s.tf_minutes(tf)
         if s.resolution(self.ctx.today) > m * 60:
             return self._na(f"{tf} bars")
+        n = self._count(n, "n")
         ts, end, o, h, l, c, v, dd = s._tf(m)
         i = int(np.searchsorted(end, self.t, side="right")) - 1
         if i < int(n):
@@ -958,6 +1009,7 @@ class Evaluator:
         s = self.ser()
         if s is None:
             return None
+        n = self._count(n, "n")
         i = self._completed(s)
         if i < int(n):
             return self._na("volume history")
@@ -972,7 +1024,7 @@ class Evaluator:
         return bool(self.ctx.events.on(self.ctx.today, list(types) or None))
 
     def f_event_within(self, n, *types):
-        return bool(self.ctx.events.within(self.ctx.today, int(n), list(types) or None))
+        return bool(self.ctx.events.within(self.ctx.today, self._count(n, "n", 0), list(types) or None))
 
     # values that are also callable with a symbol, e.g. price("QQQ")
     def f_price(self, symbol=None):

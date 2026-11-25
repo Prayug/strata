@@ -37,6 +37,9 @@ from strata.api.launch import launch_research
 from strata.api.results import load_run_result, load_trades
 from strata.data.store import MarketStore
 from strata.engine import expr as X
+from strata.research import hypothesis as HY
+from strata.research import ledger as LG
+from strata.research import reasoning as RQ
 from strata.research import stats as ST
 
 MAX_VARIANTS = 12
@@ -380,6 +383,8 @@ class Agent:
             from strata.ai.llm import active
             llm_factory = active
         self._llm_factory = llm_factory
+        import threading
+        self._tl = threading.local()  # the research session a call is acting for (trials are recorded against it)
 
     # ---- helpers
     def llm(self) -> tuple[LLM | None, str | None]:
@@ -399,6 +404,7 @@ class Agent:
         s = db.get_session(sid)
         if s is None:
             raise LookupError("session not found")
+        self._tl.sid = sid
         st = s.get("state") if isinstance(s.get("state"), dict) else {}
         s["state"] = st
         v = db.get_version(st["current"]) if st.get("current") else None
@@ -416,7 +422,7 @@ class Agent:
         n = int(s["state"].get("trials") or 0) + add
         if add:
             db.update_session(sid, state={**s["state"], "trials": n})
-        return n
+        return max(n, LG.count(sid))  # the ledger also holds configurations evaluated inside plans, maps and stress runs
 
     def _say(self, sid: str, text: str, kind: str = "text", **extra) -> dict:
         return db.add_message(sid, "assistant", kind, {"text": text, **extra})
@@ -478,10 +484,31 @@ class Agent:
 
     def _rules(self, text: str, current: Draft | None, known: list[str], last_field: str | None, default_symbol: str) -> dict:
         tick = list(dict.fromkeys(NL.TICKERS + [s for s in known if s.isupper()]))
+        low = text.lower().strip()
+        if re.search(r"\bchallenge\b|play devil'?s advocate|what could be wrong|poke holes|how could this be misleading|red[- ]team|be skeptical|critique this", low):
+            return {"action": "challenge"}
+        if re.search(r"execution (?:uncertainty|stress|risk|assumptions)|stress[- ]test (?:the )?(?:execution|fills)|realistic (?:execution|fills)|worse (?:execution|fills)|missed fills|partial fills|order delay", low):
+            return {"action": "stress"}
+        if re.search(r"(?:test|try|compare|which|what) .*option (?:structures?|positions?|strateg)|option structures?|calls? (?:versus|vs\.?|or) puts? on (?:this|that|these|those|it)|price (?:this|that|it) with options", low):
+            return {"action": "structures"}
+        rq = RQ.detect(text)
+        if rq and (current is not None or rq["tool"] in ("threshold_difference",)):
+            return {"action": "reason", **rq}
         if current is not None:
             r = RS.detect_followup(text, current, tick)
             if r:
                 return r
+        # broad market questions become a bounded research plan (the Hypothesis Lab) when there is enough history to split
+        if re.match(r"(?:please\s+)?(?:(?:investigate|research|study|examine|analy[sz]e|test|check|find out|determine|see)\s+(?:whether|if|how|what|why)|does|do|is|are|what|how|which|compare|hypothesis)\b", low) or "hypothesis" in low:
+            sym = RS._sym(text, tick, default_symbol)
+            plan = HY.build_plan(text, sym, self.store, known)
+            if plan is not None:
+                try:
+                    enough = self.store.read_daily(sym).height >= 750
+                except Exception:  # noqa: BLE001
+                    enough = False
+                if enough:
+                    return {"action": "hypothesis", "plan": plan}
         fresh = RS.detect_fresh(text, tick, default_symbol)
         if fresh:
             return fresh
@@ -513,6 +540,17 @@ class Agent:
     def _launch(self, d: Draft, compiled: dict, mode: str | None, label: str, interp: str = "", approvals: dict | None = None) -> dict:
         spec = build_spec(d, compiled, mode, approvals, label, interp)
         out = launch_research(self.jobs, spec, label)
+        sid = getattr(self._tl, "sid", None)
+        if sid:
+            try:  # every configuration that is run is a trial of this research session, whatever its result turns out to be
+                core = spec.get("study") if spec["kind"] == "study" else {"strategies": spec["backtest"].get("strategies"), "execution": spec["backtest"].get("execution"), "pricing": (spec["backtest"].get("pricing") or {}).get("mode")}
+                st_ = spec.get("study") or {}
+                # a study that can only be observed on intraday bars is tracked against the intraday holdout, everything else against the daily one
+                intraday = spec["kind"] == "study" and (st_.get("entry_time", "open") not in ("open", "close") or bool(st_.get("sequence")) or (st_.get("horizon") or {}).get("kind") == "time")
+                LG.record(sid, d.symbol + ("@intraday" if intraday else ""), [{"kind": d.carried.get("trial_kind") or ("study" if spec["kind"] == "study" else "backtest"), "key": d.carried.get("ledger_key") or LG.config_key(core),
+                                                                                                      "label": label, "run_id": out["id"], "start": d.start, "end": d.end}])
+            except Exception:  # noqa: BLE001  (bookkeeping must never block a run)
+                pass
         return {"run_id": out["id"], "mode": spec["mode"], "label": label, "cached": out["cached"], "approvals": approvals or {}}
 
     def _blockers(self, d: Draft, compiled: dict, exec_mode: str) -> tuple[str | None, list[str]]:
@@ -571,6 +609,8 @@ class Agent:
             lines.append(note)
         head = ("Updated the strategy" if d.kind == "options" else "Updated the study") if parent else ("Here is how I read that strategy" if d.kind == "options" else "Here is how I read that question")
         content = self._plan_content(d, compiled, v, parent, interp, diff, changed, runs, compare_with, state, head + ". " + " ".join(lines), mode)
+        if note:
+            content["note"] = note  # shown on the card itself: how this run relates to what came before it
         return [db.add_message(sid, "assistant", "plan", content)]
 
     def _plan_content(self, d: Draft, compiled: dict, v: dict, parent: dict | None, interp: str, diff: list, changed: list | None, runs: list, compare_with: list, state: str, text: str, mode: str | None) -> dict:
@@ -611,6 +651,8 @@ class Agent:
                                  [r for r in runs if r["run_id"] not in {x["run_id"] for x in c.get("resolved_runs", [])}][-1:] if state == "running" else c.get("runs", []),
                                  c.get("compare_with") or [], state, (c.get("text", "").split(" Running.")[0] + (" " + " ".join(lines) if state != "running" else " Running.")).strip(), mode or c.get("mode"))
         new["finalized"] = state != "running"
+        if c.get("note"):
+            new["note"] = c["note"]
         db.update_message(m["id"], new)
         return [db.get_message(m["id"])]
 
@@ -725,7 +767,7 @@ class Agent:
     def _discover(self, sid: str, spec: dict, interp: str, note: str | None) -> list[dict]:
         s, _, _ = self._state(sid)
         rid = db.create_run("discovery", ("Discovery: " + spec["question"])[:90], {"question": spec["question"], "symbol": spec["symbol"], "dims": spec["dims"], "configs": len(spec["configs"])})
-        self.jobs.submit(rid, "discovery", {"spec": spec})
+        self.jobs.submit(rid, "discovery", {"spec": spec, "scope": sid})
         if not s["state"].get("current"):
             db.update_session(sid, title=spec["question"][:70])
         self._trials(sid, len(spec["configs"]))
@@ -734,6 +776,249 @@ class Agent:
                "that no selection step looks at. Every configuration is recorded, including the ones that show nothing." + (" " + note if note else ""))
         return [db.add_message(sid, "assistant", "discovery", {"text": txt, "runs": [{"run_id": rid, "mode": "discovery", "label": "discovery"}], "hypothesis": spec["hypothesis"], "question": spec["question"],
                                                                "dims": spec["dims"], "tested": len(spec["configs"]), "not_explored": spec.get("not_explored") or [], "interpreter": interp, "finalized": False})]
+
+    # ---- the Hypothesis Lab
+    def _hypothesis(self, sid: str, plan: dict, interp: str, note: str | None) -> list[dict]:
+        s, _, _ = self._state(sid)
+        data = HY.describe_data(plan, self.store)
+        rid = db.create_run("hypothesis", ("Hypothesis: " + plan["question"])[:90], {"question": plan["question"], "symbol": plan["symbol"], "configs": len(plan["configs"]), "session": sid})
+        self.jobs.submit(rid, "hypothesis", {"plan": plan, "scope": sid})
+        if not s["state"].get("current"):
+            db.update_session(sid, title=plan["question"][:70])
+        hold = LG.state(sid, plan["symbol"])
+        pub = {k: v for k, v in plan.items() if k != "configs"}
+        pub["configs"] = [{k: c[k] for k in ("key", "family", "label", "tag", "x")} | {"outcome_text": HY.OutcomeSpec.load(c["outcome"]).text(), "basis": HY.basis_of(c)} for c in plan["configs"]]
+        txt = (f"Research plan: {len(plan['configs'])} explicitly listed configurations will be evaluated against their baselines - no more, and all of them will be reported. "
+               "Selection uses a training period, a validation period can only veto, and a final test period is scored once for whatever qualifies. "
+               f"{hold['configurations']} configuration{'s have' if hold['configurations'] != 1 else ' has'} been tested in this session so far; significance is corrected for all of them plus these." + (" " + note if note else ""))
+        return [db.add_message(sid, "assistant", "hypothesis", {"text": txt, "runs": [{"run_id": rid, "mode": "hypothesis", "label": "hypothesis"}], "plan": pub, "data": data, "question": plan["question"],
+                                                                "hypothesis": plan.get("hypothesis"), "interpreter": interp, "finalized": False})]
+
+    def select_hypothesis(self, sid: str, run_id: str, key: str, what: str = "study") -> list[dict]:
+        """Take one configuration of a finished plan further: as a full market study, or as a
+        set of option positions priced on observed premiums."""
+        self._state(sid)
+        run = db.get_run(run_id)
+        if run is None or run["kind"] != "hypothesis" or run["status"] != "done":
+            raise LookupError("plan result not found")
+        from strata.api.results import run_dir
+        res = json.loads((run_dir(run_id) / "hypothesis.json").read_text())
+        row = next((r for r in res["configs"] if r["key"] == key), None)
+        if row is None:
+            raise LookupError("configuration not found in this plan")
+        sym = res["symbol"]
+        preds = [HY.Pred.load(p) for p in row["preds"]]
+        oc = HY.OutcomeSpec.load(row["outcome"])
+        if what == "options":
+            return self._structures_for(sid, sym, row["preds"], row["outcome"], row["label"], f"{row['condition']} -> {row['outcome_text']}", key)
+        d = self._cell_draft(sym, preds, oc, f"{sym}: {row['condition']}", {"ledger_key": key, "from_plan": run_id})
+        out = [db.add_message(sid, "user", "text", {"text": f"Investigate further: {row['label']} ({row['outcome_text']})", "from_plan": run_id, "key": key})]
+        return out + self._propose(sid, d, None, False, "research plan", "This is the same configuration as in the plan, run session by session over the whole period, so it is not counted as a new hypothesis.")
+
+    @staticmethod
+    def _cell_draft(sym: str, preds: list, oc, title: str, carried: dict | None = None, start=None, end=None) -> Draft:
+        """A market-study draft that asks the session-by-session engine exactly what a feature-engine cell measured."""
+        if oc.direction == "either":
+            raise ValueError("a move in either direction has no single study; open its observations instead")
+        from strata.ai.draft import DraftCondition, DraftLevel, DraftStudy
+        sgn = 1.0 if oc.direction == "up" else -1.0
+        hk = "sessions" if oc.horizon.startswith("sessions:") else "time" if oc.horizon.startswith("time:") else "session"
+        return Draft(kind="study", symbol=sym, symbol_stated=True, title=title[:90], entry_time=oc.entry, conditions=[DraftCondition(expr=p.expr(sym, oc.entry), text=p.text(sym)) for p in preds],
+                     study=DraftStudy(target=None if oc.target is None else DraftLevel(kind="pct", value=sgn * oc.target), stop=None if oc.stop is None else DraftLevel(kind="pct", value=-sgn * oc.stop), measure=oc.measure,
+                                      direction=oc.direction, horizon_kind=hk, horizon_sessions=int(oc.horizon.split(":")[1]) if hk == "sessions" else 1, horizon_time=oc.horizon.split(":", 1)[1] if hk == "time" else "12:00"),
+                     carried=dict(carried or {}), start=start, end=end)
+
+    def propose_cell(self, sid: str, symbol: str, preds: list[dict], outcome: dict, label: str = "", prior_trials: int = 0, start=None, end=None) -> list[dict]:
+        """Open one cell of a sensitivity map or encyclopedia row as a full study in a notebook.
+        The cells looked at before choosing this one are carried over as trials: picking the
+        most interesting cell of a map is a selection, and the notebook's statistics allow for it."""
+        self._state(sid)
+        sym = symbol.upper()
+        ps = [HY.Pred.load(p) for p in preds]
+        oc = HY.OutcomeSpec.load(outcome)
+        from strata.research.features import cond_text
+        cond = cond_text(ps, sym)
+        d = self._cell_draft(sym, ps, oc, f"{sym}: {cond}", {"ledger_key": LG.config_key({"symbol": sym, "preds": [p.dump() for p in ps], "outcome": oc.dump()})}, start, end)
+        out = [db.add_message(sid, "user", "text", {"text": label or f"{sym}: when {cond}, how often does this follow: {oc.text()}?"})]
+        note = None
+        if prior_trials > 1:
+            LG.record(sid, sym, [{"kind": "sensitivity", "key": f"explorer-{i}", "label": "a cell viewed in the explorer before this one was chosen"} for i in range(int(min(prior_trials, 500)) - 1)])
+            note = f"This was picked from a map of {prior_trials} cells, so {prior_trials} configurations are counted as tried in this notebook."
+        return out + self._propose(sid, d, None, False, "explorer", note)
+
+    def _structures_for(self, sid: str, sym: str, preds: list[dict], outcome: dict, label: str, what: str, key: str | None) -> list[dict]:
+        try:
+            has_q = bool(self.store.option_days(sym, "quote"))
+        except Exception:  # noqa: BLE001
+            has_q = False
+        try:
+            has_t = not self.store.option_bar_index(sym).is_empty()
+        except Exception:  # noqa: BLE001
+            has_t = False
+        variants, notes = HY.structure_variants(sym, preds, outcome, has_q, has_t)
+        for x in variants:
+            x["draft"].carried = {**x["draft"].carried, "trial_kind": "option-structure"}  # the condition is fixed; only the option position varies
+        first = variants[0]["draft"]
+        s, _, _ = self._state(sid)
+        v = db.add_version(sid, None, ("Option structures: " + label)[:80], first.model_dump(mode="json"))
+        db.update_session(sid, state={**s["state"], "current": v["id"]})
+        plan = {"question": f"Which option position, if any, would have profited from: {what}?", "symbol": sym, "stage": "options",
+                "hypothesis": "If the pattern in the underlying is large enough to overcome option premiums, spreads and time decay, at least one of these positions shows a positive average on observed prices.",
+                "method": f"{len(variants)} option positions entered on exactly the same qualifying sessions and exited on the same schedule, priced only on observed option prices. Sessions without stored option prices are reported as not testable.",
+                "measure": "profit and loss per trade on observed option prices", "checks": ["sample", "costs", "paired"],
+                "interpretation_notes": notes + ["This is stage two. Stage one established how the UNDERLYING behaved; a real pattern there can still lose money here."], "from_plan_key": key}
+        pub = dict(plan)
+        pub["variants"] = [{"label": x["label"], "items": compile_draft(x["draft"], self.store, self._spot(sym))["items"], "kind": "options"} for x in variants]
+        out = [db.add_message(sid, "user", "text", {"text": f"Test option structures on: {label}"})]
+        res = self._variants(sid, v, [(x["label"], x["draft"], None) for x in variants], "structure", "the option structure", "research plan", None, kind="investigation", extra={"plan": pub})
+        if res and res[0]["kind"] == "investigation":
+            db.set_version_runs(v["id"], res[0]["content"]["runs"])
+            c = res[0]["content"]
+            c["text"] = f"Stage two - options profitability: {len(c['runs'])} option positions on the same qualifying sessions, priced on observed premiums only. " + " ".join(notes[:1])
+            db.update_message(res[0]["id"], c)
+            res = [db.get_message(res[0]["id"])]
+        return out + res
+
+    def _structures(self, sid: str, version: dict | None, cur: Draft | None, interp: str) -> list[dict]:
+        """Option structures for the study in focus (stage two of a hypothesis)."""
+        if cur is None or cur.kind != "study" or cur.study is None:
+            return [self._say(sid, "Option structures are tested on a market study: run a study (or pick a configuration of a research plan) first, then ask again.")]
+        st = cur.study
+        if cur.sequence or any(not re.fullmatch(r"[\w\s().,\"'<>=+\-*/%]+", c.expr) for c in cur.conditions):
+            return [self._say(sid, "This study starts from an event sequence, which the option-structure comparison does not carry over yet. Describe the option position you want on it and it will run on the same signals.")]
+        tgt = abs(st.target.value) if st.target is not None and st.target.kind == "pct" else None
+        stp = abs(st.stop.value) if st.stop is not None and st.stop.kind == "pct" else None
+        direction = st.direction or ("down" if st.target is not None and st.target.kind == "pct" and st.target.value < 0 else "up")
+        hz = f"sessions:{st.horizon_sessions}" if st.horizon_kind == "sessions" else f"time:{st.horizon_time}" if st.horizon_kind == "time" else "session"
+        outcome = {"entry": cur.entry_time or "open", "horizon": hz, "direction": direction, "target": tgt, "stop": stp, "measure": st.measure}
+        # the study's own rule-language conditions are reused verbatim
+        from strata.research.features import Pred
+        variants, notes = HY.structure_variants(cur.symbol, [], outcome, True, True)
+        for x in variants:
+            x["draft"].conditions = [c.model_copy() for c in cur.conditions]
+            x["draft"].weekdays = cur.weekdays
+            x["draft"].start, x["draft"].end = cur.start, cur.end
+            x["draft"].carried = {**x["draft"].carried, "trial_kind": "option-structure"}
+        del Pred
+        s, _, _ = self._state(sid)
+        v = db.add_version(sid, version["id"] if version else None, ("Option structures: " + (cur.title or cur.symbol))[:80], variants[0]["draft"].model_dump(mode="json"))
+        db.update_session(sid, state={**s["state"], "current": v["id"]})
+        plan = {"question": f"Which option position, if any, would have profited from \"{cur.title or 'this study'}\"?", "symbol": cur.symbol, "stage": "options",
+                "hypothesis": "If the pattern in the underlying is large enough to overcome option premiums, spreads and time decay, at least one of these positions shows a positive average on observed prices.",
+                "method": f"{len(variants)} option positions entered on the study's qualifying sessions, priced only on observed option prices.", "measure": "profit and loss per trade on observed option prices",
+                "checks": ["sample", "costs", "paired"], "interpretation_notes": notes + ["This is stage two. The study measured the UNDERLYING; a real pattern there can still lose money in options."]}
+        pub = dict(plan)
+        pub["variants"] = [{"label": x["label"], "items": compile_draft(x["draft"], self.store, self._spot(cur.symbol))["items"], "kind": "options"} for x in variants]
+        res = self._variants(sid, v, [(x["label"], x["draft"], None) for x in variants], "structure", "the option structure", interp, None, kind="investigation", extra={"plan": pub})
+        if res and res[0]["kind"] == "investigation":
+            db.set_version_runs(v["id"], res[0]["content"]["runs"])
+        return res
+
+    # ---- analyses that need their own job (stress ladder, adversarial review)
+    def _analysis_job(self, sid: str, version: dict | None, kind: str, run_id: str | None = None) -> list[dict]:
+        if run_id:
+            run = db.get_run(run_id)
+            if run is None or run["status"] != "done":
+                raise LookupError("run not found")
+            target, label = run, run.get("name") or run_id
+        else:
+            r, _res, err = self._need_result(sid, version)
+            if err:
+                return err
+            target, label = r["run"], r["label"]
+        if kind == "stress" and target["kind"] == "study":
+            return [self._say(sid, "A market study has no orders or fills, so there is no execution to stress. Test an option position on it first; the stress test then re-simulates that position under worse execution.")]
+        trials = max(1, self._trials(sid))
+        name = {"stress": "Execution stress: ", "challenge": "Challenge: "}[kind] + re.sub(r"^v[0-9]+ - ", "", label)
+        rid = db.create_run(kind, name[:90], {"target": target["id"], "session": sid, "trials": trials})
+        self.jobs.submit(rid, kind, {"target": target["id"], "scope": sid, "trials": trials})
+        txt = {"stress": "Re-simulating this strategy under an explicit ladder of worse execution assumptions: slippage, order delay, older prices, minimum volume, participation limits and missed fills. Every row decides entries, exits and fills again.",
+               "challenge": "Reviewing this result as a sceptic: looking for look-ahead, selection effects, thin samples, clustering, optimistic fills, fragile parameters and a fair benchmark, and running the tests that can settle each one."}[kind]
+        return [db.add_message(sid, "assistant", kind, {"text": txt, "runs": [{"run_id": rid, "mode": kind, "label": name[:90]}], "target": target["id"], "target_label": label, "finalized": False})]
+
+    def _session_runs(self, sid: str) -> list[dict]:
+        """Every finished study / backtest of the session, oldest first."""
+        seen, out = set(), []
+        for m in db.list_messages(sid):
+            c = m["content"] if isinstance(m["content"], dict) else {}
+            for r in (c.get("runs") or []):
+                if r["run_id"] in seen:
+                    continue
+                run = db.get_run(r["run_id"])
+                if run and run["status"] == "done" and run["kind"] in ("study", "backtest") and (run.get("summary") or {}).get("outcome", "completed") == "completed":
+                    seen.add(r["run_id"])
+                    out.append({"run_id": r["run_id"], "label": re.sub(r"^v[0-9]+ - ", "", r.get("label") or run.get("name") or ""), "kind": run["kind"], "run": run})
+        return out
+
+    def _stress_of(self, run_id: str) -> dict | None:
+        """The latest finished stress result that refers to a run, if any."""
+        from strata.api.results import run_dir
+        for kind, fn, key in (("stress", "execution.json", None), ("challenge", "challenge.json", "stress")):
+            for r in db.runs_targeting(run_id, (kind,)):
+                p = run_dir(r["id"]) / fn
+                if r["status"] == "done" and p.exists():
+                    d = json.loads(p.read_text())
+                    d = d.get(key) if key else d
+                    if d:
+                        return d
+        return None
+
+    def _reason(self, sid: str, version: dict | None, r: dict, text: str) -> list[dict]:
+        tool = r["tool"]
+        runs = self._session_runs(sid)
+        cur_r, cur_res = self._latest(version)
+        if cur_r is None and runs:
+            cur_r = runs[-1]
+            cur_res = load_run_result(cur_r["run"])
+        if cur_r is None:
+            return [self._say(sid, "There is no finished result in this conversation to reason about yet. Run a study or a strategy first.")]
+        run = cur_r["run"]
+        is_study = run["kind"] == "study"
+        trades = None if is_study else load_trades(run["id"])
+        label = re.sub(r"^v[0-9]+ - ", "", cur_r.get("label") or "")
+        ref = [run["id"]]
+        if tool == "subperiod":
+            out = RQ.subperiod(cur_res, trades, r.get("split") or "2020")
+        elif tool == "threshold_difference":
+            nums = re.findall(r"(\d+(?:\.\d+)?)\s*%", text)
+            studies = [x for x in runs if x["kind"] == "study"]
+            pick = []
+            for nmb in nums[:2]:
+                hit = next((x for x in reversed(studies) if re.search(rf"(?<![\d.]){re.escape(nmb)}(?:\.0)?\s*%", x["label"]) and x not in pick), None)
+                if hit:
+                    pick.append(hit)
+            if len(pick) < 2:
+                pick = studies[-2:]
+            if len(pick) < 2:
+                return [self._say(sid, "That comparison needs two finished market studies in this conversation (for example the 2% and the 3% version). Run both, then ask again.")]
+            ref = [pick[0]["run_id"], pick[1]["run_id"]]
+            out = RQ.threshold_difference(load_run_result(pick[0]["run"]), load_run_result(pick[1]["run"]), pick[0]["label"], pick[1]["label"])
+        elif tool == "cost_survival":
+            out = RQ.cost_survival(cur_res, trades, None if is_study else self._stress_of(run["id"]))
+        elif tool == "concentration":
+            out = RQ.concentration(cur_res, trades)
+        elif tool == "volatility_explained":
+            out = RQ.volatility_explained(cur_res, trades, self.store)
+        elif tool == "assumption_impact":
+            out = RQ.assumption_impact(cur_res, trades, None if is_study else self._stress_of(run["id"]), self.store)
+            if out.get("variants"):
+                self._trials(sid, 0)
+                LG.record(sid, cur_res.get("symbol") or "", [{"kind": "sensitivity", "key": LG.config_key({"of": run["id"], "variant": row["change"]}), "label": row["change"], "run_id": run["id"]} for row in out["tables"][0]["rows"]])
+            if out.get("needs") == "stress":
+                return [self._say(sid, out["answer"])] + self._analysis_job(sid, version, "stress", run["id"])
+        elif tool == "suspicious":
+            out = RQ.suspicious(cur_res, trades)
+        elif tool == "benchmarks":
+            out = RQ.benchmarks(cur_res, trades)
+        else:  # options_vs_underlying
+            st_ = next((x for x in reversed(runs) if x["kind"] == "study"), None)
+            bt_ = next((x for x in reversed(runs) if x["kind"] == "backtest"), None)
+            if st_ is None or bt_ is None:
+                return [self._say(sid, "Explaining why an option position differs from the underlying's behaviour needs both a market study and an option backtest of the same idea in this conversation.")]
+            ref = [st_["run_id"], bt_["run_id"]]
+            out = RQ.options_vs_underlying(load_run_result(st_["run"]), load_run_result(bt_["run"]), load_trades(bt_["run_id"]))
+        return [db.add_message(sid, "assistant", "result", {"view": "analysis", "tool": tool, "run_id": ref[0], "run_ids": ref, "label": label, "version_id": version["id"] if version else None, "mode": "study" if is_study else (run.get("summary") or {}).get("mode"),
+                                                            "text": out["answer"], "analysis": out, "explanation_source": "deterministic", "caveats": out.get("limits") or []})]
 
     # ---- analyses of an existing result (no new runs)
     def _need_result(self, sid: str, version: dict | None):
@@ -867,6 +1152,16 @@ class Agent:
             if r.get("sweep"):
                 _, v2, d2 = self._state(sid)
                 out += self._sweep(sid, v2, d2, r["sweep"]["field"], r["sweep"]["values"], interp, None)
+        elif act == "hypothesis":
+            out += self._hypothesis(sid, r["plan"], interp, note)
+        elif act == "reason":
+            out += self._reason(sid, version, r, text)
+        elif act == "challenge":
+            out += self._analysis_job(sid, version, "challenge")
+        elif act == "stress":
+            out += self._analysis_job(sid, version, "stress")
+        elif act == "structures":
+            out += self._structures(sid, version, cur, interp)
         elif act == "investigate":
             out += self._investigate(sid, r["plan"], interp, note)
         elif act == "discover":
@@ -969,6 +1264,7 @@ class Agent:
         v = db.get_version(version_id)
         if v is None or v["session_id"] != sid or mode not in MODE_LABEL:
             raise LookupError("version not found")
+        self._tl.sid = sid
         d = Draft.model_validate(v["draft"])
         compiled = compile_draft(d, self.store, self._spot(d.symbol))
         if compiled["errors"]:
@@ -1036,11 +1332,15 @@ class Agent:
         llm, _ = self.llm()
         for m in db.list_messages(sid):
             c = m["content"] if isinstance(m["content"], dict) else {}
-            if m["kind"] not in ("plan", "sweep", "run", "investigation", "discovery") or c.get("finalized") or not c.get("runs"):
+            if m["kind"] not in ("plan", "sweep", "run", "investigation", "discovery", "hypothesis", "stress", "challenge") or c.get("finalized") or not c.get("runs"):
                 continue
             refs = list(c.get("compare_with") or []) + list(c["runs"])
             runs = {r["run_id"]: db.get_run(r["run_id"]) for r in refs}
             if any(x is None or x["status"] not in TERMINAL for x in runs.values()):
+                continue
+            if m["kind"] in ("hypothesis", "stress", "challenge"):
+                out.append(db.add_message(sid, "assistant", "result", self._finalize_analysis(m["kind"], c, runs[c["runs"][0]["run_id"]], m["id"])))
+                db.update_message(m["id"], {**c, "finalized": True})
                 continue
             entries, failed, decisions = [], [], []
             for r in refs:
@@ -1117,10 +1417,50 @@ class Agent:
             db.update_message(m["id"], {**c, "finalized": True, **({"state": "done"} if m["kind"] == "plan" else {})})
         return out
 
+    def _finalize_analysis(self, kind: str, c: dict, run: dict, mid: int) -> dict:
+        from strata.api.results import run_dir
+        base = {"source_message": mid, "run_id": run["id"], "explanation_source": "deterministic", "failed": []}
+        if run["status"] != "done":
+            return {**base, "view": "failed", "text": {"hypothesis": "The research plan", "stress": "The execution stress test", "challenge": "The review"}[kind] + " did not finish: " + ((run.get("error") or run.get("message") or run["status"]).split("\n")[0][:300])}
+        fn = {"hypothesis": "hypothesis.json", "stress": "execution.json", "challenge": "challenge.json"}[kind]
+        res = json.loads((run_dir(run["id"]) / fn).read_text())
+        if kind == "hypothesis":
+            ok = [r for r in res["configs"] if r["status"] == "ok"]
+            cands = [r for r in ok if r["key"] in res["candidates"]]
+            conf = [r for r in ok if r["key"] in res["confirmed"]]
+            lines = [f"{res['tested']} configurations were evaluated ({res['evaluable']} had the data they need); {len(cands)} qualified as candidate{'s' if len(cands) != 1 else ''} and {len(conf)} {'was' if len(conf) == 1 else 'were'} confirmed on the final test period."]
+            for r in (conf or cands)[:3]:
+                tr, te = r["train"], r.get("test") or {}
+                lines.append(f"{'Confirmed' if r in conf else r['status_label'].capitalize()}: when {r['condition']}, {HY.OutcomeSpec.load(r['outcome']).text()} happened on {tr['probability'] * 100:.1f}% of {tr['n']} training sessions against "
+                             f"{tr['baseline_probability'] * 100:.1f}% on all evaluated sessions" + (f"; {te['probability'] * 100:.1f}% of {te['n']} in the final test period." if te.get("probability") is not None else "."))
+            if not cands:
+                why: dict[str, int] = {}
+                for r in ok:
+                    for x in r.get("rejected_because", [])[:1]:
+                        k = re.sub(r"\d+", "#", x)
+                        why[k] = why.get(k, 0) + 1
+                top = sorted(why.items(), key=lambda kv: -kv[1])[:2]
+                lines.append("Nothing qualified. Most common reasons: " + "; ".join(f"{k} ({v})" for k, v in top) + "." if top else "Nothing qualified.")
+            lines.append("These describe the underlying's behaviour. Whether an option position would have profited is a separate test on observed premiums.")
+            if res.get("contaminated"):
+                lines.append(LG.holdout_note(res["contaminated"]))
+            return {**base, "view": "hypothesis", "mode": "hypothesis", "text": " ".join(lines), "caveats": res["notes"], "question": res["question"], "hypothesis": res.get("hypothesis"), "label": res["question"][:80],
+                    "summary": {"tested": res["tested"], "evaluable": res["evaluable"], "candidates": len(cands), "confirmed": len(conf), "session_trials": res["trials"]["session"], "funnel": res["funnel"]},
+                    "candidates": [{"key": r["key"], "label": r["label"], "outcome_text": r["outcome_text"], "status_label": r["status_label"], "grade": r.get("grade"), "basis": r["basis"], "options_cover": r.get("options_cover")} for r in cands]}
+        if kind == "stress":
+            s_ = res["summary"]
+            txt = " ".join(res["notes"][:3])
+            return {**base, "view": "execution", "mode": "stress", "text": txt, "caveats": res["notes"], "target": c.get("target"), "label": c["runs"][0]["label"], "summary": s_,
+                    "rows": [{k: r.get(k) for k in ("id", "group", "label", "status", "trades", "missed", "net_pnl", "expectancy", "note")} for r in res["rows"]]}
+        return {**base, "view": "challenge", "mode": "challenge", "text": res["verdict"], "caveats": res["notes"], "target": c.get("target"), "label": c["runs"][0]["label"], "counts": res["counts"],
+                "findings": [{k: f[k] for k in ("topic", "name", "severity", "title")} for f in res["findings"]]}
+
     def payload(self, sid: str) -> dict:
         s, v, _ = self._state(sid)
+        syms = sorted({(m["content"].get("plan") or {}).get("symbol") or (m["content"].get("draft") or {}).get("symbol") or "" for m in db.list_messages(sid) if isinstance(m["content"], dict)} - {""})
         return {"session": s, "messages": db.list_messages(sid), "versions": db.list_versions(sid), "current_version": v["id"] if v else None,
-                "exec_mode": s["state"].get("exec_mode", "quick"), "trials": int(s["state"].get("trials") or 0), "pinned": s["state"].get("pinned", [])}
+                "exec_mode": s["state"].get("exec_mode", "quick"), "trials": max(int(s["state"].get("trials") or 0), LG.count(sid)), "pinned": s["state"].get("pinned", []),
+                "ledger": {"summary": LG.summary(sid), "holdouts": [h for sym in syms for h in (LG.state(sid, sym)["holdout"], LG.state(sid, sym + "@intraday")["holdout"]) if h]}}
 
 
 def _settled(q: dict, old: Draft | None, new: Draft) -> bool:

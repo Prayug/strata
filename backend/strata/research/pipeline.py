@@ -43,6 +43,9 @@ MODE_LABEL = {"study": "Historical market study", "historical": "Historical opti
 SHORTFALL_TOLERANCE = 0.02
 
 
+MAX_EXPANSIONS = 3  # adaptive contract discovery: how many times a strike range may be widened for one run
+
+
 def offline() -> bool:
     """STRATA_OFFLINE=1 turns every automatic download off (used by tests and air-gapped installs)."""
     import os
@@ -314,11 +317,52 @@ class Pipeline:
         cfg = BacktestConfig.model_validate(_bt_cfg(spec, a, b, mode))
         prog = (lambda i, n, d: self.sub("simulate")(i / max(n, 1), f"session {d} ({i}/{n})"))
         res = run_backtest(cfg, store, progress=prog, should_cancel=self.should_cancel)
-        self.stage("simulate", "done", f"{len(res.trades):,} trades from {res.diagnostics['signals']:,} signals in the simulated window")
+        adaptive = {"rounds": 0, "widened_sessions": [], "resolved": 0, "remaining": 0, "stopped": None}
+        if mode == "trades":
+            # adaptive contract discovery: if a filled selection sits on the outermost stored strike, the contract the
+            # rule wanted may be outside the downloaded band - widen it for those sessions and simulate again
+            src_name = (acq or {}).get("ran", {}).get("source") if isinstance((acq or {}).get("ran"), dict) else None
+            src_name = src_name or (opt_cov.get("dataset") or "").split("/")[0] or None
+            widen: dict = {}
+            first_edge = None
+            while adaptive["rounds"] < MAX_EXPANSIONS:
+                cs = res.meta.get("contract_selection") or {}
+                edge = [date.fromisoformat(x) for x in cs.get("edge_dates") or []]
+                if first_edge is None:
+                    first_edge = len(edge)
+                if not edge:
+                    break
+                if approvals.get("no_download") or not src_name:
+                    adaptive["stopped"] = "downloads are off, so the strike range could not be widened"
+                    break
+                for d_ in edge:
+                    widen[d_] = widen.get(d_, 0) + 1
+                self.stage("simulate", "running", f"{len(edge)} selection(s) sit on the edge of the downloaded strikes: widening the range and simulating again")
+                try:
+                    r2 = P.acquire_trades(store, req, [s for s in signals if s["date"] in set(edge)], src_name, None, self.should_cancel, True, widen)
+                except Exception as e:  # noqa: BLE001
+                    adaptive["stopped"] = f"the wider range could not be downloaded: {str(e)[:160]}"
+                    break
+                adaptive["rounds"] += 1
+                adaptive["widened_sessions"] = sorted({x.isoformat() for x in widen})
+                got = (r2.get("result") or {})
+                self.downloads.append({"source": src_name, "label": src_name, "dataset": "option_trades", "symbols": [req["symbol"]], "tier": "free", "cost": 0.0,
+                                       "why": f"adaptive strike range: {len(edge)} session(s) widened (round {adaptive['rounds']})", "result": {k: got.get(k) for k in ("pairs_requested", "pairs_cached", "pairs_ok", "pairs_empty", "bars", "requests")}})
+                if not (got.get("pairs_ok") or got.get("pairs_empty")):
+                    adaptive["stopped"] = "no further strikes are available from the source"
+                    break
+                res = run_backtest(cfg, store, progress=prog, should_cancel=self.should_cancel)
+            left = len((res.meta.get("contract_selection") or {}).get("edge_dates") or [])
+            adaptive.update(remaining=left, resolved=max(0, (first_edge or 0) - left), first_edge=first_edge or 0)
+            if left and not adaptive["stopped"]:
+                adaptive["stopped"] = f"still on the edge after {MAX_EXPANSIONS} widenings"
+        record["contract_selection"] = {**(res.meta.get("contract_selection") or {}), "adaptive": adaptive}
+        self.stage("simulate", "done", f"{len(res.trades):,} trades from {res.diagnostics['signals']:,} signals in the simulated window"
+                   + (f"; strike range widened for {len(adaptive['widened_sessions'])} session(s)" if adaptive["rounds"] else ""))
         self.stage("report", "running", "computing analytics")
         record["simulated"] = {"window": [a.isoformat(), b.isoformat()], "signals": res.diagnostics["signals"], "trades": len(res.trades), "executability": res.meta.get("executability")}
         record["skipped_signals"] = _skipped(signals, res, a, b, opt_cov, mode)
-        summary = save_backtest(self.rid, res, extra={"coverage": record, "pipeline": self.stages, "cost_sensitivity": cost_sensitivity(res)})
+        summary = save_backtest(self.rid, res, extra={"coverage": record, "pipeline": self.stages, "cost_sensitivity": cost_sensitivity(res), "contract_selection": record["contract_selection"]})
         self.stage("report", "done", "ready")
         self._write("completed")
         return {**summary, "outcome": "completed", "mode": mode, "research": True, "downloads": len(self.downloads), "qualifying": k, "executable": record["executable"]["signals"]}

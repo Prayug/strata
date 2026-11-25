@@ -62,7 +62,62 @@ def execute(rid: str, kind: str, payload: dict, progress, should_cancel) -> dict
         return run_pipeline(rid, payload["spec"], progress, should_cancel)
     if kind == "discovery":
         from strata.research.discovery import run_discovery, save_discovery
-        return save_discovery(rid, run_discovery(payload["spec"], progress=progress, should_cancel=should_cancel))
+        return save_discovery(rid, run_discovery(payload["spec"], progress=progress, should_cancel=should_cancel, scope=payload.get("scope"), run_id=rid))
+    if kind == "hypothesis":
+        from strata.research.hypothesis import run_plan, save_plan_result
+        return save_plan_result(rid, run_plan(payload["plan"], scope=payload.get("scope"), progress=progress, should_cancel=should_cancel, run_id=rid))
+    if kind in ("stress", "challenge", "sensitivity"):
+        from strata.api.results import load_run_result, load_trades
+        from strata.data.store import MarketStore
+        target = db.get_run(payload["target"])
+        if target is None:
+            raise LookupError("the run this analysis refers to no longer exists")
+        res = load_run_result(target)
+        store = MarketStore()
+        data_dir = str(get_settings().data_dir)
+        if kind == "stress":
+            from strata.research import execution as EX
+            ctx = EX.context_for(target, res, store)
+            out = EX.run_stress(ctx["config"], data_dir, ctx["quotes_available"], ctx["eod"], progress=progress, should_cancel=should_cancel)
+            out["target"] = target["id"]
+            return EX.save_stress(rid, out)
+        if kind == "challenge":
+            from strata.research import challenge as CH
+            from strata.research import ledger as LG
+            trades = None if target["kind"] == "study" or res.get("kind") == "study" else load_trades(target["id"])
+            hold = None
+            if payload.get("scope"):
+                sym = (res.get("symbol") or ((res.get("config") or {}).get("strategies") or [{}])[0].get("symbol") or "").upper()
+                hold = LG.current(payload["scope"], sym) if sym else None
+            out = CH.run_challenge(target, res, trades, store, data_dir, int(payload.get("trials") or 1), hold, progress, should_cancel)
+            return CH.save_challenge(rid, out)
+        from strata.research import ledger as LG
+        from strata.research import sensitivity as SN
+        cfg = res.get("config")
+        if not cfg or "strategies" not in cfg:
+            raise ValueError("an option sensitivity map needs a finished option backtest")
+        out = SN.option_map(cfg, payload["spec"], data_dir, progress, should_cancel)
+        out["target"] = target["id"]
+        if payload.get("scope"):
+            sym = cfg["strategies"][0]["symbol"]
+            LG.record(payload["scope"], sym, [{"kind": "sensitivity", "key": LG.config_key(c["config"]), "label": f"{out['title']}: {c['x']} / {c['y']}", "run_id": rid, "start": cfg.get("start"), "end": cfg.get("end"),
+                                              "metric": "expectancy", "value": c.get("expectancy"), "n": c.get("trades")} for c in out["cells"] if c["status"] == "ok"], family=out["title"])
+        d = run_dir(rid)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "sensitivity.json").write_text(dumps(out))
+        return {"sensitivity": True, "cells": len(out["cells"]), "thin": out["summary"]["thin"], "target": target["id"], "title": out["title"]}
+    if kind == "collector":
+        from strata.collector.service import run_once
+        return run_once(progress=progress, should_cancel=should_cancel, trigger=payload.get("trigger", "manual"))
+    if kind == "provider_benchmark":
+        from strata.data.providers.bench import benchmark_source
+        return benchmark_source(payload["source"], progress=progress, should_cancel=should_cancel)
+    if kind == "bulk_import":
+        from strata.data.bulk import import_path
+        out = import_path(payload["path"], symbol=payload.get("symbol"), fmt=payload.get("format"), tz=payload.get("tz", "America/New_York"), provider=payload.get("provider") or "import", progress=progress, should_cancel=should_cancel)
+        from strata.data.catalog import invalidate
+        invalidate()
+        return out
     if kind == "study":
         from strata.api.results import save_study
         from strata.research.study import run_study

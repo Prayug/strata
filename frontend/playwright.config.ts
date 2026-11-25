@@ -14,6 +14,7 @@ const backend = path.resolve(__dirname, "../backend");
 const venv = path.join(backend, ".venv/bin/python");
 const python = process.env.STRATA_PYTHON || (fs.existsSync(venv) ? venv : "python");
 const dataDir = process.env.E2E_DATA_DIR || fs.mkdtempSync(path.join(os.tmpdir(), "strata-e2e-"));
+process.env.E2E_DATA_DIR = dataDir; // test workers inherit it, so a test can point the app at a fixture file in that directory
 
 export default defineConfig({
   testDir: "./e2e",

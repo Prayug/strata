@@ -100,7 +100,19 @@ def study_block(res: dict, start: str | None = None, end: str | None = None) -> 
     signal = (res.get("config") or {}).get("entry_time") == "signal" or bool((res.get("config") or {}).get("sequence"))
     # condition sessions against all other evaluated sessions (for a signal-timed study the baseline is measured
     # from the open on every session, so the two samples are compared as they are)
-    pval = two_prop_p(k, n, bk, bn) if signal else two_prop_p(k, n, bk - k, bn - n) if bn - n > 0 else None
+    p_iid = two_prop_p(k, n, bk, bn) if signal else two_prop_p(k, n, bk - k, bn - n) if bn - n > 0 else None
+    pval, clusters, deff = p_iid, None, None
+    if n >= 10 and pairs:
+        # Observations in the same week are not independent draws (large moves cluster), so the test resamples whole
+        # calendar weeks. The larger of the two p-values is used: clustering may weaken the evidence, never strengthen it.
+        from strata.research import robust as R
+        qd = [r["date"] for r in rows if r["outcome"] != "ambiguous"]
+        qset = set(qd)
+        rest = [(d, o) for d, o in pairs if o != "a" and (signal or d not in qset)]
+        lt = R.lift_test([1.0 if r["outcome"] == "target" else 0.0 for r in rows if r["outcome"] != "ambiguous"], qd, [1.0 if o == "t" else 0.0 for _, o in rest], [d for d, _ in rest], "week", 400)
+        clusters, deff = lt["cond_clusters"], lt.get("design_effect")
+        if lt["p_value"] is not None and p_iid is not None:
+            pval = max(p_iid, lt["p_value"])
     ends = [r["end_return_pct"] for r in rows]
     # direction check: do qualifying sessions END higher than the others, or do they merely have wider ranges?
     b_end = base.get("end_returns") or []
@@ -108,7 +120,7 @@ def study_block(res: dict, start: str | None = None, end: str | None = None) -> 
     rest_end = [e for (d, _), e in zip(zip(base["dates"], base["outcomes"]), b_end) if (start is None or d >= start) and (end is None or d <= end) and d not in cond_dates] if b_end else []
     dt = diff_test(ends, rest_end) if rest_end else {"p_value": None, "mean_b": None}
     return {"start": start, "end": end, "n": n, "hits": k, "probability": k / n if n else None, "ci95": wilson(k, n), "baseline_n": bn, "baseline_probability": bk / bn if bn else None,
-            "lift": (k / n - bk / bn) if n and bn else None, "p_value": pval, "avg_end_return_pct": float(np.mean(ends)) if ends else None, "sessions": len(rows),
+            "lift": (k / n - bk / bn) if n and bn else None, "p_value": pval, "p_independent": p_iid, "weeks": clusters, "design_effect": deff, "avg_end_return_pct": float(np.mean(ends)) if ends else None, "sessions": len(rows),
             "other_sessions_avg_end_return_pct": dt["mean_b"], "end_return_diff_pct": (float(np.mean(ends)) - dt["mean_b"]) if ends and dt["mean_b"] is not None else None, "end_return_p_value": dt["p_value"]}
 
 
@@ -133,10 +145,12 @@ def study_robustness(res: dict, trials: int = 1) -> dict:
     adj = bonferroni(full["p_value"], trials)
     checks = []
     n = full["n"]
-    checks.append({"name": "Sample size", "ok": n >= 30, "detail": f"{n} qualifying sessions" + ("" if n >= 30 else " - fewer than 30, so any estimate is fragile")})
+    wk = full.get("weeks")
+    checks.append({"name": "Sample size", "ok": n >= 30 and (wk is None or wk >= 12), "detail": f"{n} qualifying sessions" + (f" in {wk} separate weeks" if wk else "")
+                   + ("" if n >= 30 else " - fewer than 30, so any estimate is fragile") + (" - too few separate weeks to treat them as independent observations" if wk is not None and wk < 12 and n >= 30 else "")})
     if full["p_value"] is not None:
         checks.append({"name": "Different from the baseline", "ok": adj is not None and adj < 0.05,
-                       "detail": f"p = {full['p_value']:.4f} against all other sessions" + (f"; {adj:.4f} after allowing for the {trials} configurations tested in this session (Bonferroni)" if trials > 1 else "")})
+                       "detail": f"p = {full['p_value']:.4f} against all other sessions, with whole weeks resampled" + (f" (treating sessions as independent would give {full['p_independent']:.4f})" if full.get("p_independent") is not None and abs(full["p_independent"] - full["p_value"]) > 1e-4 else "") + (f"; {adj:.4f} after allowing for the {trials} configurations tested in this session (Bonferroni)" if trials > 1 else "")})
     if oos and ins and oos["n"] and ins["n"] and oos["lift"] is not None and ins["lift"] is not None:
         same = (oos["lift"] > 0) == (ins["lift"] > 0)
         checks.append({"name": "Holds in later data", "ok": same and oos["n"] >= 10,

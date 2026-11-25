@@ -45,7 +45,14 @@ async def lifespan(app: FastAPI):
     jobs.loop = asyncio.get_running_loop()
     if n:
         print(f"[strata] marked {n} interrupted runs as error")
+    sched = None
+    if __import__("os").environ.get("STRATA_COLLECTOR", "1") != "0":
+        from strata.collector.service import Scheduler
+        sched = Scheduler(jobs)  # does nothing unless the collector is switched on in its settings
+        sched.start()
     yield
+    if sched is not None:
+        sched.stop()
 
 
 app = FastAPI(title="Strata API", version=ENGINE_VERSION, lifespan=lifespan,
@@ -82,6 +89,10 @@ async def remote_access_guard(request: Request, call_next):
 from strata.api.research_api import router as research_router  # noqa: E402
 
 app.include_router(research_router)
+
+from strata.api.v4_api import router as v4_router  # noqa: E402
+
+app.include_router(v4_router)
 
 
 def J(o) -> JSONResponse:
@@ -560,11 +571,12 @@ def ai_meta():
     from strata.api.settings import get_setting
     groups = [
         {"title": "Ask a market question", "items": ["How often does SPY rise 1% after a 3% down day?", "How often does SPY touch yesterday's high before touching yesterday's low?", "Does the first 15-minute candle predict the rest of the trading session?"]},
-        {"title": "Investigate a hypothesis", "items": ["Find out whether SPY tends to reverse after large down days.", "Investigate mean reversion after unusually large SPY declines.", "Compare opening calls, puts, and waiting 30 minutes after a 2% overnight gap."]},
+        {"title": "Investigate a hypothesis", "items": ["Investigate whether SPY tends to reverse following large down days.", "What historical conditions are associated with a 1% rally before a 0.5% decline?",
+                                                       "Compare mean reversion and momentum after overnight gaps."]},
         {"title": "Describe a strategy", "items": ["Wait until SPY drops 0.5% from the open, then buy calls when it recovers half of that decline.", "Buy a 30DTE ATM SPY call at the close after a 2% down day and hold for 5 days",
                                                    "Enter calls when SPY breaks yesterday's high, but only if QQQ hasn't broken its own high."]},
     ]
-    follow = ["Compare that with 2% and 4% down days", "What time of day does it usually hit the target?", "Show every qualifying historical session", "Test ATM 0DTE calls on those days using historical option trade prices",
+    follow = ["Challenge this result", "How much of the result is explained by volatility?", "Compare that with 2% and 4% down days", "What time of day does it usually hit the target?", "Show every qualifying historical session", "Test ATM 0DTE calls on those days using historical option trade prices",
               "Include commissions and conservative slippage", "Show me every skipped signal and why", "Is this statistically significant?", "Test whether the results hold up out of sample", "Export the complete research report"]
     return J({"examples": EXAMPLES, "example_groups": groups, "followups": follow, "sweep_fields": SWEEP_FIELDS, "llm": status(), "default_symbol": _default_symbol(), "exec_mode": get_setting("ai.exec_mode") or "quick"})
 

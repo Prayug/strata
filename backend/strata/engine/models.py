@@ -274,6 +274,9 @@ class Execution(BaseModel):
     max_fill_delay_minutes: float = Field(5.0, ge=0)
     trade_bar_slippage_pct: float = Field(0.0, ge=0)  # only for trade-print (no-quote) option data: % of the print, against you
     max_trade_age_seconds: int = Field(300, ge=60)  # trade-bar pricing: a print older than this is stale and is not used for a fill
+    # --- execution stress assumptions (0 = off). Explicit, never inferred from the data:
+    extra_slippage_pct: float = Field(0.0, ge=0)  # every option fill this % worse than the quote/print it was priced from
+    multi_leg_extra_pct: float = Field(0.0, ge=0)  # additional % against you on each leg of a position with two or more option legs (legs do not fill together)
     early_assignment: bool = True
     assignment_extrinsic_threshold: float = 0.05
     physical_settlement: Literal["close_next_open", "intrinsic"] = "close_next_open"

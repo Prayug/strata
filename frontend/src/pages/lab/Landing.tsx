@@ -1,6 +1,6 @@
 /* The AI Lab's front page: a prominent composer, example prompts grouped by intent, and the saved research notebooks. */
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUp, BookOpen, Cpu, Database, FlaskConical, Loader2, Search, Sparkles, Trash2 } from "lucide-react";
+import { ArrowUp, BookOpen, BookOpenText, Cpu, Database, FlaskConical, Grid3x3, ListChecks, Loader2, Search, Sparkles, Trash2 } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -125,7 +125,19 @@ export function Landing() {
           <span>Nothing is simulated, and no paid data is ever fetched without your approval.</span>
         </div>
 
-        <div className="mt-10 grid gap-4 md:grid-cols-3">
+        <div className="mt-7 grid gap-3 md:grid-cols-3" data-testid="start-points">
+          {([
+            [ListChecks, "Investigate a hypothesis", "A broad question becomes a bounded plan: every configuration listed before it runs, a final test period kept untouched.", () => comp.current?.set("Investigate whether SPY tends to reverse following large down days.")],
+            [BookOpenText, "Browse market behaviour", "Reproducible studies of gaps, opening ranges, streaks and volatility, computed on your stored data.", () => nav("/encyclopedia")],
+            [Grid3x3, "Explore sensitivity", "See a result across two assumptions at once, with thin samples and stable regions marked.", () => nav("/sensitivity")],
+          ] as const).map(([I, t, d, go]) => (
+            <button key={t} onClick={go} className="card flex items-start gap-3 px-4 py-3 text-left transition-colors hover:border-accent/60">
+              <I className="mt-0.5 size-[18px] shrink-0 text-accent" /><span><span className="block text-[13.5px] font-medium">{t}</span><span className="mt-0.5 block text-xs dim">{d}</span></span>
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-8 grid gap-4 md:grid-cols-3">
           {groups.map((g, gi) => {
             const I = icons[gi % 3];
             return (

@@ -123,6 +123,70 @@ def cmd_import(a):
     print(import_file(a.file, a.kind, a.symbol, tz=a.tz))
 
 
+def cmd_bulk_import(a):
+    from strata.data import bulk
+    info = bulk.inspect(a.path)
+    for f in info["files"][:20]:
+        print(f"  {f['label']:60s} {f['path']}")
+    for f in info["unrecognised"][:10]:
+        print(f"  not recognised: {f['path']}  columns: {', '.join(f['columns'][:8])}")
+    if a.inspect or not info["files"]:
+        return
+    rep = bulk.import_path(a.path, symbol=a.symbol, fmt=a.format, tz=a.tz, provider=a.provider, progress=lambda f, m: print(f"\r  {f:5.1%} {m[:70]:70s}", end="", flush=True))
+    print(f"\n{rep['rows_written']:,} rows written in {rep['sessions']} option sessions for {', '.join(rep['symbols'])}; at most {rep['peak_rows_in_memory']:,} rows were held in memory")
+    for k, v in rep["rejected"].items():
+        print(f"  rejected {v:,}: {k}")
+    for sk in rep["skipped"][:10]:
+        print(f"  skipped {sk['file']}: {sk['reason']}")
+
+
+def cmd_collect(a):
+    from strata.api import db
+    from strata.collector import service as CS
+    db.init_db()
+    if a.status:
+        st = CS.state()
+        print(f"collector {'ENABLED' if st['config']['enabled'] else 'disabled'}; symbols {', '.join(st['config']['symbols'])}; next due {st['next_due'] or 'n/a'}")
+        for r in st["history"][:8]:
+            print(f"  {r['started_at'][:19]}  {r['status']:9s} {r['report'].get('bars', 0):>8,} bars  {r['report'].get('requests', 0):>5} requests  {'; '.join(r['report'].get('errors', [])[:1])[:80]}")
+        print(f"missed sessions: {len(st['coverage']['missed'])}")
+        return
+    if a.daemon:
+        import time as _t
+        print("collector running; press Ctrl-C to stop. It collects after each close while enabled in its settings.")
+        while True:
+            cfg = CS.load_config()
+            nd = CS.next_due(cfg)
+            from datetime import datetime as _dt
+
+            from strata.core import calendar as cal
+            if cfg["enabled"] and nd is not None and nd <= _dt.now(cal.ET):
+                rep = CS.run_once(progress=lambda f, m: None, trigger="daemon")
+                print(f"{rep['started_at'][:19]}  {rep['status']}  {rep['bars']:,} bars  {rep['requests']} requests")
+            _t.sleep(60)
+    rep = CS.run_once(progress=lambda f, m: print(f"\r  {f:5.1%} {m[:70]:70s}", end="", flush=True), trigger="cli")
+    print(f"\n{rep['status']}: {rep['bars']:,} option bars, {rep['requests']} requests, {rep['seconds']}s")
+    for e in rep["errors"][:8]:
+        print("  " + e)
+
+
+def cmd_bench(a):
+    from strata import bench
+    sys.exit(bench.main(quick=a.quick, real=a.real, check=a.check, update_baseline=a.update_baseline, as_json=a.json))
+
+
+def cmd_providers(a):
+    from strata.data.providers import bench as PB
+    names = a.sources or [n for n in PB.BENCHABLE]
+    for n in names:
+        r = PB.benchmark_source(n, progress=lambda f, m: None)
+        print(f"{r.get('label', n):34s} {r['status'].upper():16s} " + (r.get("reason", "")[:110] if r["status"] == "unverified" else f"{r.get('requests_ok', 0)} requests ok, {r.get('requests_failed', 0)} failed"))
+        for s_ in r.get("steps", []):
+            print(f"    {'ok ' if s_['ok'] else 'ERR'} {s_['name']:42s} {s_.get('rows', '')!s:>8} rows  {s_.get('first') or ''} .. {s_.get('last') or ''}  {s_.get('error', '')[:90]}")
+        for e in r.get("entitlements", []):
+            print(f"    entitlement: {e['what']}: {'granted' if e['granted'] else 'NOT granted'} ({str(e['detail'])[:80]})")
+
+
 def cmd_ingest(a):
     from strata.data.providers import get_provider
     p = get_provider(a.provider)
@@ -196,6 +260,29 @@ def main(argv=None):
     p.add_argument("--symbol")
     p.add_argument("--tz", default="America/New_York")
     p.set_defaults(fn=cmd_import)
+    p = sub.add_parser("bulk-import", help="import historical files of any size: CSV, ZIP or Parquet, a file or a whole folder; vendor layouts are recognised")
+    p.add_argument("path")
+    p.add_argument("--symbol", help="underlying symbol (only needed when the files do not name it)")
+    p.add_argument("--format", help="force a layout id instead of detecting it")
+    p.add_argument("--tz", default="America/New_York", help="timezone of timestamps that carry none")
+    p.add_argument("--provider", default="import", help="name of the dataset the files form (default: import)")
+    p.add_argument("--inspect", action="store_true", help="only report what would be imported")
+    p.set_defaults(fn=cmd_bulk_import)
+    p = sub.add_parser("collect", help="run the market-data collector: one cycle now, or stay running (it never trades)")
+    p.add_argument("--once", action="store_true", help="run one collection cycle and exit (the default)")
+    p.add_argument("--daemon", action="store_true", help="stay running and collect after each close while the collector is enabled")
+    p.add_argument("--status", action="store_true", help="show the configuration, recent cycles and missed sessions")
+    p.set_defaults(fn=cmd_collect)
+    p = sub.add_parser("bench", help="time realistic research workloads on a reproducible fixture and record the result")
+    p.add_argument("--quick", action="store_true", help="a smaller fixture (for a fast sanity run; not comparable with the baseline)")
+    p.add_argument("--real", action="store_true", help="also time read-only workloads on the real data directory")
+    p.add_argument("--check", action="store_true", help="exit non-zero if a workload is slower than its baseline tolerance")
+    p.add_argument("--update-baseline", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_bench)
+    p = sub.add_parser("providers", help="live check of what each data source actually delivers (depth, speed, entitlements)")
+    p.add_argument("sources", nargs="*", help="yahoo cboe yahoo_options github_eod dolthub alpaca (default: all)")
+    p.set_defaults(fn=cmd_providers)
     p = sub.add_parser("ingest", help="download from a configured provider")
     p.add_argument("provider", choices=["thetadata", "polygon", "databento", "orats"])
     p.add_argument("symbol")

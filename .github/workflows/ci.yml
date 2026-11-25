@@ -56,6 +56,31 @@ jobs:
           # and across two separate processes
           python -m pytest -p no:warnings -q tests/test_reproducibility.py
 
+  benchmarks:
+    name: Performance benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install
+        run: pip install -e "backend[dev]"
+      - name: Time the research workloads against the committed baseline
+        working-directory: backend
+        env:
+          # timings are normalised by a calibration loop, but a shared runner is still noisier than a laptop
+          STRATA_BENCH_TOLERANCE: "3.0"
+        run: python -m strata.cli bench --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmarks
+          path: benchmarks/history.jsonl
+          retention-days: 30
+
   frontend:
     name: Frontend type check and build
     runs-on: ubuntu-latest

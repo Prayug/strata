@@ -1,5 +1,5 @@
 /* The conversation: what was asked, how it was read, what is running, and what came back. */
-import { Check, ChevronRight, Download, FileText, GitCompareArrows, HelpCircle, Pencil, Pin, Play, ShieldQuestion, X } from "lucide-react";
+import { Check, ChevronRight, Download, FileText, FlaskConical, GitCompareArrows, HelpCircle, Layers, Pencil, Pin, Play, ShieldAlert, ShieldQuestion, X, Zap } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
@@ -20,6 +20,8 @@ export interface Actions {
   pin: (runId: string) => void;
   refresh: () => void;
   rerun: (versionId: number, mode: string) => void;
+  select: (runId: string, key: string, what: "study" | "options") => void;
+  analyse: (kind: "stress" | "challenge", runId: string) => void;
   busy: boolean;
   pinned: string[];
 }
@@ -76,6 +78,59 @@ function RunLine({ r, onDone }: { r: RunRef; onDone: () => void }) {
       <span className="w-[42%] truncate soft">{r.label}</span>
       <span className="min-w-0 flex-1 truncate dim">{st === "error" ? state?.error : live ? (cur ? `${cur.label}${cur.detail ? ": " + cur.detail : ""}` : "queued") : state?.outcome === "needs_decision" ? "not covered by the data" : r.cached ? "reused an identical earlier run" : "done"}</span>
       {live && <span className="num text-faint">{n}/7</span>}
+    </div>
+  );
+}
+
+/** Progress of a job that is not a research pipeline (a plan, a stress ladder, a review). */
+function JobLine({ r, onDone }: { r: RunRef; onDone: () => void }) {
+  const { state, live } = usePipeline(r.run_id, onDone);
+  const pct = Math.round(((state?.progress as number) || 0) * 100);
+  return (
+    <div className="flex flex-col gap-1.5 text-xs" data-testid="job-line">
+      <div className="flex items-center gap-2.5">
+        <span className={cn("dot", state?.status === "error" ? "bg-down" : live ? "bg-accent pulse" : "bg-up")} />
+        <span className="min-w-0 flex-1 truncate soft">{state?.status === "error" ? state?.error : live ? state?.message || "queued" : "finished"}</span>
+        {live && <span className="num text-faint">{pct}%</span>}
+      </div>
+      {live && <div className="h-1 overflow-hidden rounded-full bg-bg-3"><div className="h-full bg-accent transition-[width] duration-300" style={{ width: `${Math.max(pct, 3)}%` }} /></div>}
+    </div>
+  );
+}
+
+function PlanCard({ c }: { c: any }) {
+  const [all, setAll] = useState(false);
+  const p = c.plan || {};
+  const cfgs: any[] = p.configs || [];
+  const groups: Record<string, any[]> = {};
+  for (const x of cfgs) (groups[x.outcome_text + (x.tag ? ` · ${x.tag}` : "")] ||= []).push(x);
+  const need: any[] = c.data?.required || [];
+  return (
+    <div data-testid="plan-card">
+      <div className="text-[14px] font-medium">{p.hypothesis}</div>
+      <div className="mt-1 text-[12.5px] dim">Tested against: {p.null}</div>
+      <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12.5px]">
+        <div><span className="dim">Configurations </span><span className="num">{cfgs.length}</span><span className="dim"> of at most {p.max_configs}</span></div>
+        <div><span className="dim">Minimum sample </span><span className="num">{p.min_sample}</span><span className="dim"> observations</span></div>
+        <div className="col-span-2"><span className="dim">Primary measure </span>{p.metric_label}</div>
+        <div className="col-span-2"><span className="dim">Baseline </span>{p.baseline}</div>
+        <div className="col-span-2"><span className="dim">Periods </span>training (selection), validation (can only veto), final test (scored once, for candidates only)</div>
+      </div>
+      {need.length > 0 && (
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          {need.map((n, i) => <span key={i} className={cn("chip !h-6", !n.ok && "!border-warn/50 !text-warn")} title={n.note || ""}>{n.ok ? "✓" : "!"} {n.what} {n.symbol}: {Number(n.sessions).toLocaleString()} sessions{n.first ? `, ${n.first} → ${n.last}` : ""}</span>)}
+        </div>
+      )}
+      <button className="mt-2.5 text-xs text-info hover:underline" onClick={() => setAll((a) => !a)}>{all ? "Hide the list" : `Show all ${cfgs.length} configurations that will be tested`}</button>
+      {all && (
+        <div className="mt-2 max-h-64 overflow-auto rounded-lg border border-line px-3 py-2 text-xs">
+          {Object.entries(groups).map(([k, xs]) => (
+            <div key={k} className="mb-2 last:mb-0"><div className="dim">Outcome: {k}</div>{xs.map((x) => <div key={x.key} className="pl-3 soft">· {x.label.replace(/ \[.*\]$/, "")}</div>)}</div>
+          ))}
+        </div>
+      )}
+      {(p.controls || []).map((n: string, i: number) => <div key={i} className="mt-1.5 text-xs dim">Control: {n}</div>)}
+      {(p.notes || []).slice(0, 3).map((n: string, i: number) => <div key={i} className="mt-1 text-xs dim">· {n}</div>)}
     </div>
   );
 }
@@ -178,6 +233,7 @@ export function Message({ m, a }: { m: AiMessage; a: Actions }) {
             <span className="text-xs dim">{(c.assumptions || []).length ? `${c.assumptions.length} assumption${c.assumptions.length !== 1 ? "s" : ""} to check` : "Nothing was assumed"}</span>
           </div>
         )}
+        {c.note && <div className="mt-2.5 rounded-lg bg-bg-2 px-3 py-2 text-xs soft" data-testid="plan-note">{c.note}</div>}
         {(c.runs || []).length > 0 && !c.finalized && <div className="mt-3.5 border-t border-line pt-3.5"><Timeline runId={c.runs[c.runs.length - 1].run_id} onDone={a.refresh} /></div>}
         {(c.runs || []).length > 0 && c.finalized && <div className="mt-3 border-t border-line pt-2.5"><Timeline runId={c.runs[c.runs.length - 1].run_id} compact /></div>}
         <div className="mt-2.5 flex items-center gap-1">
@@ -215,6 +271,20 @@ export function Message({ m, a }: { m: AiMessage; a: Actions }) {
       </Card>
     );
   }
+  if (["hypothesis", "stress", "challenge"].includes(m.kind)) {
+    const runs: RunRef[] = c.runs || [];
+    return (
+      <Card data-testid={`pending-${m.kind}`}>
+        <div className="mb-2 flex items-center gap-2">
+          <span className="eyebrow">{m.kind === "hypothesis" ? "Research plan" : m.kind === "stress" ? "Execution stress test" : "Adversarial review"}</span>
+          {m.kind === "hypothesis" && <span className="chip !h-5 !text-[11px]">bounded · {c.plan?.configs?.length} configurations</span>}
+        </div>
+        {m.kind === "hypothesis" ? <PlanCard c={c} /> : <div className="text-[13.5px] soft">{c.text}</div>}
+        {m.kind === "hypothesis" && <div className="mt-2.5 text-[12.5px] dim">{c.text}</div>}
+        {!c.finalized && runs[0] && <div className="mt-3 border-t border-line pt-3"><JobLine r={runs[0]} onDone={a.refresh} /></div>}
+      </Card>
+    );
+  }
   if (["sweep", "investigation", "discovery", "run"].includes(m.kind)) {
     const runs: RunRef[] = c.runs || [];
     return (
@@ -244,6 +314,52 @@ export function Message({ m, a }: { m: AiMessage; a: Actions }) {
     const runId: string | undefined = c.run_id;
     const pinned = runId ? a.pinned.includes(runId) : false;
     const cov = c.coverage;
+    if (v === "hypothesis" || v === "execution" || v === "challenge" || v === "analysis") {
+      const SEVG: Record<string, string> = { high: "✕", medium: "!", low: "·", ok: "✓", na: "–" };
+      return (
+        <Card data-testid={`result-${v}`}>
+          <div className="mb-2 flex items-center gap-2">
+            <span className="eyebrow">{{ hypothesis: "What the plan found", execution: "Execution uncertainty", challenge: "Review", analysis: c.analysis?.title || "Answer" }[v as string]}</span>
+            <span className="flex-1" /><span className="text-[11px] text-faint" title="Assembled from the engine's numbers; no language model wrote this.">calculated</span>
+          </div>
+          <div className="text-[13.5px] soft"><T>{c.text}</T></div>
+          {v === "hypothesis" && (c.candidates || []).length > 0 && (
+            <div className="mt-3 flex flex-col gap-1.5">
+              {c.candidates.map((x: any) => (
+                <div key={x.key} className="rounded-lg border border-line px-3 py-2">
+                  <div className="text-[13px]">{x.label}</div>
+                  <div className="mt-0.5 text-xs dim">{x.outcome_text} · {x.status_label}{x.grade ? ` · ${x.grade.label.toLowerCase()}` : ""}</div>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <button className="btn quiet sm" disabled={a.busy} onClick={() => a.select(c.run_id, x.key, "study")}><Layers />Investigate further</button>
+                    <button className="btn quiet sm" disabled={a.busy} onClick={() => a.select(c.run_id, x.key, "options")}><FlaskConical />Test option structures</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {v === "challenge" && (
+            <div className="mt-2.5 flex flex-col gap-1">
+              {(c.findings || []).filter((f: any) => ["high", "medium"].includes(f.severity)).slice(0, 6).map((f: any) => (
+                <div key={f.topic} className="flex gap-2 text-[13px]"><span className={cn("w-3 shrink-0 text-center font-semibold", f.severity === "high" ? "text-down" : "text-warn")}>{SEVG[f.severity]}</span><span><span className="dim">{f.name}: </span>{f.title}</span></div>
+              ))}
+            </div>
+          )}
+          {v === "execution" && c.summary && (
+            <div className="mt-2.5 grid grid-cols-3 gap-2 text-xs">
+              {[["Signal only", c.summary.signal_net_pnl], ["As simulated", c.summary.simulated_net_pnl], ["Adverse", c.summary.adverse_net_pnl]].map(([l, x]: any) => (
+                <div key={l} className="rounded-lg bg-bg-2 px-2.5 py-1.5"><div className="dim">{l}</div><div className={cn("num text-[13px]", (x ?? 0) >= 0 ? "text-up" : "text-down")}>{x == null ? "—" : `${x < 0 ? "-" : ""}$${Math.abs(x).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}</div></div>
+              ))}
+            </div>
+          )}
+          {(c.caveats || []).length > 0 && v === "analysis" && <div className="mt-2 text-xs dim">{c.caveats[0]}</div>}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button className="btn sm" data-testid="open-view" onClick={() => a.open({ type: "message", messageId: m.id })}>
+              {v === "challenge" ? <ShieldAlert /> : v === "execution" ? <Zap /> : <FileText />}{{ hypothesis: "Open every configuration", execution: "Open the stress ladder", challenge: "Open the review", analysis: "Open the numbers" }[v as string]}
+            </button>
+          </div>
+        </Card>
+      );
+    }
     const title = { single: "Result", compare: "Before and after", sweep: `Comparison${c.what ? `: ${c.what}` : ""}`, investigation: "Findings", discovery: "What the exploration found", robustness: "Is it real?",
       breakdown: c.by === "year" ? "By year" : "By day of the week", timing: "Time of day", skipped: "Signals that were not traded", export: "Report ready" }[v as string] || "Result";
     return (

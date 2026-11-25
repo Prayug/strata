@@ -27,7 +27,7 @@ MIN_EXPLORE, MIN_VALIDATE, MIN_TEST = 30, 8, 8
 MAX_CANDIDATES = 5
 
 
-def run_discovery(spec: dict, store: MarketStore | None = None, progress=None, should_cancel=None) -> dict:
+def run_discovery(spec: dict, store: MarketStore | None = None, progress=None, should_cancel=None, scope: str | None = None, run_id: str | None = None) -> dict:
     """spec: {symbol, question, hypothesis, direction, dims: [{name, label, values, labels}],
               configs: [{key, params: {dim: value}, label, study: StudyConfig dict}]}"""
     store = store or MarketStore()
@@ -138,6 +138,12 @@ def run_discovery(spec: dict, store: MarketStore | None = None, progress=None, s
     low_n = sum(1 for r in ok if r["explore"]["n"] < MIN_EXPLORE)
     if low_n:
         notes.append(f"{low_n} configurations have fewer than {MIN_EXPLORE} observations in the explore period - typically intraday entry times, for which only recent history is stored.")
+    if scope:
+        # every configuration of the grid is a trial of the research session, including the ones that showed nothing
+        from strata.research import ledger as LG
+        LG.record(scope, first.symbol, [{"kind": "discovery", "key": LG.config_key(r.get("study") or {"key": r["key"]}), "label": r["label"], "run_id": run_id, "start": splits["explore"][0],
+                                         "end": splits["test"][1] if r.get("test") else splits["validate"][1], "metric": "lift", "value": (r.get("explore") or {}).get("lift"), "n": (r.get("explore") or {}).get("n"),
+                                         "p_value": (r.get("explore") or {}).get("p_value")} for r in rows], family=spec.get("question", "")[:120])
     if progress:
         progress(1.0, "done")
     return {"kind": "discovery", "symbol": first.symbol, "question": spec.get("question", ""), "hypothesis": spec.get("hypothesis", ""), "direction": spec.get("direction", "up"), "dims": dims, "splits": splits,

@@ -155,6 +155,18 @@ def select_contracts(ch: DayChain, si: int, legs: list[LegSpec], spot: float, to
             if sm.unit != "strikes" and abs(ch.strike[j] - target) > _tol(target - ref.strike):
                 return None, f"leg {leg.id}: no tradable strike at {sm.ref_leg} {sm.value:+g} {sm.unit} ({target:g}); nearest {ch.strike[j]:g}", details
         chosen[leg.id] = Selected(leg, int(j), float(ch.strike[j]), int(e), int(e - today_n))
+        if sm.method != "leg_offset":
+            ks = np.unique(ch.strike[idx_all])
+            k_sel = float(ch.strike[j])
+            pick = {"method": sm.method, "strike": k_sel, "stored_low": float(ks.min()), "stored_high": float(ks.max()), "stored_strikes": int(ks.size), "expiration": int(e),
+                    "edge": None if ks.size < 2 or sm.method == "fixed" else "low" if k_sel <= ks.min() else "high" if k_sel >= ks.max() else None}
+            if sm.method == "delta":
+                pick.update(target=float(abs(sm.value) if abs(sm.value) <= 1 else abs(sm.value) / 100.0), achieved=float(abs(ch.delta[j])) if np.isfinite(ch.delta[j]) else None)
+            elif sm.method == "premium":
+                pick.update(target=float(sm.value), achieved=float(ch.mid[j]) if np.isfinite(ch.mid[j]) else None)
+            elif sm.method == "pct_otm":
+                pick.update(target=float(spot * (1 + sm.value / 100.0) if is_call else spot * (1 - sm.value / 100.0)), achieved=k_sel)
+            details.setdefault(leg.id, {})["pick"] = pick
     return [chosen[l.id] for l in legs], "", details
 
 

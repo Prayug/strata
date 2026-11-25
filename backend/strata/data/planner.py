@@ -617,7 +617,7 @@ def _pick_expiration(avail: list[date], d: date, leg: dict) -> date | None:
     return None if e is None else d + timedelta(days=int(e))
 
 
-def trade_contracts(source: S.OptionBarSource, client, store: MarketStore, sym: str, legs: list[dict], sig: dict, hold: int) -> tuple[dict[date, list[S.Contract]], list[str]]:
+def trade_contracts(source: S.OptionBarSource, client, store: MarketStore, sym: str, legs: list[dict], sig: dict, hold: int, widen: int = 0) -> tuple[dict[date, list[S.Contract]], list[str]]:
     """The (session, contract) pairs one signal needs: the contracts its legs could select at
     the signal, on the entry session and every session the position can stay open.
 
@@ -637,6 +637,7 @@ def trade_contracts(source: S.OptionBarSource, client, store: MarketStore, sym: 
     sessions = [d] + [cal.next_trading_day(d, k) for k in range(1, hold + 1)]
     for leg in legs:
         k0, n = targets[leg["id"]]
+        n = n * (1 + int(widen)) if leg["strike"]["method"] != "fixed" else n  # adaptive discovery: a wider band when a selection hit the edge of the last one
         lo, hi = k0 - n * step0 - 1e-6, k0 + n * step0 + 1e-6
         dte = int(leg["dte"])
         exact = leg.get("dte_mode") == "exact" or dte == 0
@@ -682,7 +683,7 @@ def trade_plan(store: MarketStore, req: dict, signals: list[dict], provider: str
     return out
 
 
-def acquire_trades(store: MarketStore, req: dict, signals: list[dict], source_name: str, progress=None, should_cancel=None, approve_large: bool = False) -> dict:
+def acquire_trades(store: MarketStore, req: dict, signals: list[dict], source_name: str, progress=None, should_cancel=None, approve_large: bool = False, widen: dict | None = None) -> dict:
     """Stage two: download option trade bars only for the sessions that produced a signal
     and only for the contracts those signals could select. Returns the acquisition report
     (or an estimate with `needs_approval` when the request is unusually large)."""
@@ -699,7 +700,7 @@ def acquire_trades(store: MarketStore, req: dict, signals: list[dict], source_na
                 raise S.Cancelled()
             if progress and i % 5 == 0:
                 progress(0.3 * i / max(len(inside), 1), f"Validating contracts for {sig['date']} ({i + 1}/{len(inside)})")
-            w, n = trade_contracts(src, client, store, sym, opt["legs"], sig, int(opt["hold_sessions"]))
+            w, n = trade_contracts(src, client, store, sym, opt["legs"], sig, int(opt["hold_sessions"]), int((widen or {}).get(sig["date"], 0)))
             notes += n
             for d, cs in w.items():
                 cur = wanted.setdefault(d, [])

@@ -81,6 +81,51 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   output_tokens INTEGER DEFAULT 0,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS trials (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  family TEXT DEFAULT '',
+  kind TEXT NOT NULL,
+  key TEXT NOT NULL,
+  label TEXT DEFAULT '',
+  run_id TEXT,
+  start TEXT,
+  end TEXT,
+  metric TEXT,
+  value REAL,
+  n INTEGER,
+  p_value REAL,
+  shown INTEGER DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS trials_scope ON trials(scope, symbol, id);
+CREATE TABLE IF NOT EXISTS holdouts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  start TEXT NOT NULL,
+  end TEXT NOT NULL,
+  status TEXT NOT NULL,
+  uses TEXT DEFAULT '[]',
+  reason TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS holdouts_scope ON holdouts(scope, symbol, id);
+CREATE TABLE IF NOT EXISTS canvases (
+  session_id TEXT PRIMARY KEY,
+  layout TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS collector_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL,
+  trigger TEXT DEFAULT 'schedule',
+  report TEXT
+);
 CREATE INDEX IF NOT EXISTS runs_kind ON runs(kind, created_at);
 CREATE INDEX IF NOT EXISTS runs_cache ON runs(cache_key);
 CREATE INDEX IF NOT EXISTS runs_strategy ON runs(strategy_id);
@@ -107,7 +152,7 @@ def init_db() -> Path:
     return get_settings().db_path
 
 
-JSON_COLS = {"config", "dataset_versions", "summary", "tags", "state", "content", "draft", "runs"}
+JSON_COLS = {"config", "dataset_versions", "summary", "tags", "state", "content", "draft", "runs", "uses", "layout", "report"}
 
 
 def _row(r: sqlite3.Row | None) -> dict | None:
@@ -202,6 +247,14 @@ def list_runs(kind: str | None = None, strategy_id: str | None = None, limit: in
     args.append(limit)
     with connect() as con:
         return [_row(r) for r in con.execute(q, args).fetchall()]
+
+
+def runs_targeting(target: str, kinds: tuple[str, ...] = ("stress", "challenge", "sensitivity"), limit: int = 400) -> list[dict]:
+    """Analysis runs (stress ladders, reviews, maps) that refer to another run, newest first."""
+    q = "SELECT * FROM runs WHERE kind IN (%s) ORDER BY created_at DESC LIMIT ?" % ",".join("?" * len(kinds))
+    with connect() as con:
+        rows = [_row(r) for r in con.execute(q, [*kinds, limit]).fetchall()]
+    return [r for r in rows if isinstance(r.get("config"), dict) and r["config"].get("target") == target]
 
 
 def find_cached(cache_key: str) -> dict | None:

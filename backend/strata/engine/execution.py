@@ -23,6 +23,8 @@ def fill_price(bid: float, ask: float, side: int, ex: Execution) -> float:
     else:
         p = mid + side * ex.custom_fraction * 0.5 * (ask - bid)
     p += side * ex.slippage_per_contract
+    if ex.extra_slippage_pct:
+        p *= 1 + side * ex.extra_slippage_pct / 100.0
     return max(0.0, p)
 
 

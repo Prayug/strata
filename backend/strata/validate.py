@@ -54,8 +54,11 @@ def _trade_key(t: dict) -> tuple:
             tuple((l["right"], l["strike"], l["expiration"], l["side"], l["contracts"], round(l["entry_price"], 6), round(l["exit_price"], 6), l.get("price_source")) for l in t["legs"]))
 
 
+TOTAL = 13
+
+
 def run_validation(workdir: str | Path | None = None, keep: bool = False, sessions: int = 3, out=print) -> dict:
-    """Run the ten steps. Returns {ok, steps: [{n, name, ok, seconds, detail, error}], data_dir}."""
+    """Run the thirteen steps. Returns {ok, steps: [{n, name, ok, seconds, detail, error}], data_dir}."""
     made = workdir is None
     root = Path(workdir).expanduser().resolve() if workdir else Path(tempfile.mkdtemp(prefix="strata-validate-"))
     # hermetic: only keyless free sources, no stored credentials, no model
@@ -75,7 +78,7 @@ def run_validation(workdir: str | Path | None = None, keep: bool = False, sessio
         t0 = time.time()
         rec = {"n": n, "name": name, "ok": False, "seconds": 0.0, "detail": "", "error": None}
         report["steps"].append(rec)
-        out(f"[{n:>2}/10] {name} ...")
+        out(f"[{n:>2}/{TOTAL}] {name} ...")
         try:
             rec["detail"] = fn() or ""
             rec["ok"] = True
@@ -97,7 +100,10 @@ def run_validation(workdir: str | Path | None = None, keep: bool = False, sessio
               and step(7, "Both produce identical results", lambda: _s7(ctx))
               and step(8, "Premiums match the source records", lambda: _s8(ctx))
               and step(9, "Interrupted downloads are never marked complete", lambda: _s9(ctx))
-              and step(10, "No simulated data anywhere", lambda: _s10(ctx)))
+              and step(10, "No simulated data anywhere", lambda: _s10(ctx))
+              and step(11, "A hypothesis plan agrees with the session engine and with plain arithmetic", lambda: _s11(ctx))
+              and step(12, "Scrambling the future changes no past decision", lambda: _s12(ctx))
+              and step(13, "Sources are verified by live requests, or reported as unverified", lambda: _s13(ctx)))
         report["ok"] = bool(ok)
     finally:
         report["finished"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -109,7 +115,7 @@ def run_validation(workdir: str | Path | None = None, keep: bool = False, sessio
             shutil.rmtree(root, ignore_errors=True)
             report["data_dir"] = None
     n_ok = sum(1 for s in report["steps"] if s["ok"])
-    out(f"\n{'VALIDATION PASSED' if report['ok'] else 'VALIDATION FAILED'}: {n_ok} of 10 steps passed" + ("" if report["ok"] or len(report["steps"]) == 10 else f" (stopped at step {len(report['steps'])})"))
+    out(f"\n{'VALIDATION PASSED' if report['ok'] else 'VALIDATION FAILED'}: {n_ok} of {TOTAL} steps passed" + ("" if report["ok"] or len(report["steps"]) == TOTAL else f" (stopped at step {len(report['steps'])})"))
     if report["data_dir"]:
         out(f"data directory kept at {report['data_dir']}")
     return report
@@ -430,3 +436,69 @@ def _s10(ctx: dict) -> str:
             n += 1
     provs = sorted({k.provider for k in dsets})
     return f"{len(dsets)} datasets from {', '.join(provs)}, each with a licence and manifest; {n} runs priced on observed trade prints; no modeled or simulated price anywhere"
+
+
+def _s11(ctx: dict) -> str:
+    """V4: a bounded plan on the downloaded history. One of its configurations is recomputed
+    three ways - the vectorised feature engine, the session-by-session study engine, and a
+    plain loop over the stored daily rows that shares no code with either - and all three
+    must give the same sessions and the same frequency."""
+    from strata.research import hypothesis as HY
+    from strata.research.features import OutcomeSpec, Pred, get_features, to_study
+    from strata.research.study import run_study
+    st = ctx["store"]
+    plan = HY.build_plan("Investigate whether SPY tends to reverse following large down days.", "SPY", st, sorted(st.stored_symbols()))
+    need(plan is not None and 0 < len(plan["configs"]) <= plan["max_configs"], "no bounded plan was produced")
+    res = HY.run_plan(plan, st)
+    need(res["tested"] == len(plan["configs"]) == len(res["configs"]), "not every configuration of the plan is in the result")
+    need(all("test" not in r for r in res["configs"] if r["key"] not in res["candidates"]), "a configuration that was not a candidate was scored on the final test period")
+    preds, oc = [Pred("ret_1", "<=", -2.0)], OutcomeSpec("open", "session", "up", 0.0, None, "close")
+    ev = get_features(st, "SPY").evaluate(preds, oc)
+    n_vec, k_vec = int(ev["qualifying"].sum()), int((ev["outcome"].code[ev["qualifying"]] == 0).sum())
+    study = run_study(to_study("SPY", preds, oc), st, max_sessions_out=0)["stats"]
+    need((study["qualifying_sessions"], study["target_first"]) == (n_vec, k_vec), f"the study engine ({study['qualifying_sessions']}, {study['target_first']}) and the feature engine ({n_vec}, {k_vec}) disagree")
+    # independent arithmetic on the daily record. Sessions that also have intraday bars are skipped by all three
+    # comparisons below, because the engines read those sessions' first and last intraday prints.
+    ft = get_features(st, "SPY")
+    daily_only = {d for d, r in zip(ft.dates, ft.res) if r >= 86400}
+    rows = st.read_daily("SPY").sort("date").to_dicts()
+    n = k = 0
+    for i in range(2, len(rows)):
+        if str(rows[i]["date"]) in daily_only and str(rows[i - 1]["date"]) in daily_only and str(rows[i - 2]["date"]) in daily_only:
+            if (rows[i - 1]["close"] / rows[i - 2]["close"] - 1) * 100 <= -2.0:
+                n += 1
+                k += rows[i]["close"] > rows[i]["open"]
+    import numpy as np
+    idx = np.array([d in daily_only for d in ft.dates]) & np.r_[False, [d in daily_only for d in ft.dates[:-1]]] & np.r_[False, False, [d in daily_only for d in ft.dates[:-2]]]
+    q = ev["qualifying"] & idx
+    need((int(q.sum()), int((ev["outcome"].code[q] == 0).sum())) == (n, k), f"plain arithmetic on the daily rows gives {k} of {n}; the engines give {int((ev['outcome'].code[q] == 0).sum())} of {int(q.sum())}")
+    return (f"{res['tested']} configurations, all reported; {len(res['candidates'])} candidates, {len(res['confirmed'])} confirmed. After a 2%+ decline SPY closed above its open on {k_vec} of {n_vec} sessions: "
+            f"identical in the feature engine and the study engine, and {k} of {n} daily-bar sessions by independent arithmetic")
+
+
+def _s12(ctx: dict) -> str:
+    from strata.research.challenge import lookahead_probe_study
+    from strata.research.features import OutcomeSpec, Pred, to_study
+    from strata.research.study import run_study
+    st = ctx["store"]
+    cfg = to_study("SPY", [Pred("ret_1", "<=", -1.5), Pred("sma200_dist", "<", 0)], OutcomeSpec("open", "session", "up", 1.0, 1.0, "touch"))
+    res = run_study(cfg, st)
+    pr = lookahead_probe_study(cfg, res, st, k=6)
+    need(pr["checked"] >= 8, f"only {pr['checked']} sessions could be re-evaluated")
+    need(pr["changed"] == 0, "a past decision changed when later prices were altered: " + "; ".join(pr["examples"]))
+    from strata.engine import expr as X
+    need(X.validate("close(0) > open") and X.validate("return_pct(-1) > 0"), "a zero or negative look-back count was accepted by the rule language")
+    return f"{pr['checked']} sessions re-evaluated with every later price scrambled: same decision and entry price each time; zero and negative look-backs are rejected"
+
+
+def _s13(ctx: dict) -> str:
+    from strata.data.providers import bench as PB
+    y = PB.benchmark_source("yahoo")
+    need(y["status"] in ("verified", "partly verified"), f"the free source could not be verified live: {[s.get('error') for s in y['steps'] if not s['ok']][:2]}")
+    depth = {d["dataset"]: d["first"] for d in y.get("historical_depth", [])}
+    need(depth.get("daily bars"), "the live check measured no historical depth")
+    a = PB.benchmark_source("alpaca")
+    need(a["status"] == "unverified" and not a["verified"], "a source with no credentials was not reported as unverified")
+    miss = next((s.get("missing_pct") for s in y["steps"] if s.get("dataset") == "1-minute bars"), None)
+    return (f"Yahoo verified live: daily history from {depth['daily bars']}, 1-minute bars from {depth.get('1-minute bars')}" + (f" ({miss}% of expected bars missing)" if miss is not None else "")
+            + f", {y.get('bars_per_second', 0):,} bars/s. Alpaca: UNVERIFIED (no credentials in this run)")

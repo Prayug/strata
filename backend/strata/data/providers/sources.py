@@ -66,7 +66,15 @@ def _client() -> httpx.Client:
     return httpx.Client(timeout=90, headers=UA, follow_redirects=True)
 
 
+# Strata reads market data. It never sends an order, and no code path may reach a brokerage's
+# trading endpoints: every provider request goes through `http_get` (GET only), which also
+# refuses the paths that place, change or list orders and positions or move money.
+TRADING_PATHS = ("/orders", "/positions", "/transfers", "/ach_relationships", "/watchlists", "/account/activities", "/account/configurations")
+
+
 def http_get(client: httpx.Client, url: str, params: dict | None = None, headers: dict | None = None, retries: int = 4) -> httpx.Response:
+    if any(x in httpx.URL(url).path for x in TRADING_PATHS):
+        raise SourceError("refused: Strata only reads market data and never calls a trading endpoint")
     last: Exception | None = None
     for attempt in range(retries):
         try:

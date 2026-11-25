@@ -82,6 +82,7 @@ class Diagnostics:
     skipped_signals: list = field(default_factory=list)  # every signal that did not become a trade, with the reason
     no_option_data: dict = field(default_factory=dict)  # symbol -> sessions with a signal clock but no stored option data
     excluded_sessions: dict = field(default_factory=dict)  # reason -> [dates]
+    picks: list = field(default_factory=list)  # contract selections of filled entries: what was aimed at, what was chosen, and whether it sat on the edge of the stored strikes
     warnings: list = field(default_factory=list)
 
     def exclude(self, d, reason: str):
@@ -305,7 +306,12 @@ class Context:
             return None, "no option chain for this session", {}
         if self.t - int(ch.snap_ts[si]) > self.bt.max_age:
             return None, ("no option trade has printed recently" if self.bt.trades else "latest chain snapshot is stale"), {}
-        return select_contracts(ch, si, legs, self.price(sym or self.symbol), self.today, self.bt.max_age)
+        sel, why, details = select_contracts(ch, si, legs, self.price(sym or self.symbol), self.today, self.bt.max_age)
+        if sel is not None and len(self.bt.diag.picks) < 20000:
+            for lid, d in details.items():
+                if "pick" in d:
+                    self.bt.diag.picks.append({"date": self.today.isoformat(), "t": int(self.t), "leg": lid, **d["pick"]})
+        return sel, why, details
 
     def open(self, selected: list[Selected], units: int, explain: list | None = None, tag: str = "", meta: dict | None = None):
         return self.bt.open_position(self.strategy, selected, units, self, explain or [], tag, meta or {})
@@ -582,6 +588,8 @@ class Backtester:
             q = sign * s.leg.quantity * units
             lmult = float(ch.multipliers.get(int(ch.key[i]), mult))  # the contract's own multiplier when its definition is stored
             px = X.fill_price(float(ch.bid[i]), float(ch.ask[i]), sign, ex)
+            if ex.multi_leg_extra_pct and sum(1 for z in sel if z.row >= 0) >= 2:
+                px = max(0.0, px * (1 + sign * ex.multi_leg_extra_pct / 100.0))
             tb = bool(ch.trade_based[i])
             if tb:  # trade print, no quote: the print plus an explicit slippage assumption
                 px = max(0.0, px * (1 + sign * ex.trade_bar_slippage_pct / 100.0))
@@ -663,6 +671,8 @@ class Backtester:
         else:
             q = int(np.sign(l.qty)) * n
             px = X.fill_price(l.bid, l.ask, -int(np.sign(q)), self.ex)
+            if self.ex.multi_leg_extra_pct and sum(1 for z in pos.legs if z.kind == "option") >= 2:
+                px = max(0.0, px * (1 - int(np.sign(q)) * self.ex.multi_leg_extra_pct / 100.0))
             if getattr(l, "trade_based", False):
                 px = max(0.0, px * (1 - int(np.sign(q)) * self.ex.trade_bar_slippage_pct / 100.0))
             flow = q * l.multiplier * px
@@ -1140,6 +1150,54 @@ class Backtester:
             "commissions": acct.commissions, "interest": getattr(acct, "interest", 0.0),
         })
 
+    def _contract_selection(self) -> dict:
+        """How contracts were chosen, and whether the choice was limited by what is stored.
+
+        With selectively downloaded trade data only a band of strikes exists. A selection
+        that lands on the outermost stored strike may not be the contract the rule wanted,
+        so those are counted and their sessions listed (the research pipeline widens the
+        band for them and runs again)."""
+        picks = self.diag.picks
+        trade_days = {cal.to_et(p.entry_ts * 1_000_000_000).date().isoformat() for p in list(self.account.closed) + list(self.account.positions)}
+        used = [p for p in picks if p["date"] in trade_days]
+        last: dict[tuple, dict] = {}
+        for p in used:
+            last[(p["date"], p["leg"])] = p  # the selection that led to the fill is the last one of the session for that leg
+        rows = list(last.values())
+        complete = True
+        constructed = adjusted = 0
+        mults: dict[str, int] = {}
+        for sym in self.opt_syms:
+            ds = (self.datasets_used or {}).get(sym) if isinstance(self.datasets_used, dict) else None
+            try:
+                from strata.data.store import DatasetKey
+                key = DatasetKey.parse(ds["dataset"] if isinstance(ds, dict) else ds) if ds else None
+                desc = self.store.descriptor(key) if key else {}
+                if self.trades and not desc.get("complete_chain"):
+                    complete = False
+                if key is not None and self.trades:
+                    con = self.store.read_contracts(key)
+                    if not con.is_empty():
+                        constructed += int(con["source"].fill_null("").str.contains("constructed").sum()) if "source" in con.columns else 0
+                        adjusted += int(con["adjusted"].fill_null(False).sum()) if "adjusted" in con.columns else 0
+                        if "multiplier" in con.columns:
+                            for m_, n_ in con.group_by("multiplier").len().iter_rows():
+                                mults[f"{m_:g}" if m_ is not None else "unknown"] = int(n_)
+            except Exception:  # noqa: BLE001  (diagnostics only)
+                pass
+        selective = self.trades and not complete
+        edge = [r for r in rows if r.get("edge") and selective and r["method"] in ("delta", "premium", "pct_otm")]
+        d_err = [abs(r["achieved"] - r["target"]) for r in rows if r["method"] == "delta" and r.get("achieved") is not None]
+        p_err = [abs(r["achieved"] - r["target"]) / r["target"] for r in rows if r["method"] == "premium" and r.get("achieved") is not None and r["target"]]
+        return {"selections": len(rows), "selective_storage": bool(selective), "complete_chain": bool(not selective), "at_band_edge": len(edge), "edge_dates": sorted({r["date"] for r in edge}),
+                "edge_examples": [{k: r.get(k) for k in ("date", "leg", "method", "strike", "stored_low", "stored_high", "edge", "target", "achieved")} for r in edge[:8]],
+                "delta_error_median": float(np.median(d_err)) if d_err else None, "delta_error_max": float(max(d_err)) if d_err else None, "delta_misses": int(sum(1 for x in d_err if x > 0.10)),
+                "premium_error_median": float(np.median(p_err)) if p_err else None, "premium_misses": int(sum(1 for x in p_err if x > 0.25)),
+                "methods": {m: sum(1 for r in rows if r["method"] == m) for m in sorted({r["method"] for r in rows})},
+                "contracts_constructed": constructed, "contracts_adjusted": adjusted, "multipliers": mults,
+                "note": ("Contracts are chosen among a downloaded band of strikes around the price at each signal; the band is widened and the run repeated whenever a selection lands on its edge." if selective else
+                         "Contracts are chosen among every contract in the stored chain as it stood at the decision time.")}
+
     def _executability(self) -> dict:
         """How many signals could actually be executed with the observed option prices."""
         closed = self.account.closed
@@ -1189,6 +1247,7 @@ class Backtester:
             "pricing": self.cfg.pricing.mode,
             "datasets_used": self.datasets_used,
             "executability": self._executability(),
+            "contract_selection": self._contract_selection(),
             "pricing_assumptions": (__import__("strata.data.modeled", fromlist=["x"]).assumptions_text(self.cfg.pricing) + [f"Volatility input used: {getattr(self, 'model_vol_note', 'n/a')}."]) if self.modeled else [],
             "data_resolution": self._resolution_summary(),
             "runtime_seconds": round(runtime, 3),

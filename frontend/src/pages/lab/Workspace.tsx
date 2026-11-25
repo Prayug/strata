@@ -1,7 +1,7 @@
 /* One research notebook: the conversation on the left, and on the right whatever it produced:
    the report of a result, the editable interpretation, a set of variants, or the pinned comparison. */
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowLeft, FileText, GitCompareArrows, History, Keyboard, PanelRightClose, PanelRightOpen, Pencil, Sparkles } from "lucide-react";
+import { ArrowLeft, FileText, GitCompareArrows, History, Keyboard, Network, PanelRightClose, PanelRightOpen, Pencil, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
@@ -11,16 +11,19 @@ import { api, queryClient } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { MODE_NAME, useAiMeta, type AiMessage, type AiPayload } from "@/lib/lab";
 import { Empty, Skeleton, useHotkeys } from "./bits";
+import { Canvas } from "./Canvas";
 import { Compare } from "./Compare";
 import { Composer, InterpreterChip, type ComposerHandle } from "./Landing";
 import { Message, type Actions, type OpenTarget } from "./Messages";
 import { Timeline } from "./Pipeline";
 import { Report, REPORT_TABS } from "./Report";
+import { AnalysisView, ChallengeView, ExecutionView, HoldoutChip, HypothesisView } from "./Research";
 import { Setup } from "./Setup";
 import { DiscoveryView, InvestigationView, SweepView } from "./Views";
 
-type View = OpenTarget | { type: "compare" } | null;
-const PENDING = ["plan", "sweep", "run", "investigation", "discovery"];
+type View = OpenTarget | { type: "compare" } | { type: "canvas" } | null;
+const PENDING = ["plan", "sweep", "run", "investigation", "discovery", "hypothesis", "stress", "challenge"];
+const MSG_VIEWS = ["sweep", "investigation", "discovery", "hypothesis", "execution", "challenge", "analysis"];
 const isPending = (m: AiMessage) => PENDING.includes(m.kind) && m.content?.runs?.length > 0 && !m.content.finalized;
 const TAB_OF: Record<string, string> = { robustness: "robustness", skipped: "observations", breakdown: "statistics", timing: "statistics" };
 
@@ -28,7 +31,7 @@ const TAB_OF: Record<string, string> = { robustness: "robustness", skipped: "obs
 function targetOf(m: AiMessage): { view: View; tab?: string; which?: string } | null {
   const c = m.content || {};
   if (m.kind === "result") {
-    if (["sweep", "investigation", "discovery"].includes(c.view)) return { view: { type: "message", messageId: m.id } };
+    if (MSG_VIEWS.includes(c.view)) return { view: { type: "message", messageId: m.id } };
     if (c.view === "failed" || c.view === "export" || !c.run_id) return null;
     return { view: { type: "run", runId: c.run_id, messageId: m.id }, tab: TAB_OF[c.view] || "overview", which: c.view === "skipped" ? "skipped" : undefined };
   }
@@ -41,14 +44,16 @@ const strip = (l: string) => String(l || "").replace(/^v\d+\s*-\s*/, "");
 /** A result is named after the question that produced it. */
 function resultName(m: AiMessage, all: AiMessage[]) {
   const c = m.content;
-  const kind = { sweep: `Comparison${c.what ? `: ${c.what}` : ""}`, investigation: `Investigation: ${c.plan?.hypothesis || ""}`, discovery: `Exploration: ${c.discovery?.hypothesis || c.discovery?.question || ""}` }[c.view as string];
+  const kind = { sweep: `Comparison${c.what ? `: ${c.what}` : ""}`, investigation: `${c.plan?.stage === "options" ? "Option structures" : "Investigation"}: ${c.plan?.question || c.plan?.hypothesis || ""}`,
+    discovery: `Exploration: ${c.discovery?.hypothesis || c.discovery?.question || ""}`, hypothesis: `Plan: ${c.question || ""}`, execution: `Execution stress: ${strip(c.label || "").replace(/^Execution stress: /, "")}`,
+    challenge: `Review: ${strip(c.label || "").replace(/^Challenge: /, "")}`, analysis: `Answer: ${c.analysis?.title || ""}` }[c.view as string];
   if (kind) return kind.slice(0, 80);
   const asked = [...all].reverse().find((x) => x.role === "user" && x.id < m.id)?.content?.text;
   return `${String(asked || strip(c.label || c.title) || "Result").slice(0, 64)}${c.mode && c.mode !== "study" ? ` (${(MODE_NAME[c.mode] || c.mode).replace("Options · ", "")})` : ""}`;
 }
 
-const STUDY_NEXT = ["Compare that with 2% and 4% down days", "What time of day does it usually hit the target?", "Show every qualifying historical session", "Test ATM 0DTE calls on those days using historical option trade prices", "Is this statistically significant?", "Test whether the results hold up out of sample", "Export the complete research report"];
-const OPTION_NEXT = ["Compare the results with 7DTE calls", "Include commissions and conservative slippage", "Show me every skipped signal and why", "Show me the losing trades", "Test whether the results hold up out of sample", "Export the complete research report"];
+const STUDY_NEXT = ["Challenge this result", "How much of the result is explained by volatility?", "Test option structures on this", "Compare that with 2% and 4% down days", "What time of day does it usually hit the target?", "Show every qualifying historical session", "Test ATM 0DTE calls on those days using historical option trade prices", "Is this statistically significant?", "Test whether the results hold up out of sample", "Export the complete research report"];
+const OPTION_NEXT = ["Challenge this strategy", "Stress-test the execution", "Are most profits concentrated in a handful of sessions?", "Compare the results with 7DTE calls", "Include commissions and conservative slippage", "Show me every skipped signal and why", "Show me the losing trades", "Test whether the results hold up out of sample", "Export the complete research report"];
 
 export function Workspace({ sid }: { sid: string }) {
   const nav = useNavigate();
@@ -60,14 +65,18 @@ export function Workspace({ sid }: { sid: string }) {
   const [day, setDay] = useState<string | null>(null);
   const [showRight, setShowRight] = useState(true);
   const [help, setHelp] = useState(false);
+  const [wide, setWide] = useState(false);
   const comp = useRef<ComposerHandle>(null);
   const end = useRef<HTMLDivElement>(null);
   const data = q.data;
   const messages = data?.messages || [];
   const pending = messages.some(isPending);
 
+  // while someone is working on the canvas, new results appear there as nodes instead of taking the workspace away
+  const onCanvas = useRef(false);
   const go = (t: { view: View; tab?: string; which?: string } | null) => {
     if (!t) return;
+    onCanvas.current = t.view?.type === "canvas";
     setView(t.view);
     if (t.tab) setTab(t.tab);
     if (t.which) setWhich(t.which);
@@ -75,6 +84,7 @@ export function Workspace({ sid }: { sid: string }) {
     setShowRight(true);
   };
   const arrived = (ms: AiMessage[] | undefined) => {
+    if (onCanvas.current) return;
     const hit = [...(ms || [])].reverse().map(targetOf).find(Boolean);
     if (hit) go(hit);
   };
@@ -121,7 +131,7 @@ export function Workspace({ sid }: { sid: string }) {
   useEffect(() => { end.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [messages.length, act.isPending]);
 
   // every result this notebook holds: single reports, sets of variants, investigations, explorations
-  const results = useMemo(() => messages.filter((m) => m.kind === "result" && ["single", "compare", "sweep", "investigation", "discovery"].includes(m.content?.view) && targetOf(m)), [messages]);
+  const results = useMemo(() => messages.filter((m) => m.kind === "result" && ["single", "compare", ...MSG_VIEWS].includes(m.content?.view) && targetOf(m)), [messages]);
   const plans = useMemo(() => messages.filter((m) => m.kind === "plan"), [messages]);
   const lastPlan = plans[plans.length - 1];
   // what the right-hand side shows when nothing was picked explicitly: the newest result, else the interpretation in progress
@@ -143,6 +153,8 @@ export function Workspace({ sid }: { sid: string }) {
     pin: (id) => pin(id),
     refresh: () => queryClient.invalidateQueries({ queryKey: ["ai", sid] }),
     rerun: (version_id, mode) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/run`, { version_id, mode })),
+    select: (run_id, key, what) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/hypothesis/select`, { run_id, key, what })),
+    analyse: (kind, run_id) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/analysis`, { kind, run_id })),
     busy: act.isPending,
     pinned,
   };
@@ -160,6 +172,7 @@ export function Workspace({ sid }: { sid: string }) {
     "/": (e) => { e.preventDefault(); comp.current?.focus(); },
     ...Object.fromEntries(REPORT_TABS.map(([k], i) => [String(i + 1), () => { if (runView) setTab(k); }])),
     c: () => go({ view: { type: "compare" } }),
+    v: () => go({ view: { type: "canvas" } }),
     e: () => lastPlan && go({ view: { type: "setup", versionId: lastPlan.content.version_id } }),
     "[": () => stepResult(-1),
     "]": () => stepResult(1),
@@ -171,8 +184,10 @@ export function Workspace({ sid }: { sid: string }) {
   if (q.isError || !data) return <div className="lab h-full"><Empty title="This notebook could not be opened">{String((q.error as any)?.message || "")}<div className="mt-3"><button className="btn sm" onClick={() => nav("/")}>Back to the lab</button></div></Empty></div>;
 
   const lastRes = results[results.length - 1];
-  const optionRes = lastRes && lastRes.content.mode && lastRes.content.mode !== "study";
-  const chips = act.isPending || pending ? [] : lastRes ? (optionRes ? OPTION_NEXT : STUDY_NEXT) : [];
+  const lastRun = [...results].reverse().find((m) => ["single", "compare"].includes(m.content.view));
+  const optionRes = lastRun && lastRun.content.mode && lastRun.content.mode !== "study";
+  // follow-ups are about the newest study or backtest; a plan's own next steps are the buttons on its candidates
+  const chips = act.isPending || pending || !lastRun || lastRes?.content.view === "hypothesis" ? [] : optionRes ? OPTION_NEXT : STUDY_NEXT;
   const planMsg = eff?.type === "setup" ? plans.find((m) => m.content.version_id === eff.versionId) || lastPlan : null;
   const msg = eff?.type === "message" ? messages.find((m) => m.id === eff.messageId) : null;
   const liveRun = [...messages].reverse().find(isPending);
@@ -189,6 +204,7 @@ export function Workspace({ sid }: { sid: string }) {
         )}
         <span className="flex-1" />
         {lastPlan && <button className={cn("btn quiet sm", eff?.type === "setup" && "!bg-bg-3 !text-fg")} onClick={() => go({ view: { type: "setup", versionId: lastPlan.content.version_id } })} title="How the request was read, editable (E)"><Pencil />Interpretation</button>}
+        <button className={cn("btn quiet sm", eff?.type === "canvas" && "!bg-bg-3 !text-fg")} onClick={() => go({ view: { type: "canvas" } })} title="The whole notebook as a graph you can branch from (V)" data-testid="open-canvas"><Network />Canvas</button>
         <button className={cn("btn quiet sm", eff?.type === "compare" && "!bg-bg-3 !text-fg")} onClick={() => go({ view: { type: "compare" } })} title="Pinned results side by side (C)" data-testid="open-compare"><GitCompareArrows />Compare{pinned.length > 0 && <span className="num rounded-full bg-accent/20 px-1.5 text-[11px] text-accent">{pinned.length}</span>}</button>
         <Tip content="Keyboard shortcuts (?)"><button className="btn quiet sm !px-1.5" onClick={() => setHelp((h) => !h)} aria-label="Keyboard shortcuts"><Keyboard /></button></Tip>
         <button className="btn quiet sm !px-1.5" onClick={() => setShowRight(false)} aria-label="Hide the workspace" title="Hide the workspace"><PanelRightClose /></button>
@@ -196,11 +212,17 @@ export function Workspace({ sid }: { sid: string }) {
       {help && (
         <div className="shrink-0 border-b border-line bg-bg-1 px-4 py-3 text-xs dim">
           <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-            {[["/", "write a question"], ["1 – 7", "report sections"], ["← →", "previous / next marked session"], ["[ ]", "previous / next result"], ["C", "comparison"], ["E", "edit the interpretation"], ["⌘K", "search everything"], ["Esc", "close"]].map(([k, l]) => <span key={k} className="flex items-center gap-1.5"><Kbd>{k}</Kbd>{l}</span>)}
+            {[["/", "write a question"], ["V", "research canvas"], ["1 – 7", "report sections"], ["← →", "previous / next marked session"], ["[ ]", "previous / next result"], ["C", "comparison"], ["E", "edit the interpretation"], ["⌘K", "search everything"], ["Esc", "close"]].map(([k, l]) => <span key={k} className="flex items-center gap-1.5"><Kbd>{k}</Kbd>{l}</span>)}
           </div>
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className={cn("min-h-0 flex-1", eff?.type === "canvas" ? "overflow-hidden" : "overflow-auto")}>
+        {eff?.type === "canvas" && <Canvas sid={sid} stamp={messages.length} busy={act.isPending} wide={wide} onWide={setWide} onOpen={(t) => { setWide(false); actions.open(t); }}
+          onBranch={(text, version_id) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/branch`, { text, version_id }))} onSelect={actions.select} onAnalyse={actions.analyse} />}
+        {eff?.type === "message" && msg?.content.view === "hypothesis" && <HypothesisView runId={msg.content.run_id} busy={act.isPending} onSelect={(key, what) => actions.select(msg.content.run_id, key, what)} />}
+        {eff?.type === "message" && msg?.content.view === "execution" && <ExecutionView runId={msg.content.run_id} />}
+        {eff?.type === "message" && msg?.content.view === "challenge" && <ChallengeView runId={msg.content.run_id} />}
+        {eff?.type === "message" && msg?.content.view === "analysis" && <AnalysisView c={msg.content} />}
         {eff?.type === "run" && <Report key={eff.runId} runId={eff.runId} sid={sid} trials={data.trials || 1} tab={tab} setTab={setTab} which={which} setWhich={setWhich} day={day} onDay={(d) => { setDay(d); if (d && tab !== "calendar") setTab("calendar"); }} onAsk={send} onPin={(id) => pin(id)} pinned={pinned.includes(eff.runId)} />}
         {eff?.type === "setup" && planMsg && <Setup plan={planMsg.content} busy={act.isPending} refresh={actions.refresh} onConfirm={actions.confirm} onApply={(draft, run) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/edit`, { draft, run }))} />}
         {eff?.type === "message" && msg?.content.view === "sweep" && <SweepView c={msg.content} onOpen={(id) => go({ view: { type: "run", runId: id }, tab: "overview" })} onPin={(id) => pin(id)} pinned={pinned} />}
@@ -221,7 +243,8 @@ export function Workspace({ sid }: { sid: string }) {
         <Sparkles className="size-4 shrink-0 text-accent" />
         <Title sid={sid} title={data.session.title} />
         <span className="flex-1" />
-        {data.trials > 1 && <Tip content="How many configurations this notebook has tested so far. Significance figures are adjusted for it: the more you try, the more a good-looking result is expected by chance."><span className="chip !h-6"><History className="size-3.5" />{data.trials} tested</span></Tip>}
+        {data.trials > 1 && <Tip content="How many distinct configurations this notebook has tested so far, including every one inside plans, maps and stress runs - not only the ones shown. Significance figures are corrected for it."><span className="chip !h-6" data-testid="trials-chip"><History className="size-3.5" />{data.trials} tested</span></Tip>}
+        {((data as any).ledger?.holdouts || []).slice(-1).map((h: any) => <HoldoutChip key={h.id} h={h} compact />)}
         <InterpreterChip />
         {!showRight && <button className="btn quiet sm !px-1.5" onClick={() => setShowRight(true)} aria-label="Show the workspace" title="Show the workspace"><PanelRightOpen /></button>}
       </div>
@@ -243,7 +266,7 @@ export function Workspace({ sid }: { sid: string }) {
 
   return (
     <div className="lab h-full min-h-0">
-      {showRight ? (
+      {showRight && wide && eff?.type === "canvas" ? right : showRight ? (
         <Group orientation="horizontal" id="lab-split">
           <Panel defaultSize="40%" minSize="26%" id="lab-chat">{left}</Panel>
           <Separator className="w-px bg-line transition-colors hover:bg-accent data-[separator=active]:bg-accent" />
