@@ -96,6 +96,9 @@ class DayChain:
         self.theta = df["theta"].to_numpy()[order].astype(float)
         self.vega = df["vega"].to_numpy()[order].astype(float)
         self.r = r
+        self.kind = "quotes"  # "trades" when built from trade bars (set by the engine)
+        self.contract_stats: dict = {}  # trade bars: per-contract session statistics (reporting only)
+        self.multipliers: dict = {}  # contract key -> multiplier from the provider's contract definition
         self.snap_ts, self.snap_start = np.unique(self.ts, return_index=True)
         self.snap_end = np.r_[self.snap_start[1:], len(self.ts)]
         self.greeks_computed = False
@@ -148,6 +151,66 @@ class DayChain:
 def _f(x) -> float | None:
     x = float(x)
     return x if math.isfinite(x) else None
+
+
+def expand_trade_bars(bars: pl.DataFrame, ticks: list[int], ser: "UnderlyingSeries", d: date) -> tuple[pl.DataFrame, dict]:
+    """Per-contract option TRADE bars -> the chain as it could be observed at each engine tick.
+
+    At tick T a contract appears only if it has printed today in a bar that ENDED at or
+    before T, and it is priced at that bar's close; `quote_ts` is the end of that bar, so the
+    age of the print is always known and stale prints can be refused. Nothing is carried
+    over from earlier sessions, no bid/ask is created (rows carry `last` only) and a
+    contract that has not traded yet does not exist in the chain. The underlying price
+    attached to each row is the one at the print, not at the tick.
+
+    Returns the snapshot frame and per-contract statistics for the whole session (used for
+    reporting only, never for decisions)."""
+    if bars is None or bars.is_empty() or not ticks:
+        return pl.DataFrame(), {}
+    T = np.asarray(sorted(ticks), np.int64)
+    b = bars.sort(["occ", "ts"]).with_columns((pl.col("ts").dt.epoch("s") + 60).alias("_end"), pl.col("expiration").cast(pl.Int32).alias("_e"))
+    close_t = int(cal.session_bounds(d)[1].timestamp())
+    cols: dict[str, list] = {k: [] for k in ("ts", "expiration", "strike", "right", "last", "volume", "underlying_price", "quote_ts")}
+    stats: dict[int, dict] = {}
+    for (occ,), g in b.group_by(["occ"], maintain_order=True):
+        end = np.minimum(g["_end"].to_numpy().astype(np.int64), close_t)
+        px = g["close"].to_numpy().astype(float)
+        cum = np.cumsum(g["volume"].fill_null(0).to_numpy().astype(np.int64))
+        idx = np.searchsorted(end, T, side="right") - 1
+        m = idx >= 0
+        if not m.any():
+            continue
+        ii = idx[m]
+        n = int(m.sum())
+        e, k, r = int(g["_e"][0]), float(g["strike"][0]), str(g["right"][0])
+        ui = np.searchsorted(ser.end, end[ii], side="right") - 1
+        und = np.where(ui >= 0, ser.c[np.maximum(ui, 0)], np.nan)
+        cols["ts"].append(T[m])
+        cols["expiration"].append(np.full(n, e, np.int32))
+        cols["strike"].append(np.full(n, k))
+        cols["right"].append(np.full(n, r))
+        cols["last"].append(px[ii])
+        cols["volume"].append(cum[ii])
+        cols["underlying_price"].append(und)
+        cols["quote_ts"].append(end[ii])
+        key = int(contract_key(np.array([e]), np.array([r == "C"]), np.array([k]))[0])
+        stats[key] = {"occ": occ, "bars": int(len(end)), "volume": int(cum[-1]), "first_print": int(end[0]), "last_print": int(end[-1])}
+    if not cols["ts"]:
+        return pl.DataFrame(), stats
+    df = pl.DataFrame({
+        "ts": pl.from_epoch(pl.Series(np.concatenate(cols["ts"])), time_unit="s").dt.replace_time_zone("UTC").cast(pl.Datetime("us", "UTC")),
+        "expiration": pl.Series(np.concatenate(cols["expiration"])).cast(pl.Date),
+        "strike": np.concatenate(cols["strike"]),
+        "right": np.concatenate(cols["right"]),
+        "last": np.concatenate(cols["last"]),
+        "volume": np.concatenate(cols["volume"]),
+        "underlying_price": np.concatenate(cols["underlying_price"]),
+        "quote_ts": pl.from_epoch(pl.Series(np.concatenate(cols["quote_ts"])), time_unit="s").dt.replace_time_zone("UTC").cast(pl.Datetime("us", "UTC")),
+    })
+    null = lambda t: pl.lit(None, dtype=t)
+    df = df.with_columns(null(pl.Float64).alias("bid"), null(pl.Float64).alias("ask"), null(pl.Int32).alias("bid_size"), null(pl.Int32).alias("ask_size"), null(pl.Int64).alias("open_interest"),
+                         null(pl.Float32).alias("iv"), null(pl.Float32).alias("delta"), null(pl.Float32).alias("gamma"), null(pl.Float32).alias("theta"), null(pl.Float32).alias("vega"))
+    return df, stats
 
 
 class UnderlyingSeries:
@@ -336,8 +399,8 @@ class IvHistory:
     iv: np.ndarray
 
     @classmethod
-    def load(cls, store: MarketStore, sym: str) -> "IvHistory":
-        df = store.read_iv_history(sym)
+    def load(cls, store: MarketStore, sym: str, dataset=None) -> "IvHistory":
+        df = store.read_iv_history(sym, dataset)
         if df.is_empty():
             return cls(np.array([], np.int64), np.array([]))
         df = df.filter(pl.col("atm_iv_30d").is_not_null())

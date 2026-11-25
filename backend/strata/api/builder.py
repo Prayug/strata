@@ -60,7 +60,7 @@ def preview(strategy: dict, day: date | None, time: str, execution: dict | None)
                 break
     meta = st.symbol_meta(cfg.symbol)
     base = {"date": d.isoformat(), "time": cal.fmt_hhmm(cal.minute_of_day_et(t * 1_000_000_000)), "ts": t, "spot": spot, "symbol": cfg.symbol, "fallback": fallback_note,
-            "synthetic": meta.synthetic, "available_days": [days[0].isoformat(), days[-1].isoformat()]}
+            "synthetic": st.is_synthetic(cfg.symbol), "available_days": [days[0].isoformat(), days[-1].isoformat()]}
     if sel is None:
         return base | {"error": why, "details": details}
     mult = meta.multiplier

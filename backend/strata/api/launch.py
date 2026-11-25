@@ -22,13 +22,9 @@ def backtest_cache_key(cfg: BacktestConfig, store: MarketStore | None = None) ->
         m = s.symbol_meta(x.symbol)
         if x.vol_symbol or m.vol_index:
             syms.add(x.vol_symbol or m.vol_index)
-        from strata.engine.conditions import extra_symbols
-        try:
-            syms |= set(extra_symbols(x.entry.conditions))
-        except Exception:  # noqa: BLE001
-            pass
+        syms |= x.symbols()
     vers = {k: s.dataset_version(k) for k in sorted(syms)}
-    synthetic = any(s.symbol_meta(k).synthetic for k in syms)
+    synthetic = any(s.is_synthetic(k) for k in syms)
     h = hashlib.sha256((cfg.canonical_json() + json.dumps(vers, sort_keys=True) + s.events_version() + ENGINE_VERSION).encode()).hexdigest()[:24]
     return h, vers, synthetic
 
@@ -61,6 +57,27 @@ def launch_study(jobs, cfg, name: str = "", force: bool = False) -> dict:
         if hit:
             return {"id": hit["id"], "cached": True}
     rid = db.create_run("study", name or cfg.label or f"{cfg.symbol} market study", cfg.model_dump(mode="json"), None, key,
-                        hashlib.sha256(body.encode()).hexdigest()[:16], vers, ENGINE_VERSION, bool(meta.synthetic))
+                        hashlib.sha256(body.encode()).hexdigest()[:16], vers, ENGINE_VERSION, bool(s.is_synthetic(cfg.symbol)))
     jobs.submit(rid, "study", {"config": cfg.model_dump(mode="json")})
+    return {"id": rid, "cached": False}
+
+
+def launch_research(jobs, spec: dict, name: str = "", force: bool = False) -> dict:
+    """Submit a research pipeline run (coverage -> free acquisition -> signals -> selective
+    option data -> simulation -> report). The run is stored under the kind of its result
+    ("study" or "backtest") so every results view can open it."""
+    from strata.research.pipeline import fingerprint
+    s = MarketStore()
+    kind = "study" if spec["kind"] == "study" else "backtest"
+    key = fingerprint(spec, s)
+    if not force:
+        hit = db.find_cached(key)
+        if hit and (hit.get("summary") or {}).get("outcome") == "completed":
+            return {"id": hit["id"], "cached": True}
+    cfg = spec["study"] if kind == "study" else spec["backtest"]
+    sym = (cfg.get("symbol") if kind == "study" else cfg["strategies"][0]["symbol"])
+    body = json.dumps(cfg, sort_keys=True, separators=(",", ":"), default=str)
+    rid = db.create_run(kind, name or spec.get("label") or f"{sym} research", {**cfg, "_research": {k: spec.get(k) for k in ("mode", "requested", "approvals", "provider")}}, None, None,
+                        hashlib.sha256(body.encode()).hexdigest()[:16], {}, ENGINE_VERSION, bool(s.is_synthetic(sym)))
+    jobs.submit(rid, "research", {"spec": spec})
     return {"id": rid, "cached": False}

@@ -30,7 +30,8 @@ from strata.engine.conditions import evaluate, extra_symbols, validate_tree
 from strata.engine.engine import Context
 from strata.engine.expr import Evaluator, ExprError
 from strata.engine.market import Events, IvHistory, UnderlyingSeries, day_num, from_day_num
-from strata.engine.models import CondNode, RegimeSettings
+from strata.engine.models import CondNode, RegimeSettings, SeqStage
+from strata.engine.sequence import SequenceTracker
 
 
 class Level(BaseModel):
@@ -50,7 +51,8 @@ class StudyConfig(BaseModel):
     start: Optional[date] = None
     end: Optional[date] = None
     condition: CondNode = CondNode()
-    entry_time: str = "open"  # open | close | HH:MM (New York)
+    sequence: list[SeqStage] = Field(default_factory=list)  # event sequence: the observation starts when its last stage happens
+    entry_time: str = "open"  # open | close | HH:MM (New York) | signal (the first tick on which the rule fires)
     reference: Literal["entry", "open", "prev_close"] = "entry"
     target: Optional[Level] = None
     stop: Optional[Level] = None
@@ -83,6 +85,13 @@ class _Host:
         self.events = Events(store.read_events())
         meta = store.symbol_meta(cfg.symbol)
         syms = {cfg.symbol} | extra_symbols(cfg.condition)
+        for st_ in cfg.sequence:
+            from strata.engine import expr as _X
+            for src in [st_.when] + list(st_.capture.values()):
+                try:
+                    syms |= _X.symbols_used(src)
+                except _X.ExprError:
+                    pass
         if meta.vol_index:
             syms.add(meta.vol_index)
         for sym in syms:
@@ -129,18 +138,21 @@ def _first_touch(h: np.ndarray, l: np.ndarray, o: np.ndarray, tgt: float | None,
     return it, is_
 
 
-def run_study(cfg: StudyConfig | dict, store: MarketStore | None = None, max_sessions_out: int = 4000) -> dict:
+def run_study(cfg: StudyConfig | dict, store: MarketStore | None = None, max_sessions_out: int = 4000, host: "_Host | None" = None) -> dict:
     if isinstance(cfg, dict):
         cfg = StudyConfig.model_validate(cfg)
     store = store or MarketStore()
     errs = validate_tree(cfg.condition)
+    for st_ in cfg.sequence:
+        from strata.engine.expr import validate as _v
+        errs += [f"sequence stage {st_.name!r}: {x}" for src in [st_.when] + list(st_.capture.values()) for x in _v(src)]
     for lv in (cfg.target, cfg.stop):
         if lv is not None and lv.kind == "expr":
             from strata.engine.expr import validate
             errs += validate(lv.expr or "")
     if errs:
         raise ValueError("; ".join(errs))
-    host = _Host(store, cfg)
+    host = host or _Host(store, cfg)  # a grid of studies on one symbol can share the loaded price series
     ser = host.series.get(cfg.symbol)
     if ser is None or ser.empty():
         raise LookupError(f"No historical price data is stored for {cfg.symbol}. Download it in Data - free daily history is available from Yahoo.")
@@ -150,7 +162,8 @@ def run_study(cfg: StudyConfig | dict, store: MarketStore | None = None, max_ses
     first = from_day_num(ser.days[0])
     start = max(cfg.start or first, first)
     end = min(cfg.end or from_day_num(ser.days[-1]), from_day_num(ser.days[-1]))
-    entry_minute = None if cfg.entry_time in ("open", "close") else cal.parse_hhmm(cfg.entry_time)
+    entry_minute = None if cfg.entry_time in ("open", "close", "signal") else cal.parse_hhmm(cfg.entry_time)
+    study_extra: dict = {}
     rows: list[dict] = []
     base_first: list[str] = []
     excluded: dict[str, list[str]] = {}
@@ -160,11 +173,157 @@ def run_study(cfg: StudyConfig | dict, store: MarketStore | None = None, max_ses
 
     a0 = int(np.searchsorted(ser.days, day_num(start)))
     b0 = int(np.searchsorted(ser.days, day_num(end), side="right"))
+    signal_mode = cfg.entry_time == "signal" or bool(cfg.sequence)
+    tracker = SequenceTracker(cfg.sequence)
+    base_dates: list[str] = []
+    base_end: list[float] = []
     for di in range(max(a0, 1), b0):
         d = from_day_num(ser.days[di])
         s, e = int(ser.day_start[di]), int(ser.day_end[di])
         res = int(ser.d_res[di])
         t_open, t_close = int(ser.d_open_t[di]), int(ser.d_end[di])
+        ctx.today, ctx.today_num = d, int(ser.days[di])
+        ctx.close_minute = 570 + (t_close - t_open) // 60
+
+        def at(t: int):
+            ctx.t = t
+            ctx.prev_t = max(t_open, int(ser.end[max(int(np.searchsorted(ser.end, t, side="left")) - 1, s)])) if t > t_open else t
+            ctx.minute = 570 + (t - t_open) // 60
+            ctx._feat.clear()
+
+        def measure(t_e: int, qualifies: bool, explain: list, count_base: bool) -> bool:
+            """Outcome of an observation starting at t_e. Returns False when it was excluded."""
+            at(t_e)
+            ev = Evaluator(ctx)
+            entry_px = ser.price_at(t_e, d)
+            ref = {"entry": entry_px, "open": float(ser.o[s]), "prev_close": float(ser.d_c[di - 1])}[cfg.reference]
+            if not (math.isfinite(entry_px) and math.isfinite(ref) and ref > 0):
+                excluded.setdefault("no price at the entry time", []).append(d.isoformat())
+                return False
+
+            def level(lv: Level | None):
+                if lv is None:
+                    return None
+                if lv.kind == "pct":
+                    return ref * (1 + lv.value / 100)
+                if lv.kind == "abs":
+                    return ref + lv.value
+                v = ev.eval(lv.expr or "")
+                return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
+
+            try:
+                tgt, stp = level(cfg.target), level(cfg.stop)
+            except ExprError as ex:
+                raise ValueError(str(ex)) from None
+            if (cfg.target is not None and tgt is None) or (cfg.stop is not None and stp is None):
+                excluded.setdefault("target/stop level not evaluable: " + (", ".join(sorted(ev.missing)) or "missing data"), []).append(d.isoformat())
+                return False
+            # horizon end
+            if cfg.horizon.kind == "session":
+                t_h = t_close
+            elif cfg.horizon.kind == "time":
+                t_h = t_open + (cal.parse_hhmm(cfg.horizon.time) - 570) * 60
+                if res >= 86400 or t_h <= t_e:
+                    excluded.setdefault(f"horizon 'until {cfg.horizon.time}' needs intraday bars" if res >= 86400 else "horizon ends before the entry", []).append(d.isoformat())
+                    return False
+            else:
+                dj = min(di + cfg.horizon.sessions, len(ser.days) - 1)
+                if dj < di + cfg.horizon.sessions:
+                    return False  # not enough future sessions yet
+                t_h = int(ser.d_end[dj])
+            # bars strictly after the entry instant up to the horizon
+            i0 = int(np.searchsorted(ser.ts, t_e, side="left"))
+            i1 = int(np.searchsorted(ser.end, t_h, side="right"))
+            h, l, o, c = ser.h[i0:i1], ser.l[i0:i1], ser.o[i0:i1], ser.c[i0:i1]
+            if h.size == 0:
+                if cfg.target is None and cfg.stop is None:
+                    return False
+                excluded.setdefault("no bars between entry and horizon", []).append(d.isoformat())
+                return False
+            up = (cfg.direction == "up") if cfg.direction else (tgt is None or tgt >= entry_px)
+            stop_up = stp is not None and stp > entry_px
+            it, is_ = _first_touch(h, l, o, tgt, stp, up, stop_up)
+            path_res = int(ser.res[i0:i1].max())
+            if cfg.measure == "close":
+                # outcome decided by the final price of the horizon alone (no path dependence, so never ambiguous)
+                last = float(c[-1])
+                strict = cfg.target is not None and cfg.target.kind != "expr" and cfg.target.value == 0
+                hit = tgt is not None and ((last > tgt if strict else last >= tgt) if up else (last < tgt if strict else last <= tgt))
+                first_, it, is_ = ("target" if hit else "neither"), None, None
+            elif it is not None and is_ is not None and it == is_:
+                # same bar: unknowable, unless the bar opened beyond exactly one of the levels
+                gap_t = (o[it] >= tgt) if up else (o[it] <= tgt)
+                gap_s = (o[it] >= stp) if stop_up else (o[it] <= stp)
+                first_ = "target" if gap_t and not gap_s else "stop" if gap_s and not gap_t else "ambiguous"
+            elif it is not None and (is_ is None or it < is_):
+                first_ = "target"
+            elif is_ is not None:
+                first_ = "stop"
+            else:
+                first_ = "neither"
+            t_tgt = None
+            if it is not None and path_res < 86400:
+                t_tgt = (int(ser.end[i0 + it]) - t_e) / 60.0 if not ((o[it] >= tgt) if up else (o[it] <= tgt)) else (int(ser.ts[i0 + it]) - t_e) / 60.0
+            sign = 1.0 if up else -1.0
+            mfe = float(((h.max() if up else -l.min()) - sign * entry_px) / entry_px * 100)
+            mae = float(((l.min() if up else -h.max()) - sign * entry_px) / entry_px * 100)
+            end_ret = float((c[-1] / entry_px - 1) * 100)
+            if count_base:
+                base_first.append(first_)
+                base_dates.append(d.isoformat())
+                base_end.append(round(end_ret, 3))
+            if not qualifies:
+                return True
+            resl = "1d" if path_res >= 86400 else f"{path_res // 60}m"
+            res_count[resl] = res_count.get(resl, 0) + 1
+            vix = None
+            if vser is not None:
+                pi = vser.prev_day_index(d)
+                vix = float(vser.d_c[pi]) if pi >= 0 else None
+            trend, _vol = ctx.regime(cfg.symbol)
+            rows.append({
+                "date": d.isoformat(), "entry_price": round(entry_px, 4), "reference": round(ref, 4), "target_level": _f(tgt), "stop_level": _f(stp),
+                "outcome": first_, "target_touched": it is not None, "stop_touched": is_ is not None, "minutes_to_target": _f(t_tgt),
+                "entry_minute": int(570 + (t_e - t_open) // 60), "target_minute": (int(570 + (t_e - t_open) // 60 + round(t_tgt))) if t_tgt is not None else None,
+                "mfe_pct": round(mfe, 4), "mae_pct": round(mae, 4), "end_return_pct": round(end_ret, 4), "resolution": resl,
+                "prev_return_pct": _f((ser.d_c[di - 1] / ser.d_c[di - 2] - 1) * 100) if di >= 2 else None, "gap_pct": _f((ser.o[s] / ser.d_c[di - 1] - 1) * 100),
+                "vix_prev": _f(vix), "trend": trend, "weekday": d.weekday(), "why": [x["text"] for x in explain if not x.get("group")][:6],
+            })
+            if h.size <= 800:
+                paths.append((h / entry_px - 1, l / entry_px - 1, o / entry_px - 1, (ser.end[i0:i1] - t_e) / 60.0, path_res))
+            return True
+
+        if signal_mode:
+            # the observation starts at the first tick on which the rule (and its event sequence) fires
+            if res >= 86400:
+                excluded.setdefault("an intraday trigger cannot be observed with daily bars", []).append(d.isoformat())
+                continue
+            if cfg.sequence and res > 300:
+                # the steps would collapse onto a handful of hourly ticks: excluded, never read as "did not happen"
+                excluded.setdefault(f"a sequence of intraday events needs 5-minute or finer bars; only {res // 60}-minute bars are stored", []).append(d.isoformat())
+                continue
+            tracker.reset()
+            ctx.seq = tracker
+            found, missing = None, set()
+            for t in [t_open] + [int(x) for x in ser.end[s:e] if t_open < x <= t_close]:
+                at(t)
+                done, sx, miss = tracker.advance(ctx)
+                missing |= {f"sequence: missing {m}" for m in miss}
+                if not done:
+                    continue
+                okc, expl, na = evaluate(cfg.condition, ctx)
+                missing |= {x.split("[not evaluable: ")[-1].rstrip("]") if "[not evaluable: " in x else x for x in na}
+                if okc:
+                    found = (t, sx + expl)
+                    break
+            if found is None and missing:
+                excluded.setdefault(("rule not evaluable: " + "; ".join(sorted(missing)))[:200], []).append(d.isoformat())
+                continue
+            if not measure(t_open, False, [], True):  # baseline: every evaluated session, observed from its open
+                continue
+            if found is not None:
+                measure(found[0], True, found[1], False)
+            continue
         if cfg.entry_time == "open":
             t_e = t_open
         elif cfg.entry_time == "close":
@@ -174,113 +333,26 @@ def run_study(cfg: StudyConfig | dict, store: MarketStore | None = None, max_ses
             if not (t_open <= t_e <= t_close) or (res >= 86400) or (t_e - t_open) % res != 0:
                 excluded.setdefault(f"entry time {cfg.entry_time} ET not observable with {'daily' if res >= 86400 else str(res // 60) + '-minute'} bars", []).append(d.isoformat())
                 continue
-        ctx.today, ctx.today_num = d, int(ser.days[di])
         ctx.t = ctx.prev_t = t_e
         ctx.minute = 570 + (t_e - t_open) // 60
-        ctx.close_minute = 570 + (t_close - t_open) // 60
         ctx._feat.clear()
         ok, explain, na = evaluate(cfg.condition, ctx)
         if na:
             key = "rule not evaluable: " + "; ".join(sorted({x.split("[not evaluable: ")[-1].rstrip("]") if "[not evaluable: " in x else x for x in na}))
             excluded.setdefault(key[:200], []).append(d.isoformat())
             continue
-        ev = Evaluator(ctx)
-        entry_px = ser.price_at(t_e, d)
-        ref = {"entry": entry_px, "open": float(ser.o[s]), "prev_close": float(ser.d_c[di - 1])}[cfg.reference]
-        if not (math.isfinite(entry_px) and math.isfinite(ref) and ref > 0):
-            excluded.setdefault("no price at the entry time", []).append(d.isoformat())
-            continue
-
-        def level(lv: Level | None):
-            if lv is None:
-                return None
-            if lv.kind == "pct":
-                return ref * (1 + lv.value / 100)
-            if lv.kind == "abs":
-                return ref + lv.value
-            v = ev.eval(lv.expr or "")
-            return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
-
-        try:
-            tgt, stp = level(cfg.target), level(cfg.stop)
-        except ExprError as ex:
-            raise ValueError(str(ex)) from None
-        if (cfg.target is not None and tgt is None) or (cfg.stop is not None and stp is None):
-            excluded.setdefault("target/stop level not evaluable: " + (", ".join(sorted(ev.missing)) or "missing data"), []).append(d.isoformat())
-            continue
-        # horizon end
-        if cfg.horizon.kind == "session":
-            t_h = t_close
-        elif cfg.horizon.kind == "time":
-            t_h = t_open + (cal.parse_hhmm(cfg.horizon.time) - 570) * 60
-            if res >= 86400 or t_h <= t_e:
-                excluded.setdefault(f"horizon 'until {cfg.horizon.time}' needs intraday bars" if res >= 86400 else "horizon ends before the entry", []).append(d.isoformat())
-                continue
-        else:
-            dj = min(di + cfg.horizon.sessions, len(ser.days) - 1)
-            if dj < di + cfg.horizon.sessions:
-                continue  # not enough future sessions yet
-            t_h = int(ser.d_end[dj])
-        # bars strictly after the entry instant up to the horizon
-        i0 = int(np.searchsorted(ser.ts, t_e, side="left"))
-        i1 = int(np.searchsorted(ser.end, t_h, side="right"))
-        h, l, o, c = ser.h[i0:i1], ser.l[i0:i1], ser.o[i0:i1], ser.c[i0:i1]
-        if h.size == 0:
-            if cfg.target is None and cfg.stop is None:
-                continue
-            excluded.setdefault("no bars between entry and horizon", []).append(d.isoformat())
-            continue
-        up = (cfg.direction == "up") if cfg.direction else (tgt is None or tgt >= entry_px)
-        stop_up = stp is not None and stp > entry_px
-        it, is_ = _first_touch(h, l, o, tgt, stp, up, stop_up)
-        path_res = int(ser.res[i0:i1].max())
-        if cfg.measure == "close":
-            # outcome decided by the final price of the horizon alone (no path dependence, so never ambiguous)
-            last = float(c[-1])
-            strict = cfg.target is not None and cfg.target.kind != "expr" and cfg.target.value == 0
-            hit = tgt is not None and ((last > tgt if strict else last >= tgt) if up else (last < tgt if strict else last <= tgt))
-            first_, it, is_ = ("target" if hit else "neither"), None, None
-        elif it is not None and is_ is not None and it == is_:
-            # same bar: unknowable, unless the bar opened beyond exactly one of the levels
-            gap_t = (o[it] >= tgt) if up else (o[it] <= tgt)
-            gap_s = (o[it] >= stp) if stop_up else (o[it] <= stp)
-            first_ = "target" if gap_t and not gap_s else "stop" if gap_s and not gap_t else "ambiguous"
-        elif it is not None and (is_ is None or it < is_):
-            first_ = "target"
-        elif is_ is not None:
-            first_ = "stop"
-        else:
-            first_ = "neither"
-        t_tgt = None
-        if it is not None and path_res < 86400:
-            t_tgt = (int(ser.end[i0 + it]) - t_e) / 60.0 if not ((o[it] >= tgt) if up else (o[it] <= tgt)) else (int(ser.ts[i0 + it]) - t_e) / 60.0
-        sign = 1.0 if up else -1.0
-        mfe = float(((h.max() if up else -l.min()) - sign * entry_px) / entry_px * 100)
-        mae = float(((l.min() if up else -h.max()) - sign * entry_px) / entry_px * 100)
-        end_ret = float((c[-1] / entry_px - 1) * 100)
-        base_first.append(first_)
-        resl = "1d" if path_res >= 86400 else f"{path_res // 60}m"
-        if not ok:
-            continue
-        res_count[resl] = res_count.get(resl, 0) + 1
-        vix = None
-        if vser is not None:
-            pi = vser.prev_day_index(d)
-            vix = float(vser.d_c[pi]) if pi >= 0 else None
-        trend, _vol = ctx.regime(cfg.symbol)
-        rows.append({
-            "date": d.isoformat(), "entry_price": round(entry_px, 4), "reference": round(ref, 4), "target_level": _f(tgt), "stop_level": _f(stp),
-            "outcome": first_, "target_touched": it is not None, "stop_touched": is_ is not None, "minutes_to_target": _f(t_tgt),
-            "mfe_pct": round(mfe, 4), "mae_pct": round(mae, 4), "end_return_pct": round(end_ret, 4), "resolution": resl,
-            "prev_return_pct": _f((ser.d_c[di - 1] / ser.d_c[di - 2] - 1) * 100) if di >= 2 else None, "gap_pct": _f((ser.o[s] / ser.d_c[di - 1] - 1) * 100),
-            "vix_prev": _f(vix), "trend": trend, "why": [x["text"] for x in explain if not x.get("group")][:6],
-        })
-        if h.size <= 800:
-            paths.append((h / entry_px - 1, l / entry_px - 1, o / entry_px - 1, (ser.end[i0:i1] - t_e) / 60.0, path_res))
-    return _summarise(cfg, rows, base_first, excluded, paths, res_count, start, end, meta, max_sessions_out)
+        measure(t_e, ok, explain, True)
+    # every evaluated session (the baseline), kept compactly so any statistic can be traced back to its observations
+    study_extra["baseline_sessions"] = {"dates": base_dates, "outcomes": "".join("tsna"[("target", "stop", "neither", "ambiguous").index(x)] for x in base_first), "end_returns": base_end}
+    out = _summarise(cfg, rows, base_first, excluded, paths, res_count, start, end, store.is_synthetic(cfg.symbol), max_sessions_out)
+    out.update(study_extra)
+    out["excluded_sessions"] = {k: v for k, v in excluded.items()}
+    if signal_mode:
+        out["notes"].insert(0, "The observation starts at the first tick on which the rule fires. The baseline is every evaluated session observed from its open (the rule has no start time on other sessions).")
+    return out
 
 
-def _summarise(cfg: StudyConfig, rows, base_first, excluded, paths, res_count, start, end, meta, max_out) -> dict:
+def _summarise(cfg: StudyConfig, rows, base_first, excluded, paths, res_count, start, end, synthetic, max_out) -> dict:
     n = len(rows)
     has_t, has_s = cfg.target is not None, cfg.stop is not None
     cnt = {k: sum(1 for r in rows if r["outcome"] == k) for k in ("target", "stop", "neither", "ambiguous")}
@@ -411,7 +483,7 @@ def _summarise(cfg: StudyConfig, rows, base_first, excluded, paths, res_count, s
     notes.append("Underlying price behaviour only - these are not option returns.")
     return {
         "kind": "study", "config": cfg.model_dump(mode="json"), "symbol": cfg.symbol, "period": [start.isoformat(), end.isoformat()],
-        "synthetic": bool(meta.synthetic), "stats": stats, "by_year": years, "regimes": regimes, "cumulative": cum, "time_of_day": tod,
+        "synthetic": bool(synthetic), "stats": stats, "by_year": years, "regimes": regimes, "cumulative": cum, "time_of_day": tod,
         "mfe_hist": hist(mfe), "mae_hist": hist(mae), "end_hist": hist(endr), "sensitivity": sens,
         "excluded": [{"reason": k, "count": len(v), "dates": v[:12]} for k, v in sorted(excluded.items(), key=lambda kv: -len(kv[1]))],
         "sessions": rows[-max_out:], "sessions_truncated": n > max_out, "notes": notes,

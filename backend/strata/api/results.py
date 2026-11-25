@@ -87,8 +87,8 @@ def save_study(rid: str, res: dict) -> dict:
 
 def load_run_result(run: dict) -> dict:
     """Stored result payload of a finished backtest / portfolio / study run."""
-    if run["kind"] == "study":
-        p = run_dir(run["id"]) / "study.json"
+    if run["kind"] in ("study", "discovery"):
+        p = run_dir(run["id"]) / f"{run['kind']}.json"
         if not p.exists():
             raise FileNotFoundError(p)
         return json.loads(p.read_text())

@@ -127,8 +127,9 @@ export function Shell() {
 
 function Palette({ onClose }: { onClose: () => void }) {
   const nav = useNavigate();
-  const runs = useQuery({ queryKey: ["runs", "palette"], queryFn: () => api.get<any[]>("/api/backtests?kind=backtest,portfolio,optimization&limit=30") });
-  const sessions = useQuery({ queryKey: ["ai-sessions"], queryFn: () => api.get<any[]>("/api/ai/sessions") });
+  // every run and every research notebook is searchable here: by name, symbol, id, pricing basis, or a question that was asked
+  const runs = useQuery({ queryKey: ["runs", "palette"], queryFn: () => api.get<any[]>("/api/runs/search?limit=300") });
+  const sessions = useQuery({ queryKey: ["notebooks", ""], queryFn: () => api.get<any[]>("/api/ai/search?q=&limit=200") });
   const strategies = useQuery({ queryKey: ["strategies"], queryFn: () => api.get<any[]>("/api/strategies") });
   const go = (to: string) => {
     nav(to);
@@ -142,7 +143,7 @@ function Palette({ onClose }: { onClose: () => void }) {
     <div className="cmdk-overlay" onClick={onClose}>
       <Command className="mx-auto mt-[14vh] w-[560px] overflow-hidden rounded-md border border-line-2 bg-bg-1 shadow-2xl" onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.key === "Escape" && onClose()}>
-        <Command.Input autoFocus placeholder="Jump to a page, run or strategy…" className="h-10 w-full border-b border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint" />
+        <Command.Input autoFocus placeholder="Search research, runs and strategies, or jump to a page…" className="h-10 w-full border-b border-line bg-transparent px-3 text-sm outline-none placeholder:text-faint" />
         <Command.List className="max-h-[52vh] overflow-auto p-1 text-xs">
           <Command.Empty className="p-3 text-muted">No matches.</Command.Empty>
           <Command.Group heading="Pages" className="[&_[cmdk-group-heading]]:label [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
@@ -153,16 +154,16 @@ function Palette({ onClose }: { onClose: () => void }) {
             ))}
           </Command.Group>
           <Command.Group heading="Research sessions" className="[&_[cmdk-group-heading]]:label [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
-            {(sessions.data || []).slice(0, 12).map((x) => (
-              <Command.Item key={x.id} value={`research ${x.title} ${x.id}`} onSelect={() => go(`/lab/${x.id}`)} className="flex items-center gap-2 rounded-sm px-2 py-1.5 data-[selected=true]:bg-bg-3">
+            {(sessions.data || []).map((x) => (
+              <Command.Item key={x.id} value={`research ${x.title} ${x.id} ${x.match || ""}`} onSelect={() => go(`/lab/${x.id}`)} className="flex items-center gap-2 rounded-sm px-2 py-1.5 data-[selected=true]:bg-bg-3">
                 <Sparkles className="size-3.5 text-muted" /> <span className="truncate">{x.title}</span>
               </Command.Item>
             ))}
           </Command.Group>
-          <Command.Group heading="Recent runs" className="[&_[cmdk-group-heading]]:label [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
+          <Command.Group heading="Runs" className="[&_[cmdk-group-heading]]:label [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
             {(runs.data || []).map((r) => (
-              <Command.Item key={r.id} value={`${r.name} ${r.id}`} onSelect={() => go(r.kind === "optimization" ? `/optimize/${r.id}` : `/results/${r.id}`)} className="flex items-center gap-2 rounded-sm px-2 py-1.5 data-[selected=true]:bg-bg-3">
-                <StatusDot status={r.status} /> <span className="truncate">{r.name}</span> <span className="ml-auto text-faint">{r.kind}</span>
+              <Command.Item key={r.id} value={`run ${r.name} ${r.id} ${(r.symbols || []).join(" ")} ${r.mode || ""} ${r.kind}`} onSelect={() => go(r.kind === "portfolio" ? `/portfolio/${r.id}` : `/results/${r.id}`)} className="flex items-center gap-2 rounded-sm px-2 py-1.5 data-[selected=true]:bg-bg-3">
+                <StatusDot status={r.status} /> <span className="truncate">{r.name}</span> <span className={cn("ml-auto whitespace-nowrap", r.mode === "modeled" ? "text-warn" : "text-faint")}>{r.mode === "modeled" ? "theoretical" : r.mode === "trades" ? "trade prints" : r.mode === "historical" ? "quotes" : r.kind}</span>
               </Command.Item>
             ))}
           </Command.Group>

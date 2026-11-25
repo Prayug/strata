@@ -29,7 +29,7 @@ from strata.data.store import MarketStore
 from strata.engine import execution as X
 from strata.engine.margin import MLeg, max_profit_loss, requirement
 from strata.engine.market import (DayChain, Events, IvHistory, UnderlyingSeries, atm_iv_from_chain, day_num,
-                                  from_day_num)
+                                  expand_trade_bars, from_day_num)
 from strata.engine.models import BacktestConfig, LegSpec
 from strata.engine.portfolio import Account, LegState, Position
 from strata.engine.selection import Selected, select_contracts
@@ -79,6 +79,8 @@ class Diagnostics:
     exercises: int = 0
     ambiguous_exits: int = 0
     expired_orders: int = 0
+    skipped_signals: list = field(default_factory=list)  # every signal that did not become a trade, with the reason
+    no_option_data: dict = field(default_factory=dict)  # symbol -> sessions with a signal clock but no stored option data
     excluded_sessions: dict = field(default_factory=dict)  # reason -> [dates]
     warnings: list = field(default_factory=list)
 
@@ -99,6 +101,12 @@ class Diagnostics:
             key = re.sub(pat, sub, key)
         key = key[:200]
         self.skipped_entries[key] = self.skipped_entries.get(key, 0) + 1
+
+    def skip_signal(self, t: int, signal_t: int, kind: str, reason: str, strategy: str = ""):
+        """Record one signal that could not be executed (kept individually so a report can
+        list every skipped signal, not just a count)."""
+        if len(self.skipped_signals) < 20000:
+            self.skipped_signals.append({"t": int(t), "signal_t": int(signal_t), "kind": kind, "reason": reason[:300], "strategy": strategy})
 
     def to_dict(self):
         d = self.__dict__.copy()
@@ -121,6 +129,7 @@ class Context:
         self.day_minutes: set[int] = set()
         self.is_last_tick = False
         self.strategy: Strategy | None = None
+        self.seq = None  # today's event-sequence state of the strategy being evaluated (see engine/sequence.py)
         self._feat: dict = {}
         self.events: Events = bt.events
 
@@ -150,7 +159,7 @@ class Context:
         px = s.price_at(t, self.today) if s is not None and not s.empty() else float("nan")
         if not math.isfinite(px):
             ch = self.bt.chains.get(sym)
-            if ch is not None:
+            if ch is not None and ch.kind == "quotes":
                 si = ch.snapshot_at(t)
                 if si >= 0:
                     u = ch.under[ch.rows(si)]
@@ -294,9 +303,9 @@ class Context:
         ch, si = self.chain(sym)
         if ch is None or si < 0:
             return None, "no option chain for this session", {}
-        if self.t - int(ch.snap_ts[si]) > self.bt.cfg.execution.max_quote_age_seconds:
-            return None, "latest chain snapshot is stale", {}
-        return select_contracts(ch, si, legs, self.price(sym or self.symbol), self.today, self.bt.cfg.execution.max_quote_age_seconds)
+        if self.t - int(ch.snap_ts[si]) > self.bt.max_age:
+            return None, ("no option trade has printed recently" if self.bt.trades else "latest chain snapshot is stale"), {}
+        return select_contracts(ch, si, legs, self.price(sym or self.symbol), self.today, self.bt.max_age)
 
     def open(self, selected: list[Selected], units: int, explain: list | None = None, tag: str = "", meta: dict | None = None):
         return self.bt.open_position(self.strategy, selected, units, self, explain or [], tag, meta or {})
@@ -313,12 +322,17 @@ class Context:
 
 class Backtester:
     def __init__(self, cfg: BacktestConfig, store: MarketStore | None = None, strategies: list[Strategy] | None = None,
-                 progress=None, should_cancel=None, record_paths: bool = True):
+                 progress=None, should_cancel=None, record_paths: bool = True, signals_only: bool = False):
         from strata.engine.rules import RuleStrategy
 
         self.cfg = cfg
         self.store = store or MarketStore()
         self.ex = cfg.execution
+        self.signals_only = signals_only  # evaluate entry rules on the underlying only; no option data is read
+        self.trades = cfg.pricing.mode == "trades" and not signals_only
+        # how old the latest observation of a contract may be before it is refused
+        self.max_age = cfg.execution.max_trade_age_seconds if self.trades else cfg.execution.max_quote_age_seconds
+        self.opt_ds: dict = {}
         self.account = Account(cfg.capital.initial_capital, cfg.capital.margin_model)
         self.strategies: list[Strategy] = strategies or [RuleStrategy(s, i) for i, s in enumerate(cfg.strategies)]
         for i, s in enumerate(self.strategies):
@@ -354,11 +368,10 @@ class Backtester:
             vs = s.vol_symbol or m.vol_index
             if vs:
                 syms.add(vs)
-        from strata.engine.conditions import extra_symbols
         for s in self.strategies:
             c = getattr(s, "cfg", None)
             if c is not None:
-                syms |= extra_symbols(c.entry.conditions) | extra_symbols(c.exits.custom)
+                syms |= c.symbols()  # every other symbol a rule reads, e.g. QQQ.prev_high
         bench = cfg.benchmark or opt_syms[0]
         syms.add(bench)
         self.bench = bench
@@ -368,7 +381,7 @@ class Backtester:
         for sym in sorted(syms):
             meta = self.store.symbol_meta(sym)
             self.metas[sym] = meta
-            if meta.synthetic:
+            if self.store.is_synthetic(sym):
                 self.synthetic = True
                 if not cfg.allow_synthetic:
                     raise DataUnavailable(f"{sym} is a SYNTHETIC dataset and allow_synthetic is false")
@@ -379,19 +392,52 @@ class Backtester:
                 self.diag.warnings.append(f"no price data for auxiliary symbol {sym}; rules that need it are reported as not evaluable")
                 continue
             ser = UnderlyingSeries(df, official=self.store.official_closes(sym, warm, cfg.end))
-            ser.split_adjusted = (meta.extra or {}).get("price_adjustment") == "split"
+            ser.split_adjusted = self.store.price_adjustment(sym) == "split"
+            ser.providers = {f"{r['provider']}:{_res_label(int(r['res']))}": int(r["n"]) for r in df.filter(pl.col("ts").dt.convert_time_zone("America/New_York").dt.date() >= cfg.start)
+                             .with_columns(pl.col("ts").dt.convert_time_zone("America/New_York").dt.date().alias("_d")).unique(subset=["_d"]).group_by("provider", "res").agg(pl.len().alias("n")).iter_rows(named=True)}
             if ser.split_adjusted:  # vendor prices are split-adjusted to today: express them in start-date share terms
                 ser.rescale(self.store.split_factor(sym, cfg.start))
             self.series[sym] = ser
             self.dataset_versions[sym] = self.store.dataset_version(sym)
-        self.modeled = cfg.pricing.mode == "modeled"
+        self.modeled = cfg.pricing.mode == "modeled" and not self.signals_only
+        self.datasets_used: dict = {}
         for sym in opt_syms:
-            days = self.store.option_days(sym)
-            if not self.modeled and not any(cfg.start <= d <= cfg.end for d in days):
-                have = f"stored chains cover {days[0]} to {days[-1]}" if days else "no option data is stored for this symbol"
-                raise DataUnavailable(f"No historical option quotes for {sym} between {cfg.start} and {cfg.end} ({have}). Strata does not fabricate option prices: "
-                                      "download option history in Data, run a Market Study on the underlying, or explicitly choose the Modeled mode.")
-            self.iv_hist[sym] = IvHistory.load(self.store, sym)
+            if self.signals_only:
+                self.opt_ds[sym] = None
+                continue
+            # one explicitly chosen option dataset per symbol and run: quotes and trade prints are never blended
+            obs = "trade" if self.trades else "quote"
+            ds = None if self.modeled else self.store.option_dataset(sym, obs, cfg.data.options_provider)
+            self.opt_ds[sym] = ds
+            if not self.modeled:
+                what = "option trade prints" if self.trades else "option quotes"
+                if ds is None:
+                    other = self.store.option_dataset(sym, "quote" if self.trades else "trade")
+                    hint = (f" Only {'bid/ask quotes' if self.trades else 'trade prints'} are stored ({other.id}); they are a different kind of observation and are not substituted." if other else "")
+                    prov = f" from provider {cfg.data.options_provider!r}" if cfg.data.options_provider else ""
+                    raise DataUnavailable(f"No historical {what} are stored for {sym}{prov}.{hint} Strata does not fabricate option prices: acquire option history, "
+                                          "run a Market Study on the underlying, or explicitly choose the Modeled mode.")
+                desc = self.store.descriptor(ds)
+                bars_fmt = desc.get("format") == "bars"
+                days = sorted(self.store.option_bar_index(sym, dataset=ds)["date"].unique().to_list()) if bars_fmt else self.store.option_days(sym, obs, dataset=ds)
+                if not any(cfg.start <= d <= cfg.end for d in days):
+                    have = f"{ds.id} covers {days[0]} to {days[-1]}" if days else f"{ds.id} is empty"
+                    raise DataUnavailable(f"No historical {what} for {sym} between {cfg.start} and {cfg.end} ({have}). Strata does not fabricate option prices: "
+                                          "acquire option history for this period, run a Market Study on the underlying, or explicitly choose the Modeled mode.")
+                self.datasets_used[sym] = {"dataset": ds.id, "provider": ds.provider, "observation": "trade prints" if self.trades else "bid/ask quotes", "resolution": ds.res,
+                                           "format": desc.get("format") or "snapshots", "license": desc.get("license", ""), "limitations": desc.get("limitations") or [],
+                                           "partial_sessions": sum(1 for d, v in self.store.session_states(ds).items() if v.get("status") != "complete" and cfg.start.isoformat() <= d <= cfg.end.isoformat())}
+                self._bars_fmt = getattr(self, "_bars_fmt", {})
+                self._bars_fmt[sym] = bars_fmt
+                if bars_fmt:
+                    defs = self.store.read_contracts(ds)
+                    self._mults = getattr(self, "_mults", {})
+                    if not defs.is_empty():
+                        from strata.engine.market import contract_key
+                        dd = defs.filter(pl.col("multiplier").is_not_null())
+                        keys = contract_key(dd["expiration"].cast(pl.Int32).to_numpy(), (dd["right"] == "C").to_numpy(), dd["strike"].to_numpy())
+                        self._mults[sym] = dict(zip(keys.tolist(), dd["multiplier"].to_list()))
+            self.iv_hist[sym] = IvHistory.load(self.store, sym, None if self.trades else ds)
             ca = self.store.read_corporate_actions(sym)
             for r in ca.iter_rows(named=True):
                 if r["action"] == "split" and r["ratio"]:
@@ -444,7 +490,7 @@ class Backtester:
         l.quote_ts = int(ch.quote_ts[i])
         l.bid_size, l.ask_size, l.volume = int(ch.bid_size[i]), int(ch.ask_size[i]), int(ch.volume[i])
         l.trade_based = bool(ch.trade_based[i])
-        l.stale = (t - l.quote_ts) > self.ex.max_quote_age_seconds or l.quote_ts > t
+        l.stale = (t - l.quote_ts) > self.max_age or l.quote_ts > t
         if l.stale:
             if l.quote_ts == getattr(l, "_stale_seen", None):
                 return  # same old quote seen again between option snapshots: count once
@@ -517,6 +563,8 @@ class Backtester:
         legs: list[LegState] = []
         cash = slip = comm = 0.0
         trade_based = False
+        print_ages: list[int] = []
+        trade_freq: list[float] = []
         for s in sel:
             sign = s.leg.sign
             if s.row < 0:  # stock
@@ -532,19 +580,25 @@ class Backtester:
                 continue
             i = s.row
             q = sign * s.leg.quantity * units
+            lmult = float(ch.multipliers.get(int(ch.key[i]), mult))  # the contract's own multiplier when its definition is stored
             px = X.fill_price(float(ch.bid[i]), float(ch.ask[i]), sign, ex)
             tb = bool(ch.trade_based[i])
             if tb:  # trade print, no quote: the print plus an explicit slippage assumption
                 px = max(0.0, px * (1 + sign * ex.trade_bar_slippage_pct / 100.0))
                 trade_based = True
-            cash -= q * mult * px
-            slip += abs(px - float(ch.mid[i])) * abs(q) * mult
+                print_ages.append(int(ctx.t - ch.quote_ts[i]))
+                st_ = ch.contract_stats.get(int(ch.key[i]))
+                if st_:
+                    trade_freq.append(st_["bars"] / max(1, (ctx.close_minute - 570)))
+            cash -= q * lmult * px
+            slip += abs(px - float(ch.mid[i])) * abs(q) * lmult
             comm += X.option_commission(q, ex)
             g = (float(ch.delta[i]), float(ch.gamma[i]), float(ch.theta[i]), float(ch.vega[i]))
             ls = LegState(s.leg.id, "option", bool(ch.is_call[i]), float(ch.strike[i]), int(ch.exp[i]), int(ch.key[i]),
-                          sign * s.leg.quantity, mult, s.leg.group, qty=q, entry_price=px, entry_bid=float(ch.bid[i]),
+                          sign * s.leg.quantity, lmult, s.leg.group, qty=q, entry_price=px, entry_bid=float(ch.bid[i]),
                           entry_ask=float(ch.ask[i]), entry_mid=float(ch.mid[i]), entry_iv=float(ch.iv[i]), entry_greeks=g)
             ls.bid, ls.ask, ls.mid, ls.iv, ls.greeks, ls.quote_ts = ls.entry_bid, ls.entry_ask, ls.entry_mid, ls.entry_iv, g, int(ch.quote_ts[i])
+            ls.trade_based = ls.entry_trade_based = tb
             ls.exp_close = int(cal.session_bounds(from_day_num(ls.exp))[1].timestamp())
             legs.append(ls)
         comm += ex.commission_per_order
@@ -581,6 +635,9 @@ class Backtester:
         if trade_based:
             pos.flags.add("trade_based_fill")
             self._saw_trade_based = True
+            pos.meta["entry_print_age_seconds"] = max(print_ages) if print_ages else None
+            if trade_freq:
+                pos.meta["contract_minutes_traded_pct"] = round(min(trade_freq) * 100, 2)
         if self.modeled:
             pos.flags.add("modeled_prices")
         if partial:
@@ -964,17 +1021,36 @@ class Backtester:
             sig_ticks = self._signal_ticks(d, t_open, t_close)
             self.chains = {}
             for sym in self.opt_syms:
+                if self.signals_only:
+                    self.chains[sym] = None
+                    continue
                 if self.modeled:
                     self.chains[sym] = self._modeled_chain(sym, d, sorted(sig_ticks))
                     if self.chains[sym] is None:
                         self.diag.exclude(d, f"{sym}: no underlying prices to model option premiums from")
                     continue
-                df = self.store.read_option_day(sym, d)
+                ds = self.opt_ds[sym]
+                if self.trades and self._bars_fmt.get(sym):
+                    bars = self.store.read_option_bars(sym, d, dataset=ds)
+                    ser = self.series.get(sym)
+                    df, cstats = expand_trade_bars(bars, sorted(sig_ticks), ser, d) if bars is not None and ser is not None else (pl.DataFrame(), {})
+                    if df.is_empty():
+                        # no trade data stored for this session: recorded separately from "no signal"
+                        self.chains[sym] = None
+                        self.diag.no_option_data.setdefault(sym, []).append(d.isoformat())
+                    else:
+                        ch = DayChain(df, self.cfg.capital.risk_free_rate)
+                        ch.kind, ch.contract_stats, ch.multipliers = "trades", cstats, getattr(self, "_mults", {}).get(sym, {})
+                        self.chains[sym] = ch
+                    continue
+                df = self.store.read_option_day(sym, d, "trade" if self.trades else "quote", dataset=ds)
                 if df is None or df.is_empty():
                     self.chains[sym] = None
                     self.diag.missing_sessions.setdefault(sym, []).append(d)
                 else:
                     self.chains[sym] = DayChain(df, self.cfg.capital.risk_free_rate)
+                    if self.trades:
+                        self.chains[sym].kind = "trades"
             self.settle_expiring(d, am=True)
             clock = sorted({int(x) for ch in self.chains.values() if ch is not None for x in ch.snap_ts if t_open <= x <= t_close} | sig_ticks)
             diffs = np.diff(clock) if len(clock) > 1 else np.array([60])
@@ -1064,6 +1140,22 @@ class Backtester:
             "commissions": acct.commissions, "interest": getattr(acct, "interest", 0.0),
         })
 
+    def _executability(self) -> dict:
+        """How many signals could actually be executed with the observed option prices."""
+        closed = self.account.closed
+        ages = [p.meta.get("entry_print_age_seconds") for p in closed if p.meta.get("entry_print_age_seconds") is not None]
+        freq = [p.meta.get("contract_minutes_traded_pct") for p in closed if p.meta.get("contract_minutes_traded_pct") is not None]
+        sig = self.diag.signals
+        by: dict[str, int] = {}
+        for s in self.diag.skipped_signals:
+            by[s["kind"]] = by.get(s["kind"], 0) + 1
+        return {"signals": sig, "executed": self.diag.entries, "executed_pct": (self.diag.entries / sig * 100) if sig else None, "not_executed": max(sig - self.diag.entries, 0),
+                "not_executed_by_reason": by, "expired_orders": self.diag.expired_orders, "stale_marks": self.diag.stale_marks, "deferred_exits": self.diag.deferred_exits,
+                "sessions_without_option_data": {k: len(v) for k, v in self.diag.no_option_data.items()},
+                "median_entry_print_age_seconds": float(np.median(ages)) if ages else None, "max_entry_print_age_seconds": max(ages) if ages else None,
+                "median_contract_minutes_traded_pct": float(np.median(freq)) if freq else None, "max_trade_age_seconds": self.ex.max_trade_age_seconds if self.trades else None,
+                "trade_bar_slippage_pct": self.ex.trade_bar_slippage_pct if self.trades else None}
+
     def _resolution_summary(self) -> dict:
         out = {}
         for sym in self.opt_syms:
@@ -1073,12 +1165,12 @@ class Backtester:
             a = int(np.searchsorted(ser.days, day_num(self.cfg.start)))
             b = int(np.searchsorted(ser.days, day_num(self.cfg.end), side="right"))
             vals, counts = np.unique(ser.d_res[a:b], return_counts=True)
-            m = self.metas[sym]
-            src = (m.extra or {}).get("sources") or {}
-            opt = next((v for k, v in src.items() if k.startswith("options:")), None)
+            used = self.datasets_used.get(sym)
             out[sym] = {"underlying_sessions_by_resolution": {_res_label(int(v)): int(c) for v, c in zip(vals, counts)},
-                        "options": "modeled (theoretical)" if self.modeled else (f"{opt['resolution']} {opt.get('quote_type', '')} via {opt['provider']}" if opt else (f"{m.option_interval_minutes}m quotes" if m.option_interval_minutes else "stored chains")),
-                        "trade_based": bool(getattr(self, "_saw_trade_based", False))}
+                        "underlying_sessions_by_provider": getattr(ser, "providers", {}),
+                        "options": "modeled (theoretical)" if self.modeled else (f"{used['resolution']} {used['observation']} via {used['provider']}" if used else "stored chains"),
+                        "options_dataset": used["dataset"] if used else None,
+                        "trade_based": bool(self.trades or getattr(self, "_saw_trade_based", False))}
         return out
 
     # ------------------------------------------------------------------ results
@@ -1095,6 +1187,8 @@ class Backtester:
             "events_version": self.store.events_version(),
             "synthetic": self.synthetic,
             "pricing": self.cfg.pricing.mode,
+            "datasets_used": self.datasets_used,
+            "executability": self._executability(),
             "pricing_assumptions": (__import__("strata.data.modeled", fromlist=["x"]).assumptions_text(self.cfg.pricing) + [f"Volatility input used: {getattr(self, 'model_vol_note', 'n/a')}."]) if self.modeled else [],
             "data_resolution": self._resolution_summary(),
             "runtime_seconds": round(runtime, 3),
@@ -1135,10 +1229,15 @@ def trade_record(p: Position, bt: Backtester) -> dict:
             "id": l.leg_id, "kind": l.kind, "right": None if l.kind == "stock" else ("C" if l.is_call else "P"), "strike": l.strike,
             "expiration": from_day_num(l.exp).isoformat() if l.exp >= 0 else None, "ratio": l.ratio, "contracts": l.closed_qty,
             "side": "buy" if l.ratio > 0 else "sell", "group": l.group, "multiplier": l.multiplier,
-            "entry_price": _num(l.entry_price), "entry_bid": _num(l.entry_bid), "entry_ask": _num(l.entry_ask), "entry_mid": _num(l.entry_mid),
+            "price_source": "stock" if l.kind == "stock" else "model" if bt.modeled else "trade_print" if getattr(l, "entry_trade_based", False) else "quote",
+            # trade-print data has no bid/ask: the observed print is reported as such, never as a quote
+            "entry_print": _num(l.entry_mid) if getattr(l, "entry_trade_based", False) else None, "exit_print": _num(l.exit_mid) if getattr(l, "entry_trade_based", False) else None,
+            "entry_price": _num(l.entry_price), "entry_bid": None if getattr(l, "entry_trade_based", False) else _num(l.entry_bid),
+            "entry_ask": None if getattr(l, "entry_trade_based", False) else _num(l.entry_ask), "entry_mid": _num(l.entry_mid),
             "entry_iv": _num(l.entry_iv), "entry_delta": _num(l.entry_greeks[0]), "entry_gamma": _num(l.entry_greeks[1]),
             "entry_theta": _num(l.entry_greeks[2]), "entry_vega": _num(l.entry_greeks[3]),
-            "exit_price": _num(l.exit_price), "exit_bid": _num(l.exit_bid), "exit_ask": _num(l.exit_ask), "exit_mid": _num(l.exit_mid),
+            "exit_price": _num(l.exit_price), "exit_bid": None if getattr(l, "entry_trade_based", False) else _num(l.exit_bid),
+            "exit_ask": None if getattr(l, "entry_trade_based", False) else _num(l.exit_ask), "exit_mid": _num(l.exit_mid),
             "exit_delta": _num(l.exit_greeks[0]), "exit_gamma": _num(l.exit_greeks[1]), "exit_theta": _num(l.exit_greeks[2]), "exit_vega": _num(l.exit_greeks[3]),
             "exit_ts": l.exit_ts or None, "exit_reason": l.exit_reason,
             "pnl": _num(np.sign(l.ratio) * l.closed_qty * l.multiplier * (l.exit_price - l.entry_price)) if l.closed_qty else None,
@@ -1165,6 +1264,7 @@ def trade_record(p: Position, bt: Backtester) -> dict:
         "entry_dte": entry_dte, "short_delta": max(short_deltas) if short_deltas else (max(all_deltas) if all_deltas else None),
         "entry_vix": _num(p.entry_vix), "entry_iv": _num(p.entry_iv), "entry_regime": p.entry_regime,
         "max_profit": _num(mp), "max_loss": _num(ml), "flags": sorted(p.flags), "roll_group": p.roll_group, "roll_count": p.roll_count,
+        "group": p.meta.get("group") or (p.id if p.meta.get("lot", 1) == 1 else None), "lot": p.meta.get("lot", 1),
         "legs": legs, "entry_explain": p.entry_explain, "exit_explain": p.exit_explain, "meta": p.meta,
     }
 

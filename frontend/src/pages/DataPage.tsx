@@ -39,6 +39,7 @@ export default function DataPage() {
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
         <TabsList>
           <TabsTrigger value="coverage"><Database className="size-3" /> Coverage</TabsTrigger>
+          <TabsTrigger value="datasets"><ShieldCheck className="size-3" /> Datasets &amp; provenance</TabsTrigger>
           <TabsTrigger value="free"><Download className="size-3" /> Get free data</TabsTrigger>
           <TabsTrigger value="chain"><Table2 className="size-3" /> Option chain</TabsTrigger>
           <TabsTrigger value="providers"><PlugZap className="size-3" /> Paid providers</TabsTrigger>
@@ -57,6 +58,7 @@ export default function DataPage() {
               {cur && <SymbolDetail sym={cur} />}
             </>}
           </TabsContent>
+          <TabsContent value="datasets"><Datasets /></TabsContent>
           <TabsContent value="free"><FreeData onJob={setJobId} busy={!!job && ["queued", "running"].includes(job.status)} /></TabsContent>
           <TabsContent value="chain">{rows.some((r) => r.options) ? <ChainPicker rows={rows.filter((r) => r.options)} /> : <Empty title="No option chains stored" icon={Table2}>Download free end-of-day chains under “Get free data”.</Empty>}</TabsContent>
           <TabsContent value="providers"><Providers onJob={setJobId} /></TabsContent>
@@ -74,7 +76,7 @@ function CoverageMatrix({ rows, cur, onPick }: { rows: any[]; cur?: string; onPi
   const cell = (ok: boolean, body: React.ReactNode) => <td className={cn("num", ok ? "text-fg-2" : "text-faint")}>{body}</td>;
   return (
     <table className="tbl">
-      <thead><tr><th>Symbol</th><th>Daily bars</th><th>Intraday bars (sessions stored)</th><th>Option quotes</th><th className="r">Stored</th><th>What this cannot answer yet</th></tr></thead>
+      <thead><tr><th>Symbol</th><th>Daily bars</th><th>Intraday bars (sessions stored)</th><th>Option quotes (bid/ask)</th><th title="Prices at which contracts actually traded. They carry no bid/ask and are never read as quotes.">Option trade prints</th><th className="r">Stored</th><th>What this cannot answer yet</th></tr></thead>
       <tbody>
         {rows.map((r) => (
           <tr key={r.symbol} onClick={() => onPick(r.symbol)} className={cn("cursor-pointer", cur === r.symbol && "[&>td]:bg-accent/[0.08]")}>
@@ -82,6 +84,7 @@ function CoverageMatrix({ rows, cur, onPick }: { rows: any[]; cur?: string; onPi
             {cell(!!r.daily, r.daily ? <>{r.daily.first} → {r.daily.last}{r.daily.missing ? <span className="ml-1 text-warn">({r.daily.missing} missing)</span> : null}</> : "—")}
             <td className="num">{RES.filter((k) => r.intraday?.[k]).length ? RES.filter((k) => r.intraday?.[k]).map((k) => <span key={k} title={`${k}: ${r.intraday[k].first} → ${r.intraday[k].last}`} className="mr-1.5 inline-flex items-baseline gap-1"><span className="rounded-[2px] border border-line-2 px-1 text-[9.5px] text-fg-2">{k}</span><span className="text-fg-2">{r.intraday[k].sessions}d</span><span className="text-faint">from {r.intraday[k].first.slice(2)}</span></span>) : <span className="text-faint">—</span>}</td>
             {cell(!!r.options, r.options ? <><span className={cn("mr-1 rounded-[2px] border px-1 text-[9.5px]", r.options.resolution === "EOD" ? "border-warn/50 text-warn" : "border-up/50 text-up")}>{r.options.resolution}</span>{r.options.first} → {r.options.last}<span className="ml-1 text-faint">{compact(r.options.rows)} rows · {r.options.provider}</span></> : "—")}
+            {cell(!!r.option_trades, r.option_trades ? <span title={`${r.option_trades.provider}: ${r.option_trades.contracts} contracts, ${r.option_trades.contract_sessions} contract-sessions fully fetched, ${r.option_trades.with_trades} with at least one trade`}><span className="mr-1 rounded-[2px] border border-[#56b6c2]/50 px-1 text-[9.5px] text-[#56b6c2]">1m</span>{r.option_trades.first} → {r.option_trades.last} <span className="text-faint">· {r.option_trades.sessions} sessions · {r.option_trades.contracts} contracts</span></span> : "—")}
             <td className="r num text-muted">{bytes(r.storage_bytes)}</td>
             <td className="min-w-[260px] max-w-[420px] whitespace-normal text-2xs leading-snug text-muted">{r.gaps.length ? r.gaps.join("; ") : <span className="text-up">nothing missing for intraday option backtests</span>}</td>
           </tr>
@@ -417,6 +420,52 @@ function DemoForm({ onJob }: { onJob: (id: string) => void }) {
           <li>Labelled SIMULATED everywhere, never used as a default, and never substituted for missing real data. Backtests only read them when the strategy names one of these symbols.</li>
         </ul>
       </Panel>
+    </div>
+  );
+}
+
+
+const OBS: Record<string, string> = { quote: "bid/ask quotes", trade: "trade prints", index: "index values" };
+
+/** Every stored dataset as its own row: one provider, one kind of observation, one resolution, one version.
+    Datasets are never merged, so a trade print can never be mistaken for a quote. */
+function Datasets() {
+  const q = useQuery({ queryKey: ["datasets"], queryFn: () => api.get<any[]>("/api/data/datasets"), staleTime: 30_000 });
+  const [real, setReal] = useState(true);
+  if (q.isLoading) return <Loading label="Reading dataset manifests" />;
+  if (q.error) return <ErrorBox className="m-2" error={q.error} />;
+  const rows = (q.data || []).filter((d) => !real || !d.synthetic);
+  const partial = (d: any) => (typeof d.partial_sessions === "number" ? d.partial_sessions : Array.isArray(d.partial_sessions) ? d.partial_sessions.length : d.incomplete_sessions || 0);
+  const missing = (d: any) => (typeof d.missing_count === "number" ? d.missing_count : typeof d.missing_sessions === "number" ? d.missing_sessions : Array.isArray(d.missing_sessions) ? d.missing_sessions.length : 0);
+  return (
+    <div>
+      <div className="flex items-center gap-3 border-b border-line bg-bg-1 px-3 py-1.5 text-2xs text-muted">
+        <span>Stored under <span className="font-mono text-fg-2">provider / symbol / data type / observation / resolution / version</span>. Each has its own licence, limitations and an append-only list of manifests.</span>
+        <span className="flex-1" />
+        <label className="flex cursor-pointer items-center gap-1.5"><Switch checked={real} onChange={setReal} /> real data only</label>
+      </div>
+      <table className="tbl">
+        <thead><tr><th>Dataset</th><th>Provider</th><th>Observation</th><th>Res.</th><th>Coverage</th><th className="r">Sessions</th><th className="r">Missing</th><th className="r">Partial</th><th className="r">Rows</th><th className="r">Size</th><th>Manifest</th><th>Licence</th></tr></thead>
+        <tbody>
+          {rows.map((d) => (
+            <tr key={d.id} title={(d.limitations || []).join("\n")}>
+              <td className="font-medium text-fg">{d.symbol} <span className="ml-1 text-2xs font-normal text-faint">{d.dtype}{d.synthetic ? " · simulated" : ""}</span></td>
+              <td className="font-mono text-2xs">{d.provider}</td>
+              <td className={cn(d.dtype === "options" && d.obs === "trade" ? "text-[#56b6c2]" : d.dtype === "options" ? "text-up" : "text-fg-2")}>{d.dtype === "options" ? `option ${OBS[d.obs] || d.obs}` : d.obs === "index" ? OBS.index : "price bars"}</td>
+              <td className="num">{d.resolution}</td>
+              <td className="num">{d.first} → {d.last}</td>
+              <td className="r num">{(d.sessions || 0).toLocaleString()}</td>
+              <td className={cn("r num", missing(d) ? "text-warn" : "text-faint")}>{missing(d) || "—"}</td>
+              <td className={cn("r num", partial(d) ? "text-warn" : "text-faint")} title="Sessions for which only part of the data was fetched. They are never used as if complete.">{partial(d) || "—"}</td>
+              <td className="r num text-muted">{compact(d.rows)}</td>
+              <td className="r num text-muted">{bytes(d.bytes)}</td>
+              <td className="font-mono text-2xs text-muted" title={`${d.manifests} manifest${d.manifests === 1 ? "" : "s"}; version ${d.version}`}>v{d.version} · {String(d.head || "").slice(0, 8)}</td>
+              <td className="max-w-[240px] truncate text-2xs text-muted" title={d.license}>{d.url ? <a className="hover:text-info" href={d.url} target="_blank" rel="noreferrer">{d.license || d.url}</a> : d.license || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length === 0 && <Empty title="No datasets stored" icon={Database}>The lab downloads what a question needs. Nothing is stored until then.</Empty>}
     </div>
   );
 }

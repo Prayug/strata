@@ -304,7 +304,7 @@ class Orats(Provider):
         resp = self.get_json(f"{self.base}/hist/dailies", {"token": self.key, "ticker": symbol, "tradeDate": f"{start.isoformat()},{end.isoformat()}"})
         rows = [{"date": date.fromisoformat(r["tradeDate"]), "open": r.get("open"), "high": r.get("hiPx"), "low": r.get("loPx"), "close": r.get("clsPx"), "volume": float(r.get("stockVolume") or 0)} for r in resp.get("data", [])]
         if rows:
-            self.store.write_daily(symbol, pl.DataFrame(rows))
+            self.store.write_daily(symbol, pl.DataFrame(rows), provider=self.name, source="ORATS hist/dailies")
         self.store.rebuild_manifest(symbol)
         rep["daily_bars"] = len(rows)
         return rep

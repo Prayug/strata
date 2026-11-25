@@ -9,7 +9,7 @@ import { Shell } from "@/components/Shell";
 import { TooltipProvider } from "@/components/ui";
 import { queryClient } from "@/lib/api";
 
-const AiLab = lazy(() => import("@/pages/ailab/AiLab"));
+const Lab = lazy(() => import("@/pages/lab/Lab"));
 const Explorer = lazy(() => import("@/pages/Explorer"));
 const Settings = lazy(() => import("@/pages/Settings"));
 const Builder = lazy(() => import("@/pages/builder/Builder"));
@@ -27,8 +27,8 @@ const router = createBrowserRouter([
     path: "/",
     element: <Shell />,
     children: [
-      { index: true, element: S(<AiLab />) },
-      { path: "lab/:sid", element: S(<AiLab />) },
+      { index: true, element: S(<Lab />) },
+      { path: "lab/:sid", element: S(<Lab />) },
       { path: "explore", element: S(<Explorer />) },
       { path: "settings", element: S(<Settings />) },
       { path: "builder", element: S(<Builder />) },

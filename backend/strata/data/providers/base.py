@@ -87,7 +87,9 @@ class Provider:
         if not self.configured():
             raise ProviderError(f"{self.label} is not configured: {self.docs}")
         days = cal.trading_days(start, end)
-        have_opt = set(self.store.option_days(symbol))
+        res = "EOD" if self.resolution == "EOD" else f"{interval}m"
+        # only sessions recorded as COMPLETE are skipped: a file with some rows is not proof of a full download
+        have_opt = set(self.store.option_days(symbol, "quote", provider=self.name, complete_only=True))
         report = {"provider": self.name, "symbol": symbol, "sessions": len(days), "fetched_minutes": 0, "fetched_option_sessions": 0, "skipped_cached": 0, "missing": []}
         minute_frames = []
         for i, d in enumerate(days):
@@ -107,8 +109,13 @@ class Provider:
                     else:
                         o = self.fetch_options(symbol, d, interval, max_dte)
                         if o is not None and not o.is_empty():
-                            self.store.write_option_day(symbol, d, o)
+                            snaps = o["ts"].n_unique()
+                            want = 1 if res == "EOD" else cal.session_minutes(d) // max(1, interval) + 1
+                            status = "complete" if snaps >= 0.98 * want else "partial"
+                            self.store.write_option_day(symbol, d, o, provider=self.name, res=res, status=status, source=f"{self.label} API", license=self.label, url=self.docs)
                             report["fetched_option_sessions"] += 1
+                            if status == "partial":
+                                report.setdefault("partial_sessions", []).append({"date": d.isoformat(), "snapshots": int(snaps), "expected": int(want)})
                         else:
                             report["missing"].append({"date": d.isoformat(), "what": "options"})
             except ProviderError as e:
@@ -116,18 +123,20 @@ class Provider:
             if progress:
                 progress((i + 1) / len(days), f"{symbol} {d}")
             if len(minute_frames) >= 20:
-                self.store.write_minutes(symbol, pl.concat(minute_frames))
+                self.store.write_minutes(symbol, pl.concat(minute_frames), provider=self.name, source=f"{self.label} API")
                 minute_frames = []
         if minute_frames:
-            self.store.write_minutes(symbol, pl.concat(minute_frames))
-        mins = self.store.read_minutes(symbol)
+            self.store.write_minutes(symbol, pl.concat(minute_frames), provider=self.name, source=f"{self.label} API")
+        mins = self.store.read_minutes(symbol, provider=self.name)
         if not mins.is_empty():
-            self.store.write_daily(symbol, minutes_to_daily(mins))
+            self.store.write_daily(symbol, minutes_to_daily(mins), provider=self.name, source="aggregated from this provider's 1-minute bars")
         if symbol not in self.store.symbols():
-            self.store.upsert_symbol(SymbolMeta(symbol=symbol, provider=self.name, option_interval_minutes=interval, **KNOWN_SPECS.get(symbol, {})))
+            self.store.upsert_symbol(SymbolMeta(symbol=symbol, **KNOWN_SPECS.get(symbol, {})))
         if include_options:
             from strata.data.derived import derive_iv_history
-            derive_iv_history(self.store, symbol)
+            ds = self.store.option_dataset(symbol, "quote", provider=self.name)
+            if ds is not None:
+                derive_iv_history(self.store, symbol, dataset=ds)
         self.store.rebuild_manifest(symbol)
         return report
 

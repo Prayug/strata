@@ -67,19 +67,20 @@ def import_file(path: str, kind: str, symbol: str | None, tz: str = "America/New
     missing = [c for c in KINDS[kind] if c not in df.columns]
     if missing:
         raise ValueError(f"missing required columns {missing}; found {df.columns}")
-    report: dict = {"kind": kind, "symbol": symbol, "input_rows": df.height}
+    prov = str((meta or {}).get("provider") or "import")  # imported files form their own dataset; they never overwrite a provider's
+    report: dict = {"kind": kind, "symbol": symbol, "input_rows": df.height, "provider": prov}
     if kind in ("underlying_minutes", "underlying_daily", "option_quotes", "corporate_actions") and not symbol:
         raise ValueError("symbol is required for this import kind")
     if kind == "underlying_minutes":
         df = _ts(df, "ts", tz)
         bad = df.filter((pl.col("high") < pl.col("low")) | (pl.col("close") <= 0))
         df = df.filter(~((pl.col("high") < pl.col("low")) | (pl.col("close") <= 0)))
-        store.write_minutes(symbol, df)
-        store.write_daily(symbol, minutes_to_daily(store.read_minutes(symbol)))
+        store.write_minutes(symbol, df, provider=prov, source=str(path))
+        store.write_daily(symbol, minutes_to_daily(store.read_minutes(symbol, provider=prov)), provider=prov, source=str(path))
         report.update(rows=df.height, rejected=bad.height)
     elif kind == "underlying_daily":
         df = df.with_columns(pl.col("date").cast(pl.Date, strict=False))
-        store.write_daily(symbol, df)
+        store.write_daily(symbol, df, provider=prov, source=str(path))
         report.update(rows=df.height, rejected=0, note="daily bars only: intraday conditions and 0DTE logic need minute bars")
     elif kind == "option_quotes":
         df = _ts(df, "ts", tz)
@@ -96,7 +97,7 @@ def import_file(path: str, kind: str, symbol: str | None, tz: str = "America/New
         df = df.with_columns(pl.col("ts").dt.convert_time_zone("America/New_York").dt.date().alias("_d"))
         parts = df.partition_by("_d", as_dict=True)
         for i, ((d,), part) in enumerate(sorted(parts.items(), key=lambda kv: kv[0])):
-            store.write_option_day(symbol, d, part.drop("_d"))
+            store.write_option_day(symbol, d, part.drop("_d"), provider=prov, source=str(path))
             if progress:
                 progress((i + 1) / len(parts), f"wrote {d}")
         from strata.data.derived import derive_iv_history
@@ -114,9 +115,9 @@ def import_file(path: str, kind: str, symbol: str | None, tz: str = "America/New
         cur = store.symbols().get(symbol)
         if cur is None:
             from strata.data.store import KNOWN_SPECS
-            m = SymbolMeta(symbol=symbol, provider="import", **KNOWN_SPECS.get(symbol, {}))
+            m = SymbolMeta(symbol=symbol, **KNOWN_SPECS.get(symbol, {}))
             for k, v in (meta or {}).items():
-                if hasattr(m, k):
+                if hasattr(m, k) and k != "provider":
                     setattr(m, k, v)
             store.upsert_symbol(m)
         store.rebuild_manifest(symbol)

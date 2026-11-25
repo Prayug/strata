@@ -132,6 +132,12 @@ def select_contracts(ch: DayChain, si: int, legs: list[LegSpec], spot: float, to
             j = idx[np.argmin(np.abs(K - sm.value))]
         elif sm.method == "atm_offset":
             all_k = np.unique(ch.strike[idx_all])
+            if ch.kind == "trades":
+                # selectively stored trade data only holds a band of strikes: if the underlying has left it,
+                # the at-the-money contract is not stored and a neighbour must not be passed off as ATM
+                half = (float(np.median(np.diff(all_k))) if all_k.size > 1 else 1.0) / 2 + 1e-9
+                if not (all_k.min() - half <= spot <= all_k.max() + half):
+                    return None, f"leg {leg.id}: the underlying ({spot:.2f}) is outside the stored strike range {all_k.min():g}-{all_k.max():g} for this session", details
             atm = all_k[np.argmin(np.abs(all_k - spot))]
             target = _offset(atm, sm.value, sm.unit, all_k)
             j = idx[np.argmin(np.abs(K - target))]

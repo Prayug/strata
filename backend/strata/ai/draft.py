@@ -47,6 +47,30 @@ class DraftLevel(BaseModel):
     expr: Optional[str] = None
 
 
+class DraftStage(BaseModel):
+    """One step of an event sequence ("wait until X, then enter when Y")."""
+    name: str
+    expr: str
+    text: str = ""
+    within_minutes: Optional[int] = None
+
+
+class DraftAdd(BaseModel):
+    """Scale into the position: open another lot when `expr` holds for the first lot."""
+    expr: str
+    text: str = ""
+    quantity: int = 1
+    max_adds: int = 1
+
+
+class DraftCosts(BaseModel):
+    """Execution-cost assumptions the user asked for (None = engine defaults)."""
+    preset: Optional[Literal["conservative", "none"]] = None
+    commission_per_contract: Optional[float] = None
+    slippage_per_contract: Optional[float] = None  # $ per share against you on every option fill
+    slippage_pct: Optional[float] = None  # % of the observed trade print against you (trade-price execution only)
+
+
 class DraftStudy(BaseModel):
     target: Optional[DraftLevel] = None
     stop: Optional[DraftLevel] = None
@@ -68,6 +92,14 @@ class Draft(BaseModel):
     tz_assumed: Optional[str] = None  # set when a clock time carried no timezone and one had to be assumed
     weekdays: Optional[list[str]] = None
     conditions: list[DraftCondition] = Field(default_factory=list)
+    sequence: list[DraftStage] = Field(default_factory=list)  # events that must happen in order before the entry
+    adds: list[DraftAdd] = Field(default_factory=list)  # scale-in rules
+    exit_conditions: list[DraftCondition] = Field(default_factory=list)  # close the position when any of these holds
+    unsupported: list[str] = Field(default_factory=list)  # parts of the request that could not be represented (never silently dropped)
+    questions: list[dict] = Field(default_factory=list)  # open clarifying questions: {id, text, options: [{label, patch}], default}
+    costs: Optional[DraftCosts] = None
+    provider: Optional[str] = None  # a specific stored option dataset / provider, if the user named one
+    carried: dict[str, str] = Field(default_factory=dict)  # field -> why it was carried over or kept without being stated in this message
     # ---- option position
     structure: Optional[str] = None
     dte: Optional[int] = None
@@ -91,7 +123,7 @@ class Draft(BaseModel):
     # ---- scope
     start: Optional[date] = None
     end: Optional[date] = None
-    mode: Optional[Literal["historical", "study", "modeled"]] = None
+    mode: Optional[Literal["historical", "trades", "study", "modeled"]] = None
     notes: list[str] = Field(default_factory=list)
 
 
@@ -172,8 +204,12 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
     def assume(field, value, reason):
         assumptions.append({"field": field, "value": value, "reason": reason})
 
-    for c in d.conditions:
+    for c in list(d.conditions) + list(d.exit_conditions):
         errors += X.validate(c.expr)
+    for s_ in d.sequence:
+        errors += [f"step '{s_.name}': {e}" for e in X.validate(s_.expr)]
+    for a_ in d.adds:
+        errors += [f"add rule: {e}" for e in X.validate(a_.expr)]
     add("Underlying", d.symbol, "stated" if d.symbol_stated else "assumed", "symbol")
     if not d.symbol_stated:
         assume("symbol", d.symbol, "no ticker mentioned, so the default symbol is used")
@@ -183,6 +219,12 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
         add("Days", ", ".join(d.weekdays), field="weekdays")
     for c in d.conditions:
         add("Condition", f"{c.text or c.expr}   [{c.expr}]", c.source, "conditions")
+    for i, s_ in enumerate(d.sequence):
+        add(f"Step {i + 1} of {len(d.sequence)}", f"{s_.text or s_.name}   [{s_.expr}]" + (f" - within {s_.within_minutes} min of the previous step" if s_.within_minutes else ""), "stated", "sequence")
+    if d.sequence:
+        add("Order", "The steps must happen in this order, each later than the one before; the entry is when the last one happens. Reset every session.", "stated", "sequence")
+    for u in d.unsupported:
+        add("Not represented", u, "unsupported", "unsupported")
 
     # ------------------------------------------------------------ study config (always derivable)
     st = d.study or DraftStudy()
@@ -204,7 +246,11 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
         hz = {"kind": st.horizon_kind, "time": st.horizon_time, "sessions": st.horizon_sessions}
         st_cfg = {"target": st.target.model_dump() if st.target else None, "stop": st.stop.model_dump() if st.stop else None, "reference": st.reference, "horizon": hz,
                   "measure": st.measure, "direction": st.direction}
+    intraday_trigger = any(X.needs_intraday(c.expr) for c in d.conditions)
+    if d.sequence or (d.kind == "study" and not d.entry_time and intraday_trigger):
+        study_entry = "signal"  # the observation starts when the rule (or its event sequence) fires
     study = {"symbol": d.symbol, "start": d.start.isoformat() if d.start else None, "end": d.end.isoformat() if d.end else None, "condition": _cond_tree(d, for_study=True),
+             "sequence": [{"name": s_.name, "when": s_.expr, "text": s_.text, "within_minutes": s_.within_minutes} for s_ in d.sequence],
              "entry_time": study_entry, "label": d.title, **st_cfg}
     try:
         StudyConfig.model_validate(study)
@@ -215,8 +261,9 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
     entry_time, dte = d.entry_time, d.dte
     if d.kind == "study":
         add("Question type", "Historical market study (underlying prices; no option premiums)")
-        add("Observation starts", fmt_time(study_entry, d.entry_time_stated), "stated" if d.entry_time else "assumed", "entry_time")
-        if not d.entry_time:
+        add("Observation starts", "when the rule fires (the first tick on which it holds)" if study_entry == "signal" else fmt_time(study_entry, d.entry_time_stated),
+            "stated" if (d.entry_time or study_entry == "signal") else "assumed", "entry_time")
+        if not d.entry_time and study_entry != "signal":
             assume("entry_time", "open", "no time given, so each session is observed from its open")
         lv = lambda x: None if x is None else (f"{x.value:+g}% from the {st.reference if st.reference != 'entry' else 'starting price'}" if x.kind == "pct" else f"{x.value:+g} $ from the starting price" if x.kind == "abs" else f"price level: {x.expr}")
         if st.target and st.measure == "close":
@@ -233,8 +280,8 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
             errors.append("no option position was described (calls, puts, a spread ...)")
         else:
             add("Position", f"{d.quantity} x {STRUCTURES.get(d.structure, d.structure)}", field="structure")
-        add("Entry", fmt_time(d.entry_time, d.entry_time_stated) + (" - once per eligible session" if d.entry_time else " - first signal each session"), "stated" if d.entry_time or d.conditions else "assumed", "entry_time")
-        intraday_rule = any(X.needs_intraday(c.expr) for c in d.conditions)
+        add("Entry", fmt_time(d.entry_time, d.entry_time_stated) + (" - once per eligible session" if d.entry_time else " - first signal each session"), "stated" if d.entry_time or d.conditions or d.sequence else "assumed", "entry_time")
+        intraday_rule = any(X.needs_intraday(c.expr) for c in d.conditions) or bool(d.sequence)
         same_day = bool(d.exit_time) and not d.hold_sessions and not d.exit_weekday
         multi_day = bool(d.hold_sessions or d.exit_weekday or d.hold_to_expiration)
         short_premium = d.structure in ("short_put", "short_call", "bull_put_spread", "bear_call_spread", "iron_condor", "iron_butterfly", "short_strangle", "short_straddle", "covered_call")
@@ -335,6 +382,12 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
             custom_kids.append({"id": "x1", "kind": "cond", "type": "expr", "params": {"expr": f"(weekday == {k}{last}) and minutes_to_close <= 5", "label": f"{d.exit_weekday} close"}})
             add("Exit", f"At the close on {d.exit_weekday}" + (" (or the week's last session)" if k == 4 else ""), field="exit_weekday")
             any_exit = True
+        for i, c in enumerate(d.exit_conditions):
+            custom_kids.append({"id": f"xc{i}", "kind": "cond", "type": "expr", "params": {"expr": c.expr, "label": c.text}})
+            add("Exit rule", f"{c.text or c.expr}   [{c.expr}]" + (" - closes every lot" if d.adds else ""), c.source, "exit_conditions")
+            any_exit = True
+        for a_ in d.adds:
+            add("Scale in", f"{a_.text or a_.expr}   [{a_.expr}] - add {a_.quantity} more, at most {a_.max_adds} time{'s' if a_.max_adds != 1 else ''}; same contract as the first lot", "stated", "adds")
         if custom_kids:
             exits["custom"] = {"id": "x", "kind": "group", "op": "or", "children": custom_kids}
         if exit_time:
@@ -359,16 +412,86 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
                 tree = _cond_tree(Draft(**{**d.model_dump(), "entry_time": entry_time}))
                 strategy = StrategyConfig.model_validate({
                     "name": d.title or "AI strategy", "symbol": d.symbol, "legs": legs,
-                    "entry": {"conditions": tree, "max_entries_per_day": 1, "max_open_positions": 1 if same_day or dte == 0 else 5},
+                    "entry": {"conditions": tree, "max_entries_per_day": 1, "max_open_positions": 1 if same_day or dte == 0 else 5,
+                              "sequence": [{"name": s_.name, "when": s_.expr, "text": s_.text, "within_minutes": s_.within_minutes} for s_ in d.sequence],
+                              "adds": [{"when": a_.expr, "text": a_.text, "quantity": a_.quantity, "max_adds": a_.max_adds} for a_ in d.adds]},
                     "exits": exits, "sizing": {"method": "fixed", "contracts": 1},
                 }).model_dump(mode="json")
             except Exception as e:  # noqa: BLE001
                 errors.append(f"strategy: {e}")
     if d.start or d.end:
         add("Period", f"{d.start or 'earliest data'} to {d.end or 'latest data'}", field="period")
-    effective = {"entry_time": entry_time, "dte": dte} if d.kind == "options" else {"entry_time": study_entry}
+    else:
+        add("Period", "All available history (no period was stated)", "assumed", "period")
+    for f_, why_ in d.carried.items():  # not said in this request: shown as an assumption, with the reason
+        for it in items:
+            if it["field"] == f_ and it["status"] == "stated":
+                it["status"] = "assumed"
+                assume(f_, it["value"], why_)
+    execution = execution_overrides(d)
+    if d.kind == "options":
+        if d.costs and (d.costs.preset or d.costs.commission_per_contract is not None or d.costs.slippage_per_contract is not None or d.costs.slippage_pct is not None):
+            add("Costs", costs_text(execution), "stated", "costs")
+        else:
+            add("Costs", "$0.65 commission per contract; quotes fill at the bid/ask; trade prints fill at the print with no extra slippage", "assumed", "costs")
+    effective = {"entry_time": entry_time, "dte": dte, "execution": execution} if d.kind == "options" else {"entry_time": study_entry}
     return {"strategy": strategy, "study": study if not any(e.startswith("study") for e in errors) else None, "items": items, "assumptions": assumptions, "effective": effective,
             "missing": sorted(set(missing), key=missing.index), "errors": errors}
+
+
+def execution_overrides(d: Draft) -> dict:
+    """Execution settings implied by the draft's cost assumptions (only the keys that differ from the engine defaults)."""
+    c = d.costs
+    out: dict = {}
+    if c is None:
+        return out
+    if c.preset == "conservative":
+        # worse than the defaults on every axis: a fee on top of the commission, a few cents per share on every
+        # fill, a short delay before the order reaches the market, and 3% off every trade print
+        out.update(commission_per_contract=0.65, fee_per_contract=0.05, slippage_per_contract=0.03, trade_bar_slippage_pct=3.0, latency_seconds=5, fill_model="conservative")
+    elif c.preset == "none":
+        out.update(commission_per_contract=0.0, fee_per_contract=0.0, slippage_per_contract=0.0, trade_bar_slippage_pct=0.0)
+    if c.commission_per_contract is not None:
+        out["commission_per_contract"] = float(c.commission_per_contract)
+    if c.slippage_per_contract is not None:
+        out["slippage_per_contract"] = float(c.slippage_per_contract)
+    if c.slippage_pct is not None:
+        out["trade_bar_slippage_pct"] = float(c.slippage_pct)
+    return out
+
+
+def costs_text(ex: dict) -> str:
+    parts = [f"${ex.get('commission_per_contract', 0.65) + ex.get('fee_per_contract', 0):.2f} per contract in commissions and fees"]
+    if ex.get("slippage_per_contract"):
+        parts.append(f"${ex['slippage_per_contract']:.2f} per share of slippage on every option fill")
+    if ex.get("trade_bar_slippage_pct"):
+        parts.append(f"{ex['trade_bar_slippage_pct']:g}% worse than each observed trade print")
+    if ex.get("latency_seconds"):
+        parts.append(f"{ex['latency_seconds']:g} s order delay")
+    return "; ".join(parts)
+
+
+def build_spec(d: Draft, compiled: dict, mode: str | None = None, approvals: dict | None = None, label: str = "", interpreter: str = "") -> dict:
+    """The research-pipeline request for a compiled draft. `mode` overrides the draft's own
+    (None = the draft's stated mode, else chosen by the pipeline from what the data allows)."""
+    as_study = d.kind == "study" or (mode or d.mode) == "study"
+    if as_study and compiled.get("study") is None:
+        raise ValueError("the study is not runnable: " + "; ".join(compiled.get("errors") or ["invalid configuration"]))
+    if not as_study and compiled.get("strategy") is None:
+        raise ValueError("the strategy is not runnable: " + "; ".join(compiled.get("errors") or ["invalid configuration"]))
+    study = {k: v for k, v in (compiled.get("study") or {}).items() if k not in ("start", "end")} if compiled.get("study") else None
+    spec: dict = {"kind": "study" if as_study else "options", "mode": "study" if as_study else (mode or d.mode or "auto"), "study": study, "backtest": None, "symbol": d.symbol, "label": label or d.title,
+                  "requested": {"start": d.start.isoformat() if d.start else None, "end": d.end.isoformat() if d.end else None, "stated": bool(d.start or d.end)},
+                  "approvals": dict(approvals or {}), "provider": d.provider}
+    if not as_study:
+        intraday = bool(d.sequence or d.adds) or any(X.needs_intraday(c.expr) for c in list(d.conditions) + list(d.exit_conditions)) or (d.entry_time not in (None, "open", "close")) \
+            or bool(d.underlying_target_pct or d.underlying_stop_pct or d.underlying_target_abs or d.underlying_stop_abs or d.exit_time)
+        ex = {"signal_interval_minutes": 1 if intraday or spec["mode"] in ("trades", "auto") else 5, **(compiled.get("effective") or {}).get("execution", {})}
+        spec["backtest"] = {"strategies": [compiled["strategy"]], "execution": ex, "label": label or d.title}
+    n = len(d.conditions) + len(d.sequence)
+    spec["interpretation"] = {"interpreter": interpreter, "detail": f"{n} entry rule{'s' if n != 1 else ''}" + (f", {len(d.sequence)}-step sequence" if d.sequence else "") +
+                              (f"; {len(compiled.get('assumptions') or [])} assumption(s) disclosed" if compiled.get("assumptions") else "") + (f"; read by {interpreter}" if interpreter else "")}
+    return spec
 
 
 # ----------------------------------------------------------------------------- coverage
@@ -526,7 +649,7 @@ def diff_drafts(a: Draft | None, b: Draft) -> list[dict]:
     def flat(d: Draft) -> dict:
         x = d.model_dump(mode="json")
         st = x.pop("study", None) or {}
-        for k in ("title", "notes", "entry_time_stated", "exit_time_stated", "symbol_stated", "tz_assumed"):
+        for k in ("title", "notes", "entry_time_stated", "exit_time_stated", "symbol_stated", "tz_assumed", "questions", "carried", "unsupported"):
             x.pop(k, None)
         if d.kind == "study":
             x.update({f"study.{k}": v for k, v in st.items()})

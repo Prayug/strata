@@ -43,6 +43,7 @@ export const api = {
   post: <T,>(p: string, b?: unknown) => req<T>("POST", p, b ?? {}),
   put: <T,>(p: string, b?: unknown) => req<T>("PUT", p, b ?? {}),
   del: <T,>(p: string) => req<T>("DELETE", p),
+  patch: <T,>(p: string, b?: unknown) => req<T>("PATCH", p, b),
   form: <T,>(p: string, f: FormData) => req<T>("POST", p, f, true),
 };
 

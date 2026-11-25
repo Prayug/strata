@@ -57,6 +57,12 @@ def execute(rid: str, kind: str, payload: dict, progress, should_cancel) -> dict
         d.mkdir(parents=True, exist_ok=True)
         (d / "entry_timing.json").write_text(dumps(out))
         return {"times": len(times)}
+    if kind == "research":
+        from strata.research.pipeline import run_pipeline
+        return run_pipeline(rid, payload["spec"], progress, should_cancel)
+    if kind == "discovery":
+        from strata.research.discovery import run_discovery, save_discovery
+        return save_discovery(rid, run_discovery(payload["spec"], progress=progress, should_cancel=should_cancel))
     if kind == "study":
         from strata.api.results import save_study
         from strata.research.study import run_study

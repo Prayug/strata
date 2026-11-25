@@ -97,6 +97,21 @@ def backtest_facts(res: dict) -> list[dict]:
     _fact(f, "excluded_sessions", "sessions excluded because a rule could not be evaluated", (sum(len(v) for v in ex.values()) if isinstance(ex, dict) else len(ex)) if ex else 0, "count")
     _fact(f, "deferred_exits", "exits delayed to the next available quote", d.get("deferred_exits"), "count")
     _fact(f, "stale_marks", "marks using a stale quote", d.get("stale_marks"), "count")
+    cov = res.get("coverage") or {}
+    if cov:
+        k, k1 = (cov.get("signals") or {}).get("qualifying"), (cov.get("executable") or {}).get("signals")
+        _fact(f, "qualifying", "sessions where the entry rule fired", k, "count")
+        _fact(f, "executable", "of those, sessions with usable observed option prices", k1, "count")
+        if _fin(k) and _fin(k1):
+            _fact(f, "not_executable", "qualifying sessions without usable option prices", k - k1, "count")
+        _fact(f, "requested_sessions", "sessions in the requested period", (cov.get("requested") or {}).get("sessions"), "count")
+    exe = (res.get("meta") or {}).get("executability") or {}
+    _fact(f, "signals_in_window", "signals inside the simulated window", exe.get("signals"), "count")
+    _fact(f, "executed_pct", "share of those signals that could be executed", (exe.get("executed_pct") / 100) if _fin(exe.get("executed_pct")) else None, "prob")
+    _fact(f, "median_print_age", "median age of the trade print used for an entry (seconds)", exe.get("median_entry_print_age_seconds"), "count")
+    _fact(f, "contract_minutes_traded", "share of session minutes in which the traded contracts printed (median)", (exe.get("median_contract_minutes_traded_pct") / 100) if _fin(exe.get("median_contract_minutes_traded_pct")) else None, "prob")
+    be = (res.get("cost_sensitivity") or {}).get("breakeven_slippage_pct")
+    _fact(f, "breakeven_slippage", "extra slippage per fill at which the net result reaches zero (% of the option price)", be, "ratio")
     return f
 
 
@@ -129,6 +144,17 @@ def backtest_caveats(res: dict) -> list[str]:
     out = []
     if meta.get("pricing") == "modeled":
         out.append("MODELED premiums: option prices are theoretical estimates from a pricing model, not observed market prices. " + " ".join(meta.get("pricing_assumptions") or [])[:400])
+    if meta.get("pricing") == "trades":
+        exe = meta.get("executability") or {}
+        out.append("TRADE-PRICE execution: fills use observed option trade prints. This data has no bid/ask, so no spread is assumed; a print is only used while it is recent "
+                   f"(at most {exe.get('max_trade_age_seconds') or 300} seconds old) and {exe.get('trade_bar_slippage_pct') or 0:g}% slippage is applied against each fill.")
+    cov = res.get("coverage") or {}
+    k, k1 = (cov.get("signals") or {}).get("qualifying"), (cov.get("executable") or {}).get("signals")
+    if k and k1 is not None and k1 < k:
+        why = "; ".join(f"{x['reason']} ({x['signals']})" for x in ((cov.get("options") or {}).get("issues") or [])[:2])
+        out.append(f"Only {k1} of the {k} sessions on which the entry rule fired have usable observed option prices. The other {k - k1} were not simulated for lack of data ({why}); they are neither wins nor losses.")
+    for u in (cov.get("unavailable") or [])[:2]:
+        out.append(u.get("detail", ""))
     for sym, r in (meta.get("data_resolution") or {}).items():
         mix = ", ".join(f"{n} sessions at {k}" for k, n in (r.get("underlying_sessions_by_resolution") or {}).items())
         out.append(f"{sym}: option data = {r.get('options')}; underlying = {mix}.")
@@ -202,8 +228,9 @@ def backtest_text(res: dict, facts: list[dict]) -> str:
     cfg = res.get("config") or {}
     n = fv(facts, "trades") or 0
     period = f"{cfg.get('start')} to {cfg.get('end')}"
-    modeled = (res.get("meta") or {}).get("pricing") == "modeled"
-    kind = "Modeled-premium estimate" if modeled else "Historical options backtest"
+    pricing = (res.get("meta") or {}).get("pricing")
+    modeled = pricing == "modeled"
+    kind = "Modeled-premium estimate" if modeled else "Historical options backtest on option trade prices" if pricing == "trades" else "Historical options backtest"
     if not n:
         ex = fv(facts, "excluded_sessions") or 0
         eo = fv(facts, "expired_orders") or 0
@@ -214,16 +241,23 @@ def backtest_text(res: dict, facts: list[dict]) -> str:
             why.append(f"{fs(facts, 'excluded_sessions')} sessions were excluded because a rule could not be evaluated")
         return f"{kind}, {period}: no trades were taken across {fs(facts, 'sessions')} sessions" + (" (" + "; ".join(why) + ")" if why else " - the entry conditions never held with tradable quotes") + "."
     pnl = fv(facts, "net_pnl") or 0
-    parts = [f"{kind}, {period}: {fs(facts, 'trades')} trades made a net {'profit' if pnl >= 0 else 'loss'} of {show(abs(pnl), 'usd')} after {fs(facts, 'total_commissions')} in commissions"
+    parts = [f"{kind}, {period}: {fs(facts, 'trades')} trade{'s' if n != 1 else ''} made a net {'profit' if pnl >= 0 else 'loss'} of {show(abs(pnl), 'usd')} after {fs(facts, 'total_commissions')} in commissions"
              + (f" and {fs(facts, 'total_slippage')} of slippage" if (fv(facts, 'total_slippage') or 0) > 0 else "") + f" ({fs(facts, 'total_return')} on starting capital)."]
-    parts.append(f"{fs(facts, 'win_rate')} of trades were winners; the average winner was {fs(facts, 'avg_winner')} against an average loser of {fs(facts, 'avg_loser')}, for {fs(facts, 'expectancy')} per trade"
-                 + (f" and a profit factor of {fs(facts, 'profit_factor')}" if fget(facts, 'profit_factor') else "") + ".")
-    parts.append(f"The largest winner was {fs(facts, 'largest_winner')} and the largest loser {fs(facts, 'largest_loser')}; the deepest drawdown was {fs(facts, 'max_drawdown')} of equity.")
-    t = fv(facts, "t_stat")
+    if n >= 5:  # averages of a handful of trades describe nothing
+        parts.append(f"{fs(facts, 'win_rate')} of trades were winners; the average winner was {fs(facts, 'avg_winner')} against an average loser of {fs(facts, 'avg_loser')}, for {fs(facts, 'expectancy')} per trade"
+                     + (f" and a profit factor of {fs(facts, 'profit_factor')}" if fget(facts, 'profit_factor') else "") + ".")
+        parts.append(f"The largest winner was {fs(facts, 'largest_winner')} and the largest loser {fs(facts, 'largest_loser')}; the deepest drawdown was {fs(facts, 'max_drawdown')} of equity.")
+    t = fv(facts, "t_stat") if n >= 5 else None
     if t is not None:
         parts.append(f"The per-trade profit has a t-statistic of {fs(facts, 't_stat')}, which is {'above' if abs(t) >= 2 else 'below'} the conventional threshold of two, so the edge is {'statistically distinguishable from zero' if abs(t) >= 2 else 'not statistically distinguishable from zero'} in this sample.")
     if modeled:
         parts.append("Premiums are theoretical estimates, so treat every dollar figure as approximate.")
+    if fget(facts, "qualifying") and fget(facts, "executable") and (fv(facts, "executable") or 0) < (fv(facts, "qualifying") or 0):
+        parts.insert(0, f"The entry rule fired on {fs(facts, 'qualifying')} sessions, but only {fs(facts, 'executable')} of them {'has' if fv(facts, 'executable') == 1 else 'have'} usable observed option prices; the remaining {fs(facts, 'not_executable')} could not be tested and are not part of these figures.")
+    if n < 5:
+        parts.append(f"{'One trade is' if n == 1 else 'So few trades are'} an observation, not evidence: nothing about an edge can be concluded from it.")
+    elif n < 30:
+        parts.append("With so few trades the averages say very little about what to expect.")
     return " ".join(parts)
 
 
@@ -336,11 +370,19 @@ def compare_text(table: dict, what: str = "") -> str:
     parts = []
     if len(rows) == 2:
         a, b = rows
-        parts.append(f"{a['label']}: {a['shown'][key]} {name} over {a['shown'][n_key]} {'sessions' if study else 'trades'}. {b['label']}: {b['shown'][key]} over {b['shown'][n_key]}.")
+        unit = lambda r: ("session" if study else "trade") + ("" if r["values"].get(n_key) == 1 else "s")  # noqa: E731
+        strip = lambda l: re.sub(r"^v[0-9]+ - ", "", l)  # noqa: E731
+        parts.append(f"{strip(a['label'])}: {a['shown'][key]} {name} over {a['shown'][n_key]} {unit(a)}. {strip(b['label'])}: {b['shown'][key]} over {b['shown'][n_key]} {unit(b)}.")
         va, vb = a["values"].get(key), b["values"].get(key)
         if _fin(va) and _fin(vb):
             diff = vb - va
-            parts.append(f"The change {'raised' if diff > 0 else 'lowered' if diff < 0 else 'did not change'} the {name}" + (f" by {show(abs(diff), 'prob').replace('%', ' percentage points') if study else show(abs(diff), 'usd')}." if diff else "."))
+            n_small = min(a["values"].get(n_key) or 0, b["values"].get(n_key) or 0)
+            if n_small < 30:
+                # too few observations to attribute the difference to the change
+                parts.append(f"The {name} is {'higher' if diff > 0 else 'lower' if diff < 0 else 'the same'} after the change" + (f" by {show(abs(diff), 'prob').replace('%', ' percentage points') if study else show(abs(diff), 'usd')}" if diff else "")
+                             + f", but with {int(n_small)} {'session' if study else 'trade'}{'' if n_small == 1 else 's'} behind the smaller figure that is a description of what happened, not evidence that the change is better or worse.")
+            else:
+                parts.append(f"The change {'raised' if diff > 0 else 'lowered' if diff < 0 else 'did not change'} the {name}" + (f" by {show(abs(diff), 'prob').replace('%', ' percentage points') if study else show(abs(diff), 'usd')}." if diff else "."))
     else:
         ok = [r for r in rows if _fin(r["values"].get(key))]
         if ok:

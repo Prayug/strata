@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 import numpy as np
 import polars as pl
-from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -35,6 +35,11 @@ jobs: JobManager | None = None
 async def lifespan(app: FastAPI):
     global jobs
     db.init_db()
+    from strata.api.settings import migrate_legacy_secrets
+    moved = migrate_legacy_secrets()  # V2 kept API keys in the database; they now live in the OS keychain / a protected file
+    if moved:
+        print(f"[strata] moved {moved} credential(s) from the database into the credential store")
+    MarketStore()  # brings an older data directory to the current storage layout
     n = db.mark_interrupted()
     jobs = JobManager(max_concurrent=int(__import__("os").environ.get("STRATA_MAX_JOBS", "2")))
     jobs.loop = asyncio.get_running_loop()
@@ -45,7 +50,38 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Strata API", version=ENGINE_VERSION, lifespan=lifespan,
               description="Options backtesting & research platform. All long-running work (backtests, optimisations, ingestion) runs as background jobs; poll /api/jobs or stream /api/jobs/{id}/stream.")
-app.add_middleware(CORSMiddleware, allow_origins=list(get_settings().cors_origins) + ["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=list(get_settings().cors_origins), allow_methods=["*"], allow_headers=["*"])
+
+LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+def _local_host_header(host: str) -> bool:
+    h = (host or "").rsplit(":", 1)[0].strip("[]").lower() if not (host or "").startswith("[") else (host or "").split("]")[0].strip("[").lower()
+    return h in LOOPBACK or h.endswith(".localhost")
+
+
+@app.middleware("http")
+async def remote_access_guard(request: Request, call_next):
+    """Strata is a local application. A request that does not come from this machine - or that
+    arrives under a non-local Host name (DNS rebinding) - is refused unless it carries the
+    access token configured in STRATA_API_TOKEN. With no token configured, remote access is off."""
+    client = request.client.host if request.client else ""
+    in_process = client == "testclient"  # Starlette's in-process test client: there is no socket, so no remote peer
+    if request.url.path.startswith("/api/") and not in_process and not (client in LOOPBACK and _local_host_header(request.headers.get("host", ""))):
+        import hmac
+        import os
+        token = os.environ.get("STRATA_API_TOKEN", "")
+        given = request.headers.get("x-strata-token") or (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+        if not token:
+            return JSONResponse({"detail": "Remote access is disabled. Strata only answers requests from this computer unless STRATA_API_TOKEN is set on the server."}, status_code=403)
+        if not given or not hmac.compare_digest(token, given):
+            return JSONResponse({"detail": "A valid access token is required (header X-Strata-Token)."}, status_code=401)
+    return await call_next(request)
+
+
+from strata.api.research_api import router as research_router  # noqa: E402
+
+app.include_router(research_router)
 
 
 def J(o) -> JSONResponse:
@@ -113,7 +149,7 @@ def _default_symbol() -> str:
     """Preferred real symbol that is actually stored; never a synthetic one unless nothing else exists."""
     from strata.api.settings import get_setting
     syms = store().symbols()
-    real = [k for k, m in syms.items() if not m.synthetic and (store().daily_path(k).exists())]
+    real = [k for k in syms if not store().is_synthetic(k) and store().has_daily(k)]
     pref = [str(get_setting("data.default_symbol") or "SPY"), "SPY", "QQQ", "IWM", "SPX", "AAPL", "NVDA", "TSLA"]
     return next((x for x in pref if x in real and x not in ("VIX",)), next((x for x in real if x != "VIX"), pref[0]))
 
@@ -147,9 +183,11 @@ def data_catalog(refresh: bool = False):
 def data_symbol(sym: str):
     from strata.data.catalog import symbol_coverage
     s = store()
-    if sym not in s.symbols() and not (s.root / "underlying" / sym).exists():
+    if sym not in s.symbols() and not s.datasets(sym):
         raise HTTPException(404, f"unknown symbol {sym}")
-    return J(symbol_coverage(s, sym) | {"manifest": {k: v for k, v in s.manifest(sym).items() if k != "files"}, "files": len(s.manifest(sym).get("files", {}))})
+    # data files across every dataset of the symbol (each dataset's current manifest lists its own)
+    n_files = sum(len(s.head(k).get("files") or {}) for k in s.datasets(sym))
+    return J(symbol_coverage(s, sym) | {"manifest": s.manifest(sym), "files": n_files})
 
 
 @app.delete("/api/data/symbols/{sym}")
@@ -291,11 +329,13 @@ def demo(req: DemoReq):
 @app.get("/api/data/storage")
 def storage():
     s = store()
-    root = s.root
-    parts = {}
-    for sub in ["underlying", "options", "daily", "derived", "events", "corporate_actions"]:
-        p = root / sub
-        parts[sub] = sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) if p.exists() else 0
+    # by kind of observation, from the dataset tree (provider / symbol / data type / observation / resolution / version)
+    parts = {"underlying": 0, "option quotes": 0, "option trades": 0, "reference": 0}
+    for k in s.datasets():
+        size = s.storage_bytes(key=k)
+        parts["underlying" if k.dtype == "underlying" else "option trades" if k.obs == "trade" else "option quotes"] += size
+    ref = s.root / "reference"
+    parts["reference"] = sum(f.stat().st_size for f in ref.rglob("*") if f.is_file()) if ref.exists() else 0
     res = get_settings().results_dir
     cache = get_settings().cache_dir
     return {"market": parts, "results": sum(f.stat().st_size for f in res.rglob("*") if f.is_file()) if res.exists() else 0,
@@ -376,7 +416,7 @@ def data_coverage():
     from strata.data.catalog import catalog
     rows = []
     for c in catalog(store()):
-        d, intr, o = c.get("daily"), c.get("intraday") or {}, c.get("options")
+        d, intr, o, tr = c.get("daily"), c.get("intraday") or {}, c.get("options"), c.get("option_trades")
         gaps = []
         if not d:
             gaps.append("no daily history")
@@ -385,15 +425,21 @@ def data_coverage():
         elif "1m" not in intr:
             gaps.append("no 1-minute bars: entries are limited to times the stored bars can observe")
         if c["meta"].get("has_options") or o:
-            if not o:
-                gaps.append("no option quotes: only market studies and modeled estimates are possible")
-            elif o["resolution"] == "EOD":
-                gaps.append("option quotes are end-of-day only: no intraday or 0DTE option backtests")
+            if not o and not tr:
+                gaps.append("no option prices stored: they are downloaded for the sessions a strategy needs, where a free source has them")
+            elif o and o["resolution"] == "EOD" and not tr:
+                gaps.append("option quotes are end-of-day only: intraday and 0DTE option backtests use option trade prints, fetched per strategy")
+            if tr:
+                gaps.append(f"option trade prints are stored selectively: {tr.get('contract_sessions') or 0} contract-sessions on {tr['sessions']} sessions (no bid/ask)")
         rows.append({"symbol": c["symbol"], "synthetic": bool(c["meta"].get("synthetic")), "kind": c["meta"].get("kind"),
                      "daily": d and {"first": d["first"], "last": d["last"], "sessions": d["sessions"], "missing": d["missing_sessions"], "provider": d.get("provider")},
                      "intraday": {k: {"first": v["first"], "last": v["last"], "sessions": v["sessions"], "incomplete": v["incomplete_sessions"], "provider": v.get("provider")} for k, v in intr.items()},
                      "options": o and {"first": o["first"], "last": o["last"], "sessions": o["sessions"], "missing": o["missing_count"], "resolution": o["resolution"], "quote_type": o["quote_type"],
                                        "provider": o["provider"], "license": o.get("license"), "rows": o["rows"]},
+                     "option_trades": tr and {"first": tr["first"], "last": tr["last"], "sessions": tr["sessions"], "contracts": tr.get("contracts"), "contract_sessions": tr.get("contract_sessions"),
+                                              "with_trades": tr.get("contract_sessions_with_trades"), "rows": tr.get("rows"), "provider": tr["provider"], "license": tr.get("license")},
+                     "datasets": [{k: x.get(k) for k in ("id", "provider", "dtype", "obs", "resolution", "version", "first", "last", "sessions", "rows", "bytes", "license", "limitations", "synthetic", "head", "manifests")}
+                                  for x in c.get("datasets", [])],
                      "iv_history": c.get("iv_history"), "storage_bytes": c.get("storage_bytes"), "dataset_version": c.get("dataset_version"), "sources": c.get("sources") or [], "gaps": gaps})
     return J(rows)
 
@@ -417,7 +463,7 @@ def study_run(req: StudyReq):
     errs = validate_tree(cfg.condition)
     if errs:
         raise HTTPException(422, "; ".join(errs))
-    if not store().daily_path(cfg.symbol).exists() and not store().bar_resolutions(cfg.symbol):
+    if not store().has_daily(cfg.symbol) and not store().bar_resolutions(cfg.symbol):
         raise HTTPException(404, f"No historical price data is stored for {cfg.symbol}. Download it under Data; nothing is simulated in its place.")
     return launch_study(jobs, cfg, req.name, req.force)
 
@@ -459,7 +505,7 @@ class SettingsReq(BaseModel):
 @app.put("/api/settings")
 def settings_put(req: SettingsReq):
     """Keys are write-only: they are stored server-side and never sent back to the browser."""
-    from strata.api.settings import DEFAULTS, SECRETS, set_setting
+    from strata.api.settings import DEFAULTS, SECRETS, set_secret, set_setting
     for k, v in req.settings.items():
         if k not in DEFAULTS:
             raise HTTPException(422, f"unknown setting {k}")
@@ -467,7 +513,10 @@ def settings_put(req: SettingsReq):
     for k, v in req.secrets.items():
         if k not in SECRETS:
             raise HTTPException(422, f"unknown secret {k}")
-        set_setting(f"secret.{k}", (v or "").strip() or None)
+        try:
+            set_secret(k, v)
+        except RuntimeError as e:
+            raise HTTPException(500, f"The credential could not be stored: {e}")
     return settings_get()
 
 
@@ -508,7 +557,16 @@ def _ai(fn):
 def ai_meta():
     from strata.ai.llm import status
     from strata.ai.nl_rules import EXAMPLES, SWEEP_FIELDS
-    return J({"examples": EXAMPLES, "sweep_fields": SWEEP_FIELDS, "llm": status(), "default_symbol": _default_symbol()})
+    from strata.api.settings import get_setting
+    groups = [
+        {"title": "Ask a market question", "items": ["How often does SPY rise 1% after a 3% down day?", "How often does SPY touch yesterday's high before touching yesterday's low?", "Does the first 15-minute candle predict the rest of the trading session?"]},
+        {"title": "Investigate a hypothesis", "items": ["Find out whether SPY tends to reverse after large down days.", "Investigate mean reversion after unusually large SPY declines.", "Compare opening calls, puts, and waiting 30 minutes after a 2% overnight gap."]},
+        {"title": "Describe a strategy", "items": ["Wait until SPY drops 0.5% from the open, then buy calls when it recovers half of that decline.", "Buy a 30DTE ATM SPY call at the close after a 2% down day and hold for 5 days",
+                                                   "Enter calls when SPY breaks yesterday's high, but only if QQQ hasn't broken its own high."]},
+    ]
+    follow = ["Compare that with 2% and 4% down days", "What time of day does it usually hit the target?", "Show every qualifying historical session", "Test ATM 0DTE calls on those days using historical option trade prices",
+              "Include commissions and conservative slippage", "Show me every skipped signal and why", "Is this statistically significant?", "Test whether the results hold up out of sample", "Export the complete research report"]
+    return J({"examples": EXAMPLES, "example_groups": groups, "followups": follow, "sweep_fields": SWEEP_FIELDS, "llm": status(), "default_symbol": _default_symbol(), "exec_mode": get_setting("ai.exec_mode") or "quick"})
 
 
 @app.get("/api/ai/sessions")
@@ -518,7 +576,8 @@ def ai_sessions():
 
 @app.post("/api/ai/sessions")
 def ai_session_create(title: str = Body("New research", embed=True)):
-    return J(db.create_session(title[:80] or "New research"))
+    from strata.api.settings import get_setting
+    return J(db.create_session(title[:80] or "New research", {"exec_mode": get_setting("ai.exec_mode") or "quick"}))
 
 
 @app.get("/api/ai/sessions/{sid}")
@@ -593,17 +652,15 @@ def ai_finalize(sid: str):
 @app.post("/api/ai/interpret")
 def ai_interpret(text: str = Body(..., embed=True)):
     """Stateless preview: how a request is read, what is assumed, and which mode the data supports. Runs nothing."""
-    from strata.ai import nl_rules as NL
-    from strata.ai.draft import assess, compile_draft
+    from strata.ai.draft import compile_draft
     s = store()
-    r = NL.interpret(text, None, list(s.symbols().keys()))
+    r = _agent()._rules(text, None, sorted(s.stored_symbols()), None, _default_symbol())
     if r["action"] != "new":
-        return {"understood": False}
+        return J({"understood": r["action"] in ("investigate", "discover"), "action": r["action"]})
     d = r["draft"]
     compiled = compile_draft(d, s)
-    cover = assess(d, compiled, s)
-    return J({"understood": True, "draft": d.model_dump(mode="json"), "items": compiled["items"], "assumptions": compiled["assumptions"], "missing": compiled["missing"], "errors": compiled["errors"],
-              "coverage": {"modes": cover["modes"], "recommended": cover["recommended"], "messages": cover["messages"]}})
+    return J({"understood": True, "action": "new", "draft": d.model_dump(mode="json"), "items": compiled["items"], "assumptions": compiled["assumptions"], "missing": compiled["missing"], "errors": compiled["errors"],
+              "unsupported": d.unsupported, "questions": d.questions})
 
 
 # ======================================================================= strategies
@@ -745,12 +802,13 @@ def run_get(rid: str):
         try:
             r["result"] = load_result(rid)
         except FileNotFoundError:
-            r["status"], r["error"] = "error", "result files missing"
-    elif r["status"] == "done" and r["kind"] == "study":
-        p = run_dir(rid) / "study.json"
+            if (r.get("summary") or {}).get("outcome") != "needs_decision":  # a research run that stopped to ask has no result by design
+                r["status"], r["error"] = "error", "result files missing"
+    elif r["status"] == "done" and r["kind"] in ("study", "discovery"):
+        p = run_dir(rid) / f"{r['kind']}.json"
         if p.exists():
             r["result"] = json.loads(p.read_text())
-        else:
+        elif (r.get("summary") or {}).get("outcome") != "needs_decision":
             r["status"], r["error"] = "error", "result files missing"
     elif r["status"] == "done" and r["kind"] == "optimization":
         p = run_dir(rid) / "optimization.json"

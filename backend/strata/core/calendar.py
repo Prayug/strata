@@ -17,6 +17,7 @@ REGULAR_CLOSE = time(16, 0)
 EARLY_CLOSE = time(13, 0)
 
 SPECIAL_CLOSURES = {
+    date(1994, 4, 27),  # President Nixon funeral
     date(2001, 9, 11), date(2001, 9, 12), date(2001, 9, 13), date(2001, 9, 14),
     date(2004, 6, 11),  # President Reagan funeral
     date(2007, 1, 2),  # President Ford funeral

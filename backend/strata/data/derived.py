@@ -60,18 +60,22 @@ def constant_maturity_iv(points: list[tuple[float, float]], target_days: float =
     return None
 
 
-def derive_iv_history(store: MarketStore, sym: str, full: bool = False) -> pl.DataFrame:
-    """Daily constant-maturity ATM IV from each session's last stored snapshot.
+def derive_iv_history(store: MarketStore, sym: str, full: bool = False, dataset=None) -> pl.DataFrame:
+    """Daily constant-maturity ATM IV from each session's last stored QUOTE snapshot, kept
+    beside the option-quote dataset it was derived from (never from trade prints).
     Incremental: sessions already derived are kept unless `full`."""
     schema = {"date": pl.Date, "atm_iv_30d": pl.Float64, "atm_iv_front": pl.Float64, "close": pl.Float64}
-    p = store.iv_path(sym)
+    dataset = dataset or store.option_dataset(sym, "quote")
+    if dataset is None:
+        return pl.DataFrame(schema=schema)
+    p = store.iv_path(sym, dataset)
     prev = pl.read_parquet(p) if p.exists() and not full else pl.DataFrame(schema=schema)
     have = set(prev["date"].to_list())
     rows = []
-    for d in store.option_days(sym):
+    for d in store.option_days(sym, dataset=dataset):
         if d in have:
             continue
-        df = store.read_option_day(sym, d)
+        df = store.read_option_day(sym, d, dataset=dataset)
         if df is None or df.is_empty():
             continue
         last_ts = df["ts"].max()

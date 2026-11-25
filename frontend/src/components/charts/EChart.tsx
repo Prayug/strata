@@ -27,7 +27,8 @@ const THEME = {
 };
 echarts.registerTheme("strata", THEME);
 
-export function EChart({ option, height = 240, className, onClick, notMerge = true }: { option: any; height?: number | string; className?: string; onClick?: (p: any) => void; notMerge?: boolean }) {
+/** `group`: charts that share a group name show one synchronized crosshair and tooltip. */
+export function EChart({ option, height = 240, className, onClick, notMerge = true, group }: { option: any; height?: number | string; className?: string; onClick?: (p: any) => void; notMerge?: boolean; group?: string }) {
   const el = useRef<HTMLDivElement>(null);
   const inst = useRef<echarts.ECharts | null>(null);
   const cb = useRef(onClick);
@@ -37,6 +38,10 @@ export function EChart({ option, height = 240, className, onClick, notMerge = tr
     const c = echarts.init(el.current, "strata", { renderer: "canvas" });
     inst.current = c;
     c.on("click", (p) => cb.current?.(p));
+    if (group) {
+      c.group = group;
+      echarts.connect(group);
+    }
     const ro = new ResizeObserver(() => c.resize());
     ro.observe(el.current);
     return () => {

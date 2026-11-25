@@ -2,19 +2,31 @@
 
 One small interface (`LLM.json` / `LLM.text`) with an adapter per provider: Anthropic (the
 official SDK), OpenAI, OpenRouter, Google Gemini and a local Ollama server (plain HTTPS).
-API keys are read server-side (settings table or environment) and never leave the backend.
+API keys are read server-side (OS keychain, protected file or environment) and never leave
+the backend: they are not logged, not returned by any endpoint, not placed in prompts, and
+any provider error message is scrubbed of them before it is shown.
 
 A model here only ever produces *text or a JSON object*. It cannot execute code, query the
 database or produce a financial result; everything it returns is validated by the caller.
+
+Reliability
+  * structured output: each adapter uses the provider's own JSON / JSON-schema output mode
+    where it has one (Anthropic output_config.format, OpenAI and OpenRouter response_format,
+    Gemini responseMimeType, Ollama format) and the reply is still validated by the caller
+  * transient failures (timeouts, 429, 5xx) are retried with backoff; the timeout and the
+    number of retries are settings
+  * a call can be cancelled between attempts
+  * token usage of every call is recorded (provider, model, purpose)
 """
 from __future__ import annotations
 
 import json
 import re
+import time
 
 import httpx
 
-from strata.api.settings import get_secret, get_setting
+from strata.api.settings import get_secret, get_setting, redact
 
 PROVIDERS = {
     "anthropic": {"label": "Anthropic Claude", "secret": "ANTHROPIC_API_KEY", "default_model": "claude-opus-5-5"},
@@ -28,6 +40,36 @@ AUTO_ORDER = ["anthropic", "openai", "gemini", "openrouter"]
 
 class LLMError(RuntimeError):
     """Any provider failure, with a message that is safe to show the user (never contains a key)."""
+
+    def __init__(self, msg: str = ""):
+        super().__init__(redact(str(msg)))
+
+
+RETRYABLE = (408, 409, 425, 429, 500, 502, 503, 504, 529)
+
+
+def _timeout(default: float) -> float:
+    try:
+        return float(get_setting("llm.timeout_seconds") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _retries() -> int:
+    try:
+        return max(0, min(5, int(get_setting("llm.max_retries") if get_setting("llm.max_retries") is not None else 2)))
+    except (TypeError, ValueError):
+        return 2
+
+
+def record_usage(llm: "LLM", input_tokens, output_tokens) -> None:
+    """Token usage of one call. Failing to record must never fail the call."""
+    llm.last_usage = {"input_tokens": int(input_tokens or 0), "output_tokens": int(output_tokens or 0)}
+    try:
+        from strata.api import db
+        db.add_usage(llm.provider, llm.model, getattr(llm, "purpose", "") or "", llm.last_usage["input_tokens"], llm.last_usage["output_tokens"])
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def extract_json(text: str) -> dict:
@@ -72,6 +114,9 @@ def extract_json(text: str) -> dict:
 class LLM:
     provider = "base"
     model = ""
+    purpose = "interpret"  # what the call is for (recorded with its token usage)
+    cancel = None  # optional callable: return True to abandon the call before the next attempt
+    last_usage: dict | None = None
 
     @property
     def name(self) -> str:
@@ -84,75 +129,111 @@ class LLM:
         return extract_json(self.text(system + "\n\nReply with a single JSON object and nothing else.", messages, max_tokens))
 
 
-def _http(method: str, url: str, *, headers: dict, body: dict, timeout: float, provider: str) -> dict:
-    try:
-        r = httpx.request(method, url, headers=headers, json=body, timeout=timeout)
-    except httpx.TimeoutException:
-        raise LLMError(f"{provider} did not answer within {timeout:.0f}s") from None
-    except httpx.HTTPError as e:
-        raise LLMError(f"could not reach {provider}: {type(e).__name__}") from None
-    if r.status_code >= 400:
+def _http(method: str, url: str, *, headers: dict, body: dict | None, timeout: float, provider: str, retries: int | None = None, cancel=None) -> dict:
+    """One provider request with bounded retries. Timeouts, connection failures and
+    transient statuses (429, 5xx) are retried with exponential backoff; anything else is
+    reported at once. The error text never contains a credential."""
+    attempts = (retries if retries is not None else _retries()) + 1
+    last: LLMError | None = None
+    for k in range(attempts):
+        if cancel is not None and cancel():
+            raise LLMError("cancelled")
+        if k:
+            time.sleep(min(8.0, 0.8 * (2 ** (k - 1))))
         try:
-            j = r.json()
-            detail = (j.get("error") or {}).get("message") if isinstance(j.get("error"), dict) else j.get("error") or j.get("message")
-        except Exception:  # noqa: BLE001
-            detail = r.text[:200]
-        hint = {401: "the API key was rejected", 403: "the API key lacks permission", 404: "model or endpoint not found", 429: "rate limited or out of quota"}.get(r.status_code, f"HTTP {r.status_code}")
-        raise LLMError(f"{provider}: {hint}" + (f" ({str(detail)[:240]})" if detail else ""))
-    try:
-        return r.json()
-    except ValueError:
-        raise LLMError(f"{provider} returned a non-JSON response") from None
+            r = httpx.request(method, url, headers=headers, timeout=timeout, **({"json": body} if body is not None else {}))
+        except httpx.TimeoutException:
+            last = LLMError(f"{provider} did not answer within {timeout:.0f}s")
+            continue
+        except httpx.HTTPError as e:
+            last = LLMError(f"could not reach {provider}: {type(e).__name__}")
+            continue
+        if r.status_code >= 400:
+            try:
+                j = r.json()
+                detail = (j.get("error") or {}).get("message") if isinstance(j.get("error"), dict) else j.get("error") or j.get("message")
+            except Exception:  # noqa: BLE001
+                detail = r.text[:200]
+            hint = {401: "the API key was rejected", 403: "the API key lacks permission", 404: "model or endpoint not found", 429: "rate limited or out of quota"}.get(r.status_code, f"HTTP {r.status_code}")
+            err = LLMError(f"{provider}: {hint}" + (f" ({str(detail)[:240]})" if detail else ""))
+            err.status = r.status_code
+            if r.status_code in RETRYABLE and k < attempts - 1:
+                last = err
+                continue
+            raise err
+        try:
+            return r.json()
+        except ValueError:
+            raise LLMError(f"{provider} returned a non-JSON response") from None
+    raise last or LLMError(f"{provider} request failed")
 
 
 class OpenAICompat(LLM):
     """OpenAI chat-completions wire format (OpenAI and OpenRouter)."""
 
-    def __init__(self, provider: str, base_url: str, key: str, model: str, timeout: float = 90):
-        self.provider, self.base_url, self.key, self.model, self.timeout = provider, base_url.rstrip("/"), key, model, timeout
+    def __init__(self, provider: str, base_url: str, key: str, model: str, timeout: float | None = None):
+        self.provider, self.base_url, self.key, self.model, self.timeout = provider, base_url.rstrip("/"), key, model, timeout or _timeout(90)
 
-    def _call(self, system, messages, max_tokens, json_mode):
+    def _call(self, system, messages, max_tokens, fmt):
         body = {"model": self.model, "messages": [{"role": "system", "content": system}] + messages, "max_completion_tokens" if self.provider == "openai" else "max_tokens": max_tokens}
-        if json_mode:
-            body["response_format"] = {"type": "json_object"}
-        j = _http("POST", f"{self.base_url}/chat/completions", headers={"Authorization": f"Bearer {self.key}"}, body=body, timeout=self.timeout, provider=PROVIDERS[self.provider]["label"])
+        if fmt is not None:
+            body["response_format"] = fmt
+        j = _http("POST", f"{self.base_url}/chat/completions", headers={"Authorization": f"Bearer {self.key}"}, body=body, timeout=self.timeout, provider=PROVIDERS[self.provider]["label"], cancel=self.cancel)
+        u = j.get("usage") or {}
+        record_usage(self, u.get("prompt_tokens"), u.get("completion_tokens"))
         try:
             return j["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError):
             raise LLMError(f"{self.provider} returned an unexpected response shape") from None
 
     def text(self, system, messages, max_tokens=1500):
-        return self._call(system, messages, max_tokens, False)
+        return self._call(system, messages, max_tokens, None)
 
     def json(self, system, messages, schema=None, max_tokens=4000):
-        return extract_json(self._call(system + "\n\nReply with a single JSON object and nothing else.", messages, max_tokens, True))
+        sys_ = system + "\n\nReply with a single JSON object and nothing else."
+        if schema is not None:
+            # the provider's JSON-schema output mode; models or routes without it fall back to plain JSON mode
+            try:
+                return extract_json(self._call(sys_, messages, max_tokens, {"type": "json_schema", "json_schema": {"name": "action", "schema": schema, "strict": False}}))
+            except LLMError as e:
+                if getattr(e, "status", None) not in (400, 404, 422):
+                    raise
+        return extract_json(self._call(sys_, messages, max_tokens, {"type": "json_object"}))
 
 
 class Ollama(LLM):
     provider = "ollama"
 
-    def __init__(self, url: str, model: str, timeout: float = 180):
-        self.url, self.model, self.timeout = url.rstrip("/"), model, timeout
+    def __init__(self, url: str, model: str, timeout: float | None = None):
+        self.url, self.model, self.timeout = url.rstrip("/"), model, timeout or _timeout(180)
 
     def _call(self, system, messages, max_tokens, fmt):
         body = {"model": self.model, "stream": False, "messages": [{"role": "system", "content": system}] + messages, "options": {"temperature": 0, "num_predict": max_tokens}}
         if fmt is not None:
             body["format"] = fmt
-        j = _http("POST", f"{self.url}/api/chat", headers={}, body=body, timeout=self.timeout, provider="Ollama")
+        j = _http("POST", f"{self.url}/api/chat", headers={}, body=body, timeout=self.timeout, provider="Ollama", retries=0, cancel=self.cancel)
+        record_usage(self, j.get("prompt_eval_count"), j.get("eval_count"))
         return (j.get("message") or {}).get("content") or ""
 
     def text(self, system, messages, max_tokens=1500):
         return self._call(system, messages, max_tokens, None)
 
     def json(self, system, messages, schema=None, max_tokens=4000):
-        return extract_json(self._call(system + "\n\nReply with a single JSON object and nothing else.", messages, max_tokens, "json"))
+        sys_ = system + "\n\nReply with a single JSON object and nothing else."
+        if schema is not None:
+            try:  # Ollama accepts a JSON schema as `format`; older servers only know "json"
+                return extract_json(self._call(sys_, messages, max_tokens, schema))
+            except LLMError as e:
+                if getattr(e, "status", None) not in (400, 404, 422):
+                    raise
+        return extract_json(self._call(sys_, messages, max_tokens, "json"))
 
 
 class Gemini(LLM):
     provider = "gemini"
 
-    def __init__(self, key: str, model: str, timeout: float = 90):
-        self.key, self.model, self.timeout = key, model, timeout
+    def __init__(self, key: str, model: str, timeout: float | None = None):
+        self.key, self.model, self.timeout = key, model, timeout or _timeout(90)
 
     def _call(self, system, messages, max_tokens, json_mode):
         contents = [{"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]} for m in messages]
@@ -160,7 +241,9 @@ class Gemini(LLM):
         if json_mode:
             cfg["responseMimeType"] = "application/json"
         j = _http("POST", f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent", headers={"x-goog-api-key": self.key},
-                  body={"systemInstruction": {"parts": [{"text": system}]}, "contents": contents, "generationConfig": cfg}, timeout=self.timeout, provider="Google Gemini")
+                  body={"systemInstruction": {"parts": [{"text": system}]}, "contents": contents, "generationConfig": cfg}, timeout=self.timeout, provider="Google Gemini", cancel=self.cancel)
+        u = j.get("usageMetadata") or {}
+        record_usage(self, u.get("promptTokenCount"), u.get("candidatesTokenCount"))
         try:
             return "".join(p.get("text", "") for p in j["candidates"][0]["content"]["parts"])
         except (KeyError, IndexError, TypeError):
@@ -185,14 +268,16 @@ class Anthropic(LLM):
     provider = "anthropic"
     FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
-    def __init__(self, key: str, model: str, timeout: float = 120, effort: str = "medium"):
+    def __init__(self, key: str, model: str, timeout: float | None = None, effort: str = "medium"):
         import anthropic
         self._sdk = anthropic
-        self.client = anthropic.Anthropic(api_key=key, timeout=timeout, max_retries=2)
+        self.client = anthropic.Anthropic(api_key=key, timeout=timeout or _timeout(120), max_retries=_retries())
         self.model, self.effort = model, effort
 
     def _create(self, system, messages, max_tokens, schema):
         a = self._sdk
+        if self.cancel is not None and self.cancel():
+            raise LLMError("cancelled")
         out_cfg: dict = {"effort": self.effort}
         if schema is not None:
             out_cfg["format"] = {"type": "json_schema", "schema": schema}
@@ -218,6 +303,9 @@ class Anthropic(LLM):
             raise LLMError("could not reach Anthropic") from None
 
     def _text_of(self, resp) -> str:
+        u = getattr(resp, "usage", None)
+        if u is not None:
+            record_usage(self, getattr(u, "input_tokens", 0), getattr(u, "output_tokens", 0))
         if getattr(resp, "stop_reason", None) == "refusal":
             cat = getattr(getattr(resp, "stop_details", None), "category", None)
             raise LLMError("Claude declined this request" + (f" ({cat})" if cat else ""))
@@ -245,6 +333,33 @@ def ollama_models(url: str | None = None, timeout: float = 2.5) -> list[str]:
         return [m["name"] for m in r.json().get("models", [])] if r.status_code == 200 else []
     except Exception:  # noqa: BLE001
         return []
+
+
+def list_models(provider: str) -> list[str]:
+    """Models the configured account can use, asked from the provider itself."""
+    if provider not in PROVIDERS:
+        raise LLMError(f"unknown provider {provider!r}")
+    if provider == "ollama":
+        return ollama_models()
+    key = get_secret(PROVIDERS[provider]["secret"])
+    label = PROVIDERS[provider]["label"]
+    if provider == "openrouter":  # the catalogue is public
+        j = _http("GET", "https://openrouter.ai/api/v1/models", headers={}, body=None, timeout=20, provider=label, retries=1)
+        return sorted(m["id"] for m in j.get("data", []) if m.get("id"))
+    if not key:
+        raise LLMError(f"no API key is configured for {label}")
+    if provider == "openai":
+        j = _http("GET", "https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {key}"}, body=None, timeout=20, provider=label, retries=1)
+        ids = sorted(m["id"] for m in j.get("data", []) if m.get("id"))
+        return [i for i in ids if re.match(r"(gpt-|o\d|chatgpt)", i) and not re.search(r"audio|realtime|tts|transcribe|image|embedding|moderation|search", i)] or ids
+    if provider == "gemini":
+        j = _http("GET", "https://generativelanguage.googleapis.com/v1beta/models", headers={"x-goog-api-key": key}, body=None, timeout=20, provider=label, retries=1)
+        return sorted(m["name"].split("/", 1)[-1] for m in j.get("models", []) if "generateContent" in (m.get("supportedGenerationMethods") or []))
+    import anthropic
+    try:
+        return [m.id for m in anthropic.Anthropic(api_key=key, timeout=20, max_retries=1).models.list(limit=100)]
+    except anthropic.APIError as e:
+        raise LLMError(f"Anthropic: could not list models ({type(e).__name__})") from None
 
 
 def build(provider: str) -> LLM:

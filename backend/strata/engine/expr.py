@@ -6,6 +6,9 @@
     crosses_above(price, vwap)
     return_pct("QQQ", sessions=5) - return_pct("SPY", sessions=5) > 2
     first_touch(prev_high, prev_low) == 1
+    price > prev_high and QQQ.high <= QQQ.prev_high          (another symbol's values)
+    price >= low_since("drop") + 0.5 * (open - low_since("drop"))   (state of an event sequence)
+    price <= entry.underlying_price * 0.995                  (add / exit rules: the position's own state)
 
 Expressions are parsed with Python's `ast` module and evaluated by a whitelist interpreter:
 only literals, arithmetic, comparisons, and/or/not and the names/functions registered
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 import ast
 import math
+import re
 from datetime import date, timedelta
 from functools import lru_cache
 from typing import Any
@@ -74,8 +78,22 @@ REGISTRY: dict[str, dict] = {
     # objects
     "previous_session": _d("previous_session.<field>", "Fields of the previous session: return_pct (close-to-close), open_to_close_pct, gap_pct, range_pct, open, high, low, close, volume", "Sessions"),
     "session": _d("session.<field>", "Today so far: open, high, low, return_pct (vs previous close), from_open_pct, gap_pct, range_pct, volume", "Sessions"),
-    "entry": _d("entry.<field>", "Exit rules only - the open position's entry: underlying_price, premium, time, minutes_ago", "Position"),
-    "position": _d("position.<field>", "Exit rules only: pnl_pct (of premium), pnl, dte, minutes_held, sessions_held, delta", "Position"),
+    "entry": _d("entry.<field>", "Exit / add rules - the open position's entry: underlying_price, premium, time, minutes_ago, signal_price, vwap, session_open", "Position"),
+    "position": _d("position.<field>", "Exit / add rules: pnl_pct (of premium), pnl, dte, minutes_held, sessions_held, delta, max_gain_pct, max_loss_pct, underlying_high, underlying_low, underlying_move_pct, lot, adds", "Position"),
+    "group": _d("group.<field>", "Exit / add rules - every lot of a scaled position together: pnl, pnl_pct, lots, avg_underlying_entry", "Position"),
+    # running session state
+    "max_decline_from_open_pct": _d("max_decline_from_open_pct", "Largest fall below today's open so far, % (0 or negative)", "State", "intraday"),
+    "max_rally_from_open_pct": _d("max_rally_from_open_pct", "Largest rise above today's open so far, % (0 or positive)", "State", "intraday"),
+    "pullback_from_high_pct": _d("pullback_from_high_pct", "Price vs the session high so far, % (0 or negative)", "State", "intraday"),
+    "bounce_from_low_pct": _d("bounce_from_low_pct", "Price vs the session low so far, % (0 or positive)", "State", "intraday"),
+    # event sequences (stages are declared on the strategy; these read their state)
+    "occurred": _d('occurred("stage")', "True once the named stage of the entry sequence has happened today", "Sequences", "intraday"),
+    "stage_price": _d('stage_price("stage")', "Underlying price when the named stage happened", "Sequences", "intraday"),
+    "stage_time": _d('stage_time("stage")', "Minutes since midnight (New York) when the named stage happened", "Sequences", "intraday"),
+    "minutes_since": _d('minutes_since("stage")', "Minutes elapsed since the named stage happened", "Sequences", "intraday"),
+    "low_since": _d('low_since("stage")', "Lowest price since the named stage happened (including the price at the stage)", "Sequences", "intraday"),
+    "high_since": _d('high_since("stage")', "Highest price since the named stage happened (including the price at the stage)", "Sequences", "intraday"),
+    "ref": _d('ref("name")', "A reference price captured when a stage happened (declared on the stage)", "Sequences", "intraday"),
     # history
     "return_pct": _d("return_pct(symbol=None, sessions=1)", "Close-to-close return over the last N completed sessions, %", "Sessions"),
     "session_return": _d("session_return(n=1, symbol=None)", "Close-to-close return of the n-th previous session, % (1 = yesterday)", "Sessions"),
@@ -142,9 +160,20 @@ FIELDS = {
     "underlying": {"price"},
     "previous_session": {"open", "high", "low", "close", "volume", "open_to_close_pct", "range_pct", "return_pct", "gap_pct"},
     "session": {"open", "high", "low", "return_pct", "from_open_pct", "gap_pct", "range_pct", "volume"},
-    "entry": {"underlying_price", "premium", "time", "minutes_ago"},
-    "position": {"pnl_pct", "pnl", "dte", "minutes_held", "sessions_held", "delta"},
+    "entry": {"underlying_price", "premium", "time", "minutes_ago", "signal_price", "vwap", "session_open"},
+    "position": {"pnl_pct", "pnl", "dte", "minutes_held", "sessions_held", "delta", "max_gain_pct", "max_loss_pct", "underlying_high", "underlying_low", "underlying_move_pct", "lot", "adds"},
+    "group": {"pnl", "pnl_pct", "lots", "avg_underlying_entry"},
 }
+POSITION_OBJECTS = ("entry", "position", "group")
+STAGE_FUNCS = ("occurred", "stage_price", "stage_time", "minutes_since", "low_since", "high_since")
+# plain values that can be read for another symbol as TICKER.value, e.g. QQQ.prev_high
+SYMBOL_FIELDS = {"price", "open", "high", "low", "prev_close", "prev_open", "prev_high", "prev_low", "vwap", "gap_pct", "change_pct", "from_open_pct", "range_pct", "volume",
+                 "dist_from_vwap_pct", "max_decline_from_open_pct", "max_rally_from_open_pct", "pullback_from_high_pct", "bounce_from_low_pct"}
+_TICKER = re.compile(r"[A-Z][A-Z0-9]{0,5}")
+
+
+def is_ticker(name: str) -> bool:
+    return bool(_TICKER.fullmatch(name)) and name not in FIELDS and name not in REGISTRY
 
 
 class _Canon(ast.NodeTransformer):
@@ -162,7 +191,17 @@ def parse(src: str) -> ast.Expression:
         raise ExprError(f"syntax error in expression {src!r}: {e.msg}") from None
     tree = ast.fix_missing_locations(_Canon().visit(tree))
     called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+    tickers = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and is_ticker(n.value.id)}
     for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and id(node) in tickers:
+            continue
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and id(node.value) in tickers:
+            if node.attr not in SYMBOL_FIELDS:
+                raise ExprError(f"{node.value.id}.{node.attr}: another symbol's values are limited to {', '.join(sorted(SYMBOL_FIELDS))}")
+            continue
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in STAGE_FUNCS + ("ref",):
+            if len(node.args) != 1 or node.keywords or not (isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+                raise ExprError(f'{node.func.id} takes one quoted name, e.g. {REGISTRY[node.func.id]["signature"]}')
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in REGISTRY and node.func.id not in FUNCTIONS:
             raise ExprError(f"{node.func.id} is a value, not a function: write {REGISTRY[node.func.id]['signature']}")
         if isinstance(node, ast.Name) and node.id in FUNCTIONS and id(node) not in called:
@@ -173,8 +212,8 @@ def parse(src: str) -> ast.Expression:
             raise ExprError(f"unknown name {node.id!r}")
         if isinstance(node, ast.Call) and not (isinstance(node.func, ast.Name) and node.func.id in REGISTRY):
             raise ExprError("only registered functions can be called")
-        if isinstance(node, ast.Attribute) and not (isinstance(node.value, ast.Name) and node.value.id in ("previous_session", "session", "entry", "position", "underlying")):
-            raise ExprError("attribute access is only allowed on previous_session, session, entry, position, underlying")
+        if isinstance(node, ast.Attribute) and not (isinstance(node.value, ast.Name) and node.value.id in FIELDS):
+            raise ExprError("a dot is only allowed after previous_session, session, entry, position, group, underlying or a ticker (e.g. QQQ.prev_high)")
         if isinstance(node, ast.Attribute) and node.attr not in FIELDS[node.value.id]:
             raise ExprError(f"{node.value.id} has no field {node.attr!r}; available: {', '.join(sorted(FIELDS[node.value.id]))}")
         if isinstance(node, ast.Constant) and not isinstance(node.value, (int, float, str, bool)):
@@ -197,10 +236,26 @@ def names_used(src: str) -> set[str]:
     return out
 
 
+def stages_used(src: str) -> set[str]:
+    """Names of sequence stages an expression reads."""
+    return {n.args[0].value for n in ast.walk(parse(src)) if isinstance(n, ast.Call) and n.func.id in STAGE_FUNCS and n.args and isinstance(n.args[0], ast.Constant)}
+
+
+def refs_used(src: str) -> set[str]:
+    return {n.args[0].value for n in ast.walk(parse(src)) if isinstance(n, ast.Call) and n.func.id == "ref" and n.args and isinstance(n.args[0], ast.Constant)}
+
+
+def uses_position(src: str) -> bool:
+    """True when the rule reads an open position (entry.*, position.*, group.*)."""
+    return any(isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in POSITION_OBJECTS for n in ast.walk(parse(src)))
+
+
 def symbols_used(src: str) -> set[str]:
-    """Other symbols referenced, e.g. return_pct("QQQ", sessions=5)."""
+    """Other symbols referenced, e.g. return_pct("QQQ", sessions=5) or QQQ.prev_high."""
     out = set()
     for n in ast.walk(parse(src)):
+        if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and is_ticker(n.value.id):
+            out.add(n.value.id)
         if isinstance(n, ast.Call):
             for a in list(n.args) + [k.value for k in n.keywords]:
                 if isinstance(a, ast.Constant) and isinstance(a.value, str) and a.value not in TF and a.value.isupper() and len(a.value) <= 6 and n.func.id not in ("event_today", "event_within"):
@@ -210,7 +265,7 @@ def symbols_used(src: str) -> set[str]:
 
 def needs_intraday(src: str) -> bool:
     u = names_used(src)
-    if u & INTRADAY_NAMES:
+    if u & INTRADAY_NAMES or {x.split(".", 1)[1] for x in u if "." in x} & INTRADAY_NAMES:
         return True
     for n in ast.walk(parse(src)):
         if isinstance(n, ast.Call):
@@ -268,6 +323,12 @@ class Evaluator:
                 return n.id == "True"
             return self.name(n.id)
         if isinstance(n, ast.Attribute):
+            if is_ticker(n.value.id):  # another symbol's value, e.g. QQQ.prev_high
+                other = Evaluator(self.ctx, self.pos, symbol=n.value.id)
+                other.shift = self.shift
+                v = other.name(n.attr)
+                self.missing |= other.missing
+                return v
             return self.attr(n.value.id, n.attr)
         if isinstance(n, ast.UnaryOp):
             v = self._ev(n.operand)
@@ -367,6 +428,15 @@ class Evaluator:
             if not math.isfinite(v):
                 return self._na("intraday bars (VWAP)")
             return v if k == "vwap" else (self.name("price") / v - 1) * 100
+        if k in ("max_decline_from_open_pct", "max_rally_from_open_pct", "pullback_from_high_pct", "bounce_from_low_pct"):
+            o, hi, lo, p = self.name("open"), self.name("high"), self.name("low"), self.name("price")
+            if None in (o, hi, lo, p):
+                return None
+            if k == "max_decline_from_open_pct":
+                return min(0.0, (lo / o - 1) * 100)
+            if k == "max_rally_from_open_pct":
+                return max(0.0, (hi / o - 1) * 100)
+            return min(0.0, (p / hi - 1) * 100) if k == "pullback_from_high_pct" else max(0.0, (p / lo - 1) * 100)
         if k == "gap_pct":
             o, pc = self.name("open"), self.name("prev_close")
             return None if o is None or pc is None else (o / pc - 1) * 100
@@ -415,8 +485,31 @@ class Evaluator:
             return self.name(m[a])
         p = self.pos
         if p is None:
-            raise ExprError(f"{obj}.{a} is only available in exit rules")
+            raise ExprError(f"{obj}.{a} is only available in exit and add rules (it reads an open position)")
+        if obj == "group":
+            gid = p.meta.get("group") or p.id
+            acct = c.bt.account
+            lots = [x for x in list(acct.positions) + list(acct.closed) if (x.meta.get("group") or x.id) == gid]
+            open_lots = [x for x in lots if x.is_open]
+            if a == "lots":
+                return float(len(open_lots))
+            if a == "avg_underlying_entry":
+                w = sum(x.units for x in lots)
+                return float(sum(x.entry_spot * x.units for x in lots) / w) if w else None
+            pnl = sum(x.gross_pnl(False) for x in open_lots) + sum(x.entry_cash + x.exit_cash for x in lots if not x.is_open)
+            if a == "pnl":
+                return float(pnl)
+            basis = sum(x.basis for x in lots)
+            return float(pnl / basis * 100) if basis else None
         if obj == "entry":
+            if a == "signal_price":
+                return _num(p.meta.get("signal_price")) or float(p.entry_spot)
+            if a == "vwap":
+                v = _num(p.meta.get("entry_vwap"))
+                return v if v is not None else self._na("VWAP at entry")
+            if a == "session_open":
+                v = _num(p.meta.get("entry_session_open"))
+                return v if v is not None else self._na("session open at entry")
             if a == "underlying_price":
                 return float(p.entry_spot)
             if a == "premium":
@@ -439,7 +532,76 @@ class Evaluator:
             return float(cal.trading_days_between(from_day_num(p.entry_day), c.today))
         if a == "delta":
             return float(p.greeks()[0] / max(p.units, 1))
+        if a in ("max_gain_pct", "max_loss_pct"):
+            return float((p.mfe if a == "max_gain_pct" else p.mae) / p.basis * 100) if p.basis else None
+        if a in ("underlying_high", "underlying_low", "underlying_move_pct"):
+            s = self.ser(p.symbol)
+            if s is None:
+                return None
+            px = s.price_at(self.t, c.today)
+            if a == "underlying_move_pct":
+                return float((px / p.entry_spot - 1) * 100) if math.isfinite(px) and p.entry_spot else self._na("price")
+            hi, lo = s.range_between(p.entry_ts, self.t)
+            if a == "underlying_high":
+                return float(max(p.entry_spot, hi)) if math.isfinite(hi) else float(p.entry_spot)
+            return float(min(p.entry_spot, lo)) if math.isfinite(lo) else float(p.entry_spot)
+        if a == "lot":
+            return float(p.meta.get("lot", 1))
+        if a == "adds":
+            gid = p.meta.get("group") or p.id
+            return float(sum(1 for x in list(c.bt.account.positions) + list(c.bt.account.closed) if x.meta.get("group") == gid and x.meta.get("lot", 1) > 1))
         raise ExprError(f"position has no field {a!r}")
+
+    # ---- event-sequence state (today's stages, or the stages recorded on the position at entry)
+    def _stage(self, name):
+        st = None
+        if self.pos is not None:
+            st = (self.pos.meta.get("seq") or {}).get(str(name))
+        if st is None:
+            tr = getattr(self.ctx, "seq", None)
+            st = tr.state.get(str(name)) if tr is not None else None
+        return st
+
+    def f_occurred(self, name):
+        return self._stage(name) is not None
+
+    def f_stage_price(self, name):
+        st = self._stage(name)
+        return None if st is None else float(st["price"])  # not yet: unknown, but not missing data
+
+    def f_stage_time(self, name):
+        st = self._stage(name)
+        return None if st is None else float(st["minute"])
+
+    def f_minutes_since(self, name):
+        st = self._stage(name)
+        return None if st is None else float((self.t - st["t"]) / 60)
+
+    def _extreme_since(self, name, high: bool):
+        st = self._stage(name)
+        s = self.ser()
+        if st is None or s is None:
+            return None
+        hi, lo = s.range_between(st["t"], self.t)
+        base = float(st["price"])
+        if high:
+            return max(base, hi) if math.isfinite(hi) else base
+        return min(base, lo) if math.isfinite(lo) else base
+
+    def f_low_since(self, name):
+        return self._extreme_since(name, False)
+
+    def f_high_since(self, name):
+        return self._extreme_since(name, True)
+
+    def f_ref(self, name):
+        v = None
+        if self.pos is not None:
+            v = (self.pos.meta.get("refs") or {}).get(str(name))
+        if v is None:
+            tr = getattr(self.ctx, "seq", None)
+            v = tr.refs.get(str(name)) if tr is not None else None
+        return None if v is None else float(v)
 
     # ---- functions
     def call(self, n: ast.Call):

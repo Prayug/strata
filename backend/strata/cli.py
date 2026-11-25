@@ -16,7 +16,7 @@ def cmd_init(a):
     p = db.init_db()
     print(f"database ready: {p}")
     st = MarketStore()
-    real = [k for k, m in st.symbols().items() if not m.synthetic]
+    real = [k for k in st.symbols() if not st.is_synthetic(k)]
     print(f"market data dir: {get_settings().market_dir} ({len(real)} real symbols stored)")
     if getattr(a, "fetch", False):
         a.symbols, a.no_intraday, a.options, a.years = ["SPY", "QQQ", "IWM"], False, False, None
@@ -130,6 +130,28 @@ def cmd_ingest(a):
                    progress=lambda f, m: print(f"\r  {f:5.1%} {m}", end="", flush=True)))
 
 
+def cmd_validate(a):
+    """End-to-end validation on actual market observations, from an empty data directory."""
+    from strata.validate import run_validation
+    rep = run_validation(a.dir, keep=a.keep or bool(a.dir), sessions=a.sessions)
+    if a.json:
+        print(json.dumps(rep, indent=1, default=str))
+    sys.exit(0 if rep["ok"] else 1)
+
+
+def cmd_migrate(a):
+    """Move a data directory written by an older version to the current storage layout."""
+    from strata.config import get_settings
+    from strata.data.migrate import migrate_layout
+    root = get_settings().market_dir
+    out = migrate_layout(root, dry_run=a.dry_run)
+    print(f"{root}: layout {out['from']} -> {out['to']}" + (" (dry run, nothing moved)" if a.dry_run else "") + (f": {out['note']}" if out.get("note") else ""))
+    for d in out.get("datasets", []):
+        print(f"   {d['dataset']}: {d['files']} file(s)")
+    if out.get("moved_files"):
+        print(f"moved {out['moved_files']} files; a record of the migration is in {root / 'migrations'}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="strata", description="Strata options research platform")
     ap.add_argument("--data-dir", help="override STRATA_DATA_DIR")
@@ -159,6 +181,15 @@ def main(argv=None):
     p.add_argument("--save", action="store_true", help="store the result so it appears in the UI")
     p.add_argument("--name", default="")
     p.set_defaults(fn=cmd_backtest)
+    p = sub.add_parser("validate", help="prove the whole chain on real data: empty directory -> free download -> manual vs AI strategy -> premiums checked against the source")
+    p.add_argument("--dir", help="empty directory to use (kept afterwards); default: a temporary one that is removed")
+    p.add_argument("--keep", action="store_true", help="keep the temporary data directory for inspection")
+    p.add_argument("--sessions", type=int, default=3, help="recent sessions to backtest (default 3)")
+    p.add_argument("--json", action="store_true", help="also print the full report as JSON")
+    p.set_defaults(fn=cmd_validate)
+    p = sub.add_parser("migrate", help="move stored market data to the current storage layout (also done automatically on start)")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(fn=cmd_migrate)
     p = sub.add_parser("import", help="import a CSV/Parquet file")
     p.add_argument("file")
     p.add_argument("--kind", required=True, choices=["underlying_minutes", "underlying_daily", "option_quotes", "events", "corporate_actions"])

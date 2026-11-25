@@ -72,6 +72,15 @@ CREATE TABLE IF NOT EXISTS versions (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS versions_session ON versions(session_id, id);
+CREATE TABLE IF NOT EXISTS llm_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  purpose TEXT DEFAULT '',
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS runs_kind ON runs(kind, created_at);
 CREATE INDEX IF NOT EXISTS runs_cache ON runs(cache_key);
 CREATE INDEX IF NOT EXISTS runs_strategy ON runs(strategy_id);
@@ -211,6 +220,21 @@ def mark_interrupted() -> int:
         return cur.rowcount
 
 
+# ---------------- language-model usage
+def add_usage(provider: str, model: str, purpose: str, input_tokens: int, output_tokens: int) -> None:
+    with connect() as con:
+        con.execute("INSERT INTO llm_usage (provider, model, purpose, input_tokens, output_tokens, created_at) VALUES (?,?,?,?,?,?)", (provider, model, purpose, int(input_tokens), int(output_tokens), now()))
+
+
+def usage_summary(days: int = 30) -> dict:
+    from datetime import timedelta
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with connect() as con:
+        rows = [dict(r) for r in con.execute("SELECT provider, model, purpose, COUNT(*) AS calls, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, MAX(created_at) AS last "
+                                             "FROM llm_usage WHERE created_at >= ? GROUP BY provider, model, purpose ORDER BY last DESC", (since,)).fetchall()]
+    return {"days": days, "rows": rows, "calls": sum(r["calls"] for r in rows), "input_tokens": sum(r["input_tokens"] or 0 for r in rows), "output_tokens": sum(r["output_tokens"] or 0 for r in rows)}
+
+
 # ---------------- AI research sessions
 def create_session(title: str, state: dict | None = None) -> dict:
     sid = uuid.uuid4().hex[:12]
@@ -288,6 +312,14 @@ def list_versions(sid: str) -> list[dict]:
         if not isinstance(r.get("runs"), list):
             r["runs"] = []
     return out
+
+
+def update_version(vid: int, draft: dict | None = None, label: str | None = None) -> None:
+    with connect() as con:
+        if draft is not None:
+            con.execute("UPDATE versions SET draft=? WHERE id=?", (json.dumps(draft, default=str), vid))
+        if label is not None:
+            con.execute("UPDATE versions SET label=? WHERE id=?", (label, vid))
 
 
 def set_version_runs(vid: int, runs: list) -> None:

@@ -82,3 +82,65 @@
 .cmdk-overlay { position: fixed; inset: 0; background: rgba(4, 6, 9, 0.6); z-index: 60; }
 @keyframes stripes { from { background-position: 0 0; } to { background-position: 24px 0; } }
 .progress-indeterminate { background-image: linear-gradient(90deg, transparent 0, rgba(232,163,61,.5) 50%, transparent 100%); background-size: 24px 100%; animation: stripes 0.8s linear infinite; }
+
+/* ------------------------------------------------------------------ research workspace (AI Lab)
+   The lab is a reading-and-thinking surface, not a terminal: larger type, more air, softer
+   surfaces. Everything inside .lab uses these tokens; the dense tools elsewhere keep theirs. */
+.lab { font-size: 14px; line-height: 1.5; --lab-r: 10px; }
+.lab h1 { font-size: 26px; line-height: 1.2; font-weight: 600; letter-spacing: -0.02em; }
+.lab h2 { font-size: 17px; line-height: 1.3; font-weight: 600; letter-spacing: -0.01em; }
+.lab h3 { font-size: 13px; font-weight: 600; color: var(--color-fg-2); }
+.lab .card { background: var(--color-bg-1); border: 1px solid var(--color-line); border-radius: var(--lab-r); }
+.lab .card-2 { background: var(--color-bg-2); border: 1px solid var(--color-line-2); border-radius: var(--lab-r); }
+.lab .soft { color: var(--color-fg-2); }
+.lab .dim { color: var(--color-muted); }
+.lab .eyebrow { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-muted); font-weight: 600; }
+.lab .chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--color-line-2); font-size: 12px; color: var(--color-fg-2); background: var(--color-bg-2); white-space: nowrap; }
+.lab button.chip { cursor: pointer; transition: border-color 120ms, color 120ms, background 120ms; }
+.lab button.chip:hover { border-color: var(--color-accent); color: var(--color-fg); }
+.lab .chip.on { border-color: var(--color-accent); color: var(--color-accent-2); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.lab .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 8px; font-size: 13px; font-weight: 500; border: 1px solid var(--color-line-2); background: var(--color-bg-2); color: var(--color-fg); cursor: pointer; transition: background 120ms, border-color 120ms; white-space: nowrap; }
+.lab .btn:hover { background: var(--color-bg-3); border-color: var(--color-faint); }
+.lab .btn:disabled { opacity: 0.45; pointer-events: none; }
+.lab .btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: #1a1206; font-weight: 600; }
+.lab .btn.primary:hover { background: var(--color-accent-2); }
+.lab .btn.quiet { background: transparent; border-color: transparent; color: var(--color-fg-2); }
+.lab .btn.quiet:hover { background: var(--color-bg-3); color: var(--color-fg); }
+.lab .btn.sm { height: 28px; padding: 0 10px; font-size: 12px; border-radius: 7px; }
+.lab .btn svg { width: 15px; height: 15px; flex: none; }
+.lab .composer { background: var(--color-bg-1); border: 1px solid var(--color-line-2); border-radius: 14px; transition: border-color 150ms, box-shadow 150ms; }
+.lab .composer:focus-within { border-color: color-mix(in srgb, var(--color-accent) 70%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.lab .composer textarea { width: 100%; resize: none; background: transparent; outline: none; border: 0; font-size: 15px; line-height: 1.5; padding: 14px 16px 6px; }
+.lab .composer textarea::placeholder { color: var(--color-faint); }
+.lab .term { border-bottom: 1px dotted var(--color-faint); cursor: help; }
+.lab .prose p + p { margin-top: 0.7em; }
+.lab .kv { display: grid; grid-template-columns: minmax(110px, 170px) minmax(0, 1fr); gap: 6px 14px; }
+.lab .kv dt { color: var(--color-muted); font-size: 12.5px; }
+.lab .kv dd { min-width: 0; }
+.lab table.t { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
+.lab table.t th { text-align: left; font-weight: 500; color: var(--color-muted); font-size: 11.5px; padding: 7px 10px; border-bottom: 1px solid var(--color-line); position: sticky; top: 0; background: var(--color-bg-1); white-space: nowrap; z-index: 1; }
+.lab table.t td { padding: 7px 10px; border-bottom: 1px solid color-mix(in srgb, var(--color-line) 70%, transparent); white-space: nowrap; }
+.lab table.t tr.click { cursor: pointer; }
+.lab table.t tr.click:hover td { background: var(--color-bg-2); }
+.lab table.t tr.sel td { background: color-mix(in srgb, var(--color-accent) 9%, transparent); }
+.lab table.t td.r, .lab table.t th.r { text-align: right; }
+.lab .tabbar { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--color-line); overflow-x: auto; scrollbar-width: none; }
+.lab .tab { height: 40px; padding: 0 12px; font-size: 13px; color: var(--color-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; display: inline-flex; align-items: center; gap: 7px; cursor: pointer; transition: color 120ms; }
+.lab .tab:hover { color: var(--color-fg); }
+.lab .tab.on { color: var(--color-fg); border-color: var(--color-accent); }
+.lab .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.lab .field { height: 32px; border-radius: 7px; font-size: 13px; padding: 0 10px; }
+.lab .fade-in { animation: labfade 220ms ease-out both; }
+@keyframes labfade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes labpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.lab .pulse { animation: labpulse 1.2s ease-in-out infinite; }
+.lab .day { width: 100%; aspect-ratio: 1; display: block; border-radius: 3px; background: var(--color-bg-3); cursor: pointer; transition: transform 80ms, outline-color 80ms; outline: 1px solid transparent; }
+.lab .day:hover { transform: scale(1.25); outline-color: var(--color-fg-2); }
+.lab .day.off { background: transparent; cursor: default; pointer-events: none; }
+.lab .day.sel { outline: 2px solid var(--color-fg); outline-offset: 1px; }
+.s-target, .s-win { background: #26a69a !important; }
+.s-stop, .s-loss { background: #ef5350 !important; }
+.s-neither { background: #4c8dff !important; }
+.s-ambiguous { background: #e2b93b !important; }
+.s-skipped { background: #b980ff !important; }
+.s-missing { background: repeating-linear-gradient(45deg, #3a4354 0 2px, #1a202b 2px 4px) !important; }

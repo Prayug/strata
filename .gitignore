@@ -10,3 +10,7 @@ frontend/dist/
 
 # machine-specific dev-server config
 .claude/
+
+# browser test output
+frontend/test-results/
+frontend/playwright-report/

@@ -29,13 +29,15 @@ class PerturbedStore(MarketStore):
         super().__init__(base.root)
         self.cut = cut
 
-    def read_minutes(self, sym, start=None, end=None):
-        df = super().read_minutes(sym, start, end)
+    def read_bars(self, sym, res, start=None, end=None, provider=None, with_provider=False):
+        df = super().read_bars(sym, res, start, end, provider, with_provider)
+        self.perturbed_bars = True
         after = pl.col("ts").dt.epoch("s") + 60 > self.cut  # bars not yet complete at the cut
         return df.with_columns([pl.when(after).then(pl.col(c) * 1.07).otherwise(pl.col(c)).alias(c) for c in ["open", "high", "low", "close"]])
 
-    def read_option_day(self, sym, d):
-        df = super().read_option_day(sym, d)
+    def read_option_day(self, sym, d, *a, **kw):
+        df = super().read_option_day(sym, d, *a, **kw)
+        self.perturbed_options = True
         if df is None:
             return None
         after = pl.col("ts").dt.epoch("s") > self.cut

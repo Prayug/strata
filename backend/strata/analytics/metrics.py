@@ -193,7 +193,7 @@ def breakdowns(trades: list[dict]) -> dict:
     """P&L grouped by entry time, weekday, DTE, delta, VIX regime, exit reason, month."""
     if not trades:
         return {}
-    groups: dict[str, dict[str, list[dict]]] = {k: {} for k in ["time_of_day", "weekday", "dte", "delta", "vix", "exit_reason", "regime", "strategy"]}
+    groups: dict[str, dict[str, list[dict]]] = {k: {} for k in ["time_of_day", "weekday", "dte", "delta", "vix", "exit_reason", "regime", "strategy", "year"]}
     wd = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     for t in trades:
         hh = t["entry_minute"] // 30 * 30
@@ -206,6 +206,7 @@ def breakdowns(trades: list[dict]) -> dict:
             "exit_reason": t["exit_reason"],
             "regime": t.get("entry_regime") or "n/a",
             "strategy": t["strategy"],
+            "year": t["entry_date"][:4],
         }
         for g, k in keys.items():
             groups[g].setdefault(k, []).append(t)

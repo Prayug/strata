@@ -326,19 +326,109 @@ def classify_dollars(text: str, spans: list | None = None) -> dict:
     return out
 
 
+MONTHS = {m: i + 1 for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
+MONTH_RE = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+# 2024-03-01 | 3/1/2024 | march 1, 2024 | 1 march 2024 | march 2024
+DATE_TOK = rf"((?:19|20)\d{{2}}-\d{{1,2}}-\d{{1,2}}|\d{{1,2}}/\d{{1,2}}/(?:19|20)\d{{2}}|{MONTH_RE}\.?\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+(?:19|20)\d{{2}}|\d{{1,2}}(?:st|nd|rd|th)?\s+{MONTH_RE}\.?,?\s+(?:19|20)\d{{2}}|{MONTH_RE}\.?\s+(?:19|20)\d{{2}})"
+
+
+def _date_tok(tok: str) -> tuple[date, date] | None:
+    """(first day, last day) a written date covers: one day for a full date, the whole month for "march 2024"."""
+    import calendar as _cal
+    t = tok.lower().strip()
+    try:
+        m = re.fullmatch(r"((?:19|20)\d{2})-(\d{1,2})-(\d{1,2})", t)
+        if m:
+            d = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            return d, d
+        m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/((?:19|20)\d{2})", t)  # month/day/year
+        if m:
+            d = date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
+            return d, d
+        m = re.fullmatch(rf"({MONTH_RE})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+((?:19|20)\d{{2}})", t)
+        if m:
+            d = date(int(m.group(3)), MONTHS[m.group(1)[:3]], int(m.group(2)))
+            return d, d
+        m = re.fullmatch(rf"(\d{{1,2}})(?:st|nd|rd|th)?\s+({MONTH_RE})\.?,?\s+((?:19|20)\d{{2}})", t)
+        if m:
+            d = date(int(m.group(3)), MONTHS[m.group(2)[:3]], int(m.group(1)))
+            return d, d
+        m = re.fullmatch(rf"({MONTH_RE})\.?\s+((?:19|20)\d{{2}})", t)
+        if m:
+            y, mo = int(m.group(2)), MONTHS[m.group(1)[:3]]
+            return date(y, mo, 1), date(y, mo, _cal.monthrange(y, mo)[1])
+    except ValueError:  # 2024-02-31 and the like: not a date
+        return None
+    return None
+
+
+def find_dte(low: str) -> int | None:
+    """Days to expiration as written: "7DTE", "expiring in 7 days", "two weeks out", "weeklies".
+    A holding period ("hold for 5 days") is not an expiration and is never read as one."""
+    m = re.findall(r"\b(\d+)\s*-?\s*dte\b", low)
+    if m:
+        return int(m[0])
+    if re.search(r"zero[- ]dte|same[- ]day expir|expir\w* (?:the )?same day|expir\w* today", low):
+        return 0
+    unit = {"day": 1, "week": 7, "month": 30}
+    W = r"(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|twelve|fourteen|thirty|sixty|ninety)"
+    for pat in (rf"expir\w*\s+(?:in|within|after)?\s*(?:about|around|roughly|approximately)?\s*{W}\s*-?\s*(day|week|month)s?",
+                rf"{W}\s*-?\s*(day|week|month)s?\s+(?:to|until|till|from|before|of time to)\s+(?:the\s+)?expir",
+                rf"{W}\s*-?\s*(day|week|month)s?\s+out\b",
+                rf"(?:with|at)\s+{W}\s*-?\s*(day|week|month)s?\s+(?:left|remaining|to go)",
+                rf"\b{W}\s*-\s*(day|week|month)\s+(?:atm |otm |itm |spy |qqq |iwm )*(?:call|put|option|straddle|strangle|spread|condor)"):
+        mm = re.search(pat, low)
+        if mm:
+            tok = mm.group(1)
+            n = 1.0 if tok in ("a", "an") else _num(tok)
+            if n is not None:
+                return int(round(n * unit[mm.group(2)]))
+    if re.search(r"next week'?s? expir|expir\w* next week", low):
+        return 7
+    if re.search(r"next month'?s? expir|expir\w* next month", low):
+        return 30
+    if re.search(r"\bweekl(?:y|ies)\b", low):
+        return 7
+    if re.search(r"\bmonthl(?:y|ies)\b", low):
+        return 30
+    return None
+
+
 def find_period(low: str) -> tuple[date | None, date | None, str | None]:
     today = date.today()
     if "2022 bear market" in low or ("bear market" in low and "2022" in low):
         return date(2022, 1, 3), date(2022, 10, 14), "the 2022 bear market (2022-01-03 to 2022-10-14)"
     if "covid" in low:
         return date(2020, 2, 19), date(2020, 4, 30), "the COVID crash (2020-02-19 to 2020-04-30)"
-    m = re.search(r"(?:from|between)\s+((?:19|20)\d{2})\s*(?:to|-|through|and|until)\s*((?:19|20)\d{2})", low)
+    # explicit dates first: "from 2024-03-01 to 2024-06-30", "between 3/1/2024 and June 2024", "since March 2020"
+    m = re.search(rf"(?:from|between)\s+{DATE_TOK}\s*(?:to|-|–|through|thru|and|until|till)\s*{DATE_TOK}", low)
+    if m:
+        a, b = _date_tok(m.group(1)), _date_tok(m.group(2))
+        if a and b and a[0] <= b[1]:
+            return a[0], b[1], None
+    m = re.search(rf"\bon\s+{DATE_TOK}", low)
+    if m and _date_tok(m.group(1)) and re.match(r"\d", m.group(1)):  # a full date, not "on january 2024"
+        a = _date_tok(m.group(1))
+        return a[0], a[1], None
+    m = re.search(rf"(?:since|after|from|starting(?: on| in)?|beginning(?: on| in)?)\s+{DATE_TOK}", low)
+    if m and _date_tok(m.group(1)):
+        end = re.search(rf"(?:until|till|through|thru|up to|ending(?: on| in)?)\s+{DATE_TOK}", low)
+        b = _date_tok(end.group(1)) if end else None
+        return _date_tok(m.group(1))[0], (b[1] if b else None), None
+    m = re.search(rf"(?:until|till|through|thru|up to|before|ending(?: on| in)?)\s+{DATE_TOK}", low)
+    if m and _date_tok(m.group(1)):
+        return None, _date_tok(m.group(1))[1], None
+    m = re.search(rf"(?:in|during|for)\s+({MONTH_RE}\.?\s+(?:19|20)\d{{2}})\b", low)
+    if m and _date_tok(m.group(1)):
+        a = _date_tok(m.group(1))
+        return a[0], a[1], None
+    m = re.search(r"(?:from|between)\s+((?:19|20)\d{2})\s*(?:to|-|through|and|until)\s*((?:19|20)\d{2})(?![-/]\d)", low)
     if m:
         return date(int(m.group(1)), 1, 1), date(int(m.group(2)), 12, 31), None
-    m = re.search(r"(?:since|after|from)\s+((?:19|20)\d{2})\b", low)
+    m = re.search(r"(?:since|after|from)\s+((?:19|20)\d{2})\b(?![-/]\d)", low)
     if m:
         return date(int(m.group(1)), 1, 1), None, None
-    m = re.search(r"(?:in|during|for)\s+((?:19|20)\d{2})\b", low)
+    m = re.search(r"(?:in|during|for)\s+((?:19|20)\d{2})\b(?![-/]\d)", low)
     if m:
         return date(int(m.group(1)), 1, 1), date(int(m.group(1)), 12, 31), None
     m = re.search(r"(?:last|past)\s+(\w+)\s+(year|month)s?", low)
@@ -389,17 +479,9 @@ def parse_fresh(text: str, known: list[str], default_symbol: str = "SPY") -> Dra
     if note:
         d.notes.append(f"Period interpreted as {note}.")
     if kind == "options":
-        m = re.findall(r"\b(\d+)\s*-?\s*dte\b", low)
-        if m:
-            d.dte = int(m[0])
-        elif re.search(r"zero[- ]dte|same[- ]day expir", low):
-            d.dte = 0
-        elif re.search(rf"{N}\s*days? (?:to|until|till) expir", low):
-            d.dte = int(float(re.search(rf"{N}\s*days? (?:to|until|till) expir", low).group(1)))
-        elif re.search(r"\bweekl(?:y|ies)\b", low):
-            d.dte = 7
-        elif re.search(r"\bmonthl(?:y|ies)\b", low):
-            d.dte = 30
+        dte = find_dte(low)
+        if dte is not None:
+            d.dte = dte
         if re.search(r"\batm\b|at[- ]the[- ]money", low):
             d.strike = DraftStrike(method="atm")
         else:
@@ -722,8 +804,8 @@ def parse_followup(text: str, cur: Draft, known: list[str], last_field: str | No
         n.exit_time, n.exit_time_stated = times[-1]["et"], times[-1]["stated"]
         changed.append("exit_time")
     m = re.findall(r"\b(\d+)\s*-?\s*dte\b", low)
-    if len(m) == 1 and n.kind == "options":
-        n.dte = int(m[0])
+    if n.kind == "options" and len(m) <= 1 and find_dte(low) is not None and (m or re.search(r"expir|\bout\b|weekl|monthl|-(?:day|week|month)\b", low)):
+        n.dte = find_dte(low)
         changed.append("dte")
     pc = classify_percents(text, n.kind == "study")
     for key, fld in (("und_target", "target"), ("und_stop", "stop"), ("premium_target", "premium_target"), ("premium_stop", "premium_stop")):

@@ -236,8 +236,8 @@ def eod_store(tmp_path):
         ts = cal.session_bounds(d)[1]
         st.write_option_day("SPY", d, pl.DataFrame([{"ts": ts, "expiration": d + timedelta(days=30), "strike": 500.0, "right": r, "bid": 5.0, "ask": 5.1, "bid_size": 10, "ask_size": 10, "volume": 1,
                                                     "open_interest": 1, "iv": 0.2, "delta": 0.5 if r == "C" else -0.5, "gamma": 0.0, "theta": 0.0, "vega": 0.0, "underlying_price": 500.0, "quote_ts": ts} for r in "CP"])
-                            .with_columns(pl.col("ts").dt.convert_time_zone("UTC").cast(pl.Datetime("us", "UTC")), pl.col("quote_ts").dt.convert_time_zone("UTC").cast(pl.Datetime("us", "UTC"))))
-    st.note_source("SPY", "options", "test_eod", "EOD", quote_type="quotes")
+                            .with_columns(pl.col("ts").dt.convert_time_zone("UTC").cast(pl.Datetime("us", "UTC")), pl.col("quote_ts").dt.convert_time_zone("UTC").cast(pl.Datetime("us", "UTC"))),
+                            provider="test_eod", res="EOD")
     st.rebuild_manifest("SPY")
     return st
 
@@ -441,7 +441,7 @@ def test_llm_tool_loop_validates_and_repairs(tmp_settings):
     r = llm_interpret(m, "Buy one ATM SPY 0DTE call at 6:30 AM Pacific after a 3% down day", None, [], st, lambda: None)
     assert r["action"] == "new" and r["draft"].entry_time == "open"  # 06:30 Pacific -> 09:30 New York, computed server-side
     assert r["draft"].conditions[0].expr == "previous_session.return_pct <= -3"
-    assert len(m.calls) == 4 and "TOOL RESULT" in m.calls[1][1][-1]["content"] and "unknown tool" in m.calls[2][1][-1]["content"] and "invalid draft" in m.calls[3][1][-1]["content"]
+    assert len(m.calls) == 4 and "TOOL RESULT" in m.calls[1][1][-1]["content"] and "unknown tool" in m.calls[2][1][-1]["content"] and "only registered functions can be called" in m.calls[3][1][-1]["content"]
     assert "Python engine calculates every number" in m.calls[0][0]
 
 
@@ -484,14 +484,20 @@ def test_agent_question_modify_compare_and_versions(tmp_settings):
 def test_agent_refuses_options_backtest_without_quotes_and_offers_study(tmp_settings):
     from strata.ai.agent import Agent
     from strata.api import db
+    from strata.api.results import run_dir
     st = study_store(tmp_settings)
     ag = Agent(InlineJobs(), st, llm_factory=lambda: None)
     sid = db.create_session("t")["id"]
     plan = ag.post(sid, "Buy one ATM TST 0DTE call at 6:30 AM Pacific after a 3% down day, exit when TST moves up 1% from entry or at 12:45 PM Pacific.")[-1]["content"]
-    assert plan["runs"] == [] and plan["mode"] is None and "No option quotes are stored for TST" in plan["text"]
-    assert plan["coverage"]["modes"]["study"]["ok"] and not plan["coverage"]["modes"]["historical"]["ok"]
-    assert db.list_runs(kind="backtest") == []  # nothing was run, nothing fabricated
-    run = ag.run(sid, plan["version_id"], "study")[-1]["content"]
+    assert plan["unsupported"] == [] and plan["state"] == "running" and len(plan["runs"]) == 1
+    rid = plan["runs"][0]["run_id"]
+    # the pipeline found the qualifying sessions but no observed option prices for them: it stops and asks
+    assert db.get_run(rid)["summary"]["outcome"] == "needs_decision" and not (run_dir(rid) / "result.json").exists() and not (run_dir(rid) / "trades.json").exists()
+    dec = ag.finalize(sid)[0]
+    assert dec["kind"] == "decision" and "None of the 2 qualifying sessions has usable" in dec["content"]["text"]
+    ids = [c["id"] for c in dec["content"]["choices"]]
+    assert "mode:study" in ids and "mode:modeled" in ids and all("modeled" not in i for i in ids[:ids.index("mode:study")])  # theoretical premiums are offered, never chosen
+    run = ag.decide(sid, dec["id"], "mode:study")[-1]["content"]
     assert "not the option position's profit or loss" in run["text"]
     assert ag.finalize(sid)[0]["content"]["mode"] == "study"
 
@@ -533,7 +539,8 @@ def test_cboe_dolthub_alpaca_parsers_and_chain_cleaning():
             {"date": "2024-03-04", "act_symbol": "SPY", "expiration": "2024-03-15", "strike": "500.00", "call_put": "Put", "bid": "", "ask": "4.9", "vol": "", "delta": "", "gamma": "", "theta": "", "vega": "", "rho": ""}]
     d = DoltHub.normalize(rows)
     assert d.height == 1 and d["right"][0] == "C" and d["bid"][0] == 5.10  # a row with no bid is dropped, not given one
-    assert Alpaca.parse_occ("SPY240315C00500000") == (date(2024, 3, 15), "C", 500.0)
+    from strata.data.providers.sources import parse_occ
+    assert parse_occ("SPY240315C00500000") == ("SPY", date(2024, 3, 15), "C", 500.0)
     b = Alpaca.parse_bars([{"t": "2024-03-04T14:30:00Z", "o": 1, "h": 2, "l": 0.5, "c": 1.5, "v": 9}])
     assert b["ts"][0].isoformat().startswith("2024-03-04T14:30") and b["volume"][0] == 9.0
     ch = pl.DataFrame({"strike": [500.0, 505.0, 510.0], "bid": [5.0, 3.0, 1.0], "ask": [5.2, 2.9, 1.1], "iv": [0.2, 0.2, 0.001], "delta": [0.5, 0.4, 0.2]})
@@ -600,12 +607,12 @@ def test_api_settings_never_return_secrets_and_interpret_is_stateless(tmp_settin
     monkeypatch.setattr(appmod, "jobs", InlineJobs())
     c = TestClient(appmod.app)  # no lifespan: jobs are run inline
     r = c.put("/api/settings", json={"settings": {"llm.provider": "offline"}, "secrets": {"OPENAI_API_KEY": "sk-test-abcdef123456"}}).json()
-    assert "sk-test-abcdef123456" not in json.dumps(r) and r["secrets"]["OPENAI_API_KEY"] == {"label": "OpenAI", "set": True, "source": "settings", "hint": "…3456"}
+    assert "sk-test-abcdef123456" not in json.dumps(r) and r["secrets"]["OPENAI_API_KEY"] == {"label": "OpenAI", "set": True, "source": "protected file (owner-only)", "hint": "…3456"}
     assert "sk-test" not in c.get("/api/settings").text and c.get("/api/settings").json()["llm"]["active"] is None
     assert c.put("/api/settings", json={"settings": {"nope": 1}}).status_code == 422
     out = c.post("/api/ai/interpret", json={"text": "How often does SPY rise 1% from the open after falling 3% or more the previous trading day?"}).json()
-    assert out["understood"] and out["draft"]["kind"] == "study" and out["coverage"]["recommended"] is None  # nothing stored in this empty store
-    assert "No historical price data is stored for SPY" in out["coverage"]["messages"][0]
+    assert out["understood"] and out["draft"]["kind"] == "study" and out["errors"] == [] and out["unsupported"] == []  # interpretation only: nothing is run or stored
+    assert db.list_runs() == [] if (db := __import__("strata.api.db", fromlist=["x"])) else True
     assert c.post("/api/expr/validate", json={"expr": "__import__('os')"}).json()["valid"] is False
     assert c.post("/api/study/run", json={"config": {"symbol": "SPY"}}).status_code == 404  # missing data is an error, not a simulated answer
     assert c.post("/api/data/sources/ingest", json={"source": "alpaca", "dataset": "bars_1m", "symbols": ["SPY"]}).status_code == 400  # no key configured

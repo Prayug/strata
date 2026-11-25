@@ -52,8 +52,29 @@ class CondNode(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class SeqStage(BaseModel):
+    """One step of an event sequence. Stages must happen in order, each on a later
+    evaluation tick than the one before; the entry signal fires when the last one happens."""
+    name: str
+    when: str  # rule expression; may read earlier stages: stage_price("a"), low_since("a"), minutes_since("a") ...
+    within_minutes: Optional[int] = Field(None, ge=1)  # must happen within N minutes of the previous stage, else the sequence starts over
+    capture: dict[str, str] = Field(default_factory=dict)  # reference prices recorded when the stage happens: name -> expression, read back with ref("name")
+    text: str = ""
+
+
+class AddRule(BaseModel):
+    """Scale into an open position: when `when` holds for the first lot, open another lot."""
+    when: str  # rule expression evaluated against the FIRST lot (entry.*, position.*, group.*, stage state)
+    quantity: int = Field(1, ge=1)  # units added each time
+    max_adds: int = Field(1, ge=1)
+    contract: Literal["same", "reselect"] = "same"  # the same contracts as the first lot, or select again at the add
+    text: str = ""
+
+
 class EntryRules(BaseModel):
     conditions: CondNode = CondNode()
+    sequence: list[SeqStage] = Field(default_factory=list)
+    adds: list[AddRule] = Field(default_factory=list)
     max_entries_per_day: int = Field(1, ge=1)
     cooldown_minutes: int = Field(0, ge=0)
     max_open_positions: int = Field(1, ge=1)
@@ -170,7 +191,66 @@ class StrategyConfig(BaseModel):
         for l in self.legs:
             if l.strike.method == "leg_offset" and l.strike.ref_leg not in ids:
                 raise ValueError(f"leg {l.id}: ref_leg {l.strike.ref_leg!r} not found")
+        from strata.engine import expr as X
+        names = [s.name for s in self.entry.sequence]
+        if len(set(names)) != len(names) or any(not n.strip() for n in names):
+            raise ValueError("sequence stage names must be unique and non-empty")
+        refs = {k for s in self.entry.sequence for k in s.capture}
+        for i, st in enumerate(self.entry.sequence):
+            for src in [st.when] + list(st.capture.values()):
+                errs = X.validate(src)
+                if errs:
+                    raise ValueError(f"sequence stage {st.name!r}: {errs[0]}")
+                if X.uses_position(src):
+                    raise ValueError(f"sequence stage {st.name!r}: entry.*, position.* and group.* only exist once a position is open")
+                later = X.stages_used(src) - set(names[:i])
+                if later:
+                    raise ValueError(f"sequence stage {st.name!r} reads stage {sorted(later)[0]!r}, which is not an earlier stage")
+        for a in self.entry.adds:
+            errs = X.validate(a.when)
+            if errs:
+                raise ValueError(f"add rule: {errs[0]}")
+        for src in self.expressions():
+            try:
+                bad = X.stages_used(src) - set(names)
+                bad_ref = X.refs_used(src) - refs
+            except X.ExprError:
+                continue  # reported by the rule validators
+            if bad:
+                raise ValueError(f"rule {src!r} reads stage {sorted(bad)[0]!r}, but the entry sequence has no such stage")
+            if bad_ref:
+                raise ValueError(f"rule {src!r} reads ref({sorted(bad_ref)[0]!r}), but no stage captures it")
         return self
+
+    def expressions(self) -> list[str]:
+        """Every rule expression of the strategy (entry tree, sequence, adds, custom exit)."""
+        out: list[str] = []
+
+        def walk(n: Optional[CondNode]):
+            if n is None or not n.enabled:
+                return
+            if n.kind == "cond" and n.type == "expr":
+                out.append(str((n.params or {}).get("expr", "")))
+            for c in n.children:
+                walk(c)
+        walk(self.entry.conditions)
+        walk(self.exits.custom)
+        for st in self.entry.sequence:
+            out += [st.when] + list(st.capture.values())
+        out += [a.when for a in self.entry.adds]
+        return out
+
+    def symbols(self) -> set[str]:
+        """Other symbols any rule reads (cross-symbol rules)."""
+        from strata.engine import expr as X
+        from strata.engine.conditions import extra_symbols
+        out = set(extra_symbols(self.entry.conditions)) | set(extra_symbols(self.exits.custom))
+        for src in self.expressions():
+            try:
+                out |= X.symbols_used(src)
+            except X.ExprError:
+                pass
+        return out - {self.symbol}
 
 
 class Execution(BaseModel):
@@ -192,7 +272,8 @@ class Execution(BaseModel):
     signal_interval_minutes: int = Field(5, ge=1)
     latency_seconds: float = Field(0.0, ge=0)
     max_fill_delay_minutes: float = Field(5.0, ge=0)
-    trade_bar_slippage_pct: float = Field(0.0, ge=0)  # only for trade-print (no-quote) option data
+    trade_bar_slippage_pct: float = Field(0.0, ge=0)  # only for trade-print (no-quote) option data: % of the print, against you
+    max_trade_age_seconds: int = Field(300, ge=60)  # trade-bar pricing: a print older than this is stale and is not used for a fill
     early_assignment: bool = True
     assignment_extrinsic_threshold: float = 0.05
     physical_settlement: Literal["close_next_open", "intrinsic"] = "close_next_open"
@@ -210,9 +291,11 @@ class Capital(BaseModel):
 
 
 class Pricing(BaseModel):
-    """historical = observed option prices only. modeled = real underlying prices with
-    THEORETICAL option premiums from the assumptions below (results are estimates)."""
-    mode: Literal["historical", "modeled"] = "historical"
+    """historical = observed option bid/ask QUOTES. trades = observed option TRADE prints
+    (no bid/ask exists; fills use the last print that is still recent, plus an explicit
+    slippage assumption). modeled = real underlying prices with THEORETICAL option premiums
+    from the assumptions below (results are estimates). The three are never mixed."""
+    mode: Literal["historical", "trades", "modeled"] = "historical"
     model: Literal["american_baw", "black_scholes"] = "american_baw"
     iv_source: Literal["vix", "realized", "fixed"] = "vix"
     iv_fixed: float = 0.20
@@ -226,6 +309,12 @@ class Pricing(BaseModel):
     strike_step: Optional[float] = None
 
 
+class DataSelection(BaseModel):
+    """Which stored datasets a run reads. Left empty, the engine resolves one option
+    dataset per symbol for the pricing mode and reports its choice in the result."""
+    options_provider: Optional[str] = None  # e.g. "github_eod", "alpaca", "yahoo_options"
+
+
 class BacktestConfig(BaseModel):
     strategies: list[StrategyConfig]
     start: date
@@ -233,6 +322,7 @@ class BacktestConfig(BaseModel):
     capital: Capital = Capital()
     execution: Execution = Execution()
     pricing: Pricing = Pricing()
+    data: DataSelection = DataSelection()
     benchmark: Optional[str] = None
     allow_synthetic: bool = False
     label: str = ""
