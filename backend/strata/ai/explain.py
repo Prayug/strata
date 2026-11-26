@@ -344,6 +344,7 @@ def explain_run(run: dict, result: dict, llm=None, question: str | None = None) 
 # ----------------------------------------------------------------------------- comparisons
 STUDY_COLS = [("qualifying_sessions", "Sessions", "count"), ("target_first", "Hits", "count"), ("probability", "Frequency", "prob"), ("probability_ci_low", "CI low", "prob"), ("probability_ci_high", "CI high", "prob"),
               ("baseline_probability", "Baseline", "prob"), ("avg_end_return_pct", "Avg end return", "pct"), ("ambiguous", "Ambiguous", "count")]
+COVERAGE_COLS = [("qualifying", "Rule fired", "count"), ("executable", "Priced", "count")]
 BT_COLS = [("trades", "Trades", "count"), ("net_pnl", "Net P&L", "usd"), ("win_rate", "Win rate", "prob"), ("expectancy", "Per trade", "usd"), ("profit_factor", "Profit factor", "ratio"),
            ("max_drawdown", "Max drawdown", "prob"), ("sharpe", "Sharpe", "ratio"), ("t_stat", "t-stat", "ratio")]
 
@@ -353,10 +354,12 @@ def compare_table(entries: list[dict]) -> dict:
     if not entries:
         return {"columns": [], "rows": []}
     is_study = entries[0]["run"]["kind"] == "study"
+    all_facts = [study_facts(e["result"]) if is_study else backtest_facts(e["result"]) for e in entries]
     cols = STUDY_COLS if is_study else BT_COLS
+    if not is_study and any(_fin(fv(f, "qualifying")) for f in all_facts):
+        cols = COVERAGE_COLS + cols  # how much of the question was testable comes before what the tested part earned
     rows = []
-    for e in entries:
-        facts = study_facts(e["result"]) if is_study else backtest_facts(e["result"])
+    for e, facts in zip(entries, all_facts):
         rows.append({"label": e["label"], "run_id": e["run"]["id"], "values": {k: fv(facts, k) for k, _, _ in cols}, "shown": {k: fs(facts, k) for k, _, _ in cols}})
     return {"kind": "study" if is_study else "backtest", "columns": [{"key": k, "label": l, "unit": u} for k, l, u in cols], "rows": rows}
 
@@ -368,10 +371,17 @@ def compare_text(table: dict, what: str = "") -> str:
     study = table.get("kind") == "study"
     key, name, n_key = ("probability", "frequency", "qualifying_sessions") if study else ("net_pnl", "net P&L", "trades")
     parts = []
+    strip = lambda l: re.sub(r"^v[0-9]+ - ", "", l)  # noqa: E731
+    if not study:
+        short = [(r, r["values"].get("qualifying"), r["values"].get("executable")) for r in rows]
+        short = [(r, int(k), int(k1)) for r, k, k1 in short if _fin(k) and _fin(k1) and k1 < k]
+        if short:
+            # coverage comes before profitability: a comparison of variants that each priced one session in a thousand is not a comparison of strategies
+            parts.append("Coverage first: " + "; ".join(f"{strip(r['label'])}: {k1:,} of {k:,} qualifying sessions could be priced" for r, k, k1 in short[:8]) + (f"; and {len(short) - 8} more" if len(short) > 8 else "")
+                         + ". Every figure that follows describes the priced sessions only; the rest were not tested and count as nothing.")
     if len(rows) == 2:
         a, b = rows
         unit = lambda r: ("session" if study else "trade") + ("" if r["values"].get(n_key) == 1 else "s")  # noqa: E731
-        strip = lambda l: re.sub(r"^v[0-9]+ - ", "", l)  # noqa: E731
         parts.append(f"{strip(a['label'])}: {a['shown'][key]} {name} over {a['shown'][n_key]} {unit(a)}. {strip(b['label'])}: {b['shown'][key]} over {b['shown'][n_key]} {unit(b)}.")
         va, vb = a["values"].get(key), b["values"].get(key)
         if _fin(va) and _fin(vb):

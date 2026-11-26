@@ -31,28 +31,63 @@ from strata.engine.models import BacktestConfig, Execution, StrategyConfig
 jobs: JobManager | None = None
 
 
+standby = False  # True while another machine holds the data directory: this copy has not opened the database
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global jobs
-    db.init_db()
-    from strata.api.settings import migrate_legacy_secrets
-    moved = migrate_legacy_secrets()  # V2 kept API keys in the database; they now live in the OS keychain / a protected file
-    if moved:
-        print(f"[strata] moved {moved} credential(s) from the database into the credential store")
-    MarketStore()  # brings an older data directory to the current storage layout
-    n = db.mark_interrupted()
-    jobs = JobManager(max_concurrent=int(__import__("os").environ.get("STRATA_MAX_JOBS", "2")))
-    jobs.loop = asyncio.get_running_loop()
-    if n:
-        print(f"[strata] marked {n} interrupted runs as error")
-    sched = None
-    if __import__("os").environ.get("STRATA_COLLECTOR", "1") != "0":
-        from strata.collector.service import Scheduler
-        sched = Scheduler(jobs)  # does nothing unless the collector is switched on in its settings
-        sched.start()
+    global jobs, standby
+    import os
+    import threading
+
+    from strata.core import instance
+    instance.configure(role="server", url=os.environ.get("STRATA_PUBLIC_URL"))
+    loop = asyncio.get_running_loop()
+    st: dict = {"sched": None}
+    stop = threading.Event()
+
+    def startup():
+        global jobs, standby
+        db.init_db()
+        from strata.api.settings import backfill_where, migrate_legacy_secrets
+        moved = migrate_legacy_secrets()  # V2 kept API keys in the database; they now live in the OS keychain / a protected file
+        if moved:
+            print(f"[strata] moved {moved} credential(s) from the database into the credential store")
+        backfill_where()  # which store holds each key (never the key), so a copy on the other side of a container boundary can say so
+        MarketStore()  # brings an older data directory to the current storage layout
+        n = db.mark_interrupted()
+        jobs = JobManager(max_concurrent=int(os.environ.get("STRATA_MAX_JOBS", "2")))
+        jobs.loop = loop
+        if n:
+            print(f"[strata] marked {n} interrupted runs as error")
+        if os.environ.get("STRATA_COLLECTOR", "1") != "0":
+            from strata.collector.service import Scheduler
+            st["sched"] = Scheduler(jobs)  # does nothing unless the collector is switched on in its settings
+            st["sched"].start()
+        standby = False
+
+    def wait_then_start():
+        # standby: the database is not opened until the copy that holds the data directory has gone
+        while not stop.is_set():
+            try:
+                instance.ensure()
+                startup()
+                print("[strata] the other copy has gone: this one now holds the data directory and is running", flush=True)
+                return
+            except instance.Busy:
+                stop.wait(2.0)
+
+    try:
+        startup()
+    except instance.Busy as e:
+        standby = True
+        print(f"[strata] STANDBY. {e}", flush=True)
+        threading.Thread(target=wait_then_start, name="strata-standby", daemon=True).start()
     yield
-    if sched is not None:
-        sched.stop()
+    stop.set()
+    if st["sched"] is not None:
+        st["sched"].stop()
+    instance.release()
 
 
 app = FastAPI(title="Strata API", version=ENGINE_VERSION, lifespan=lifespan,
@@ -68,13 +103,31 @@ def _local_host_header(host: str) -> bool:
 
 
 @app.middleware("http")
+async def standby_guard(request: Request, call_next):
+    """While another machine holds the data directory this copy answers nothing but its health: it has not opened the database."""
+    if request.url.path.startswith("/api/") and request.url.path != "/api/health":
+        from strata.core import instance
+        s_ = instance.status()  # cheap while the lease is held; also catches a lease lost after startup
+        if standby or s_.get("standby"):
+            msg = s_.get("message") or "The other copy of Strata has gone: this one is starting. Try again in a moment."
+            return JSONResponse({"detail": msg, "standby": s_ if s_.get("standby") else {"standby": True, "starting": True, "message": msg}}, status_code=503, headers={"Retry-After": "3"})
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def remote_access_guard(request: Request, call_next):
     """Strata is a local application. A request that does not come from this machine - or that
     arrives under a non-local Host name (DNS rebinding) - is refused unless it carries the
     access token configured in STRATA_API_TOKEN. With no token configured, remote access is off."""
     client = request.client.host if request.client else ""
     in_process = client == "testclient"  # Starlette's in-process test client: there is no socket, so no remote peer
-    if request.url.path.startswith("/api/") and not in_process and not (client in LOOPBACK and _local_host_header(request.headers.get("host", ""))):
+    # Inside a container the computer's own browser arrives from the container network's gateway, not from loopback, and
+    # cannot be told apart from another machine by its address. When the port is PUBLISHED ON LOOPBACK ONLY (the compose
+    # file does this: "127.0.0.1:8000:8000") nothing but the computer itself can reach it, and the compose file says so
+    # with STRATA_LOOPBACK_PUBLISHED=1. The Host name must still be local, which keeps DNS rebinding out.
+    import os as _os
+    local_peer = client in LOOPBACK or _os.environ.get("STRATA_LOOPBACK_PUBLISHED") == "1"
+    if request.url.path.startswith("/api/") and not in_process and not (local_peer and _local_host_header(request.headers.get("host", ""))):
         import hmac
         import os
         token = os.environ.get("STRATA_API_TOKEN", "")
@@ -85,6 +138,14 @@ async def remote_access_guard(request: Request, call_next):
             return JSONResponse({"detail": "A valid access token is required (header X-Strata-Token)."}, status_code=401)
     return await call_next(request)
 
+
+def _busy(request: Request, exc: Exception):
+    return JSONResponse({"detail": str(exc), "standby": {"standby": True, "holder": getattr(exc, "holder", {}), "message": str(exc)}}, status_code=503, headers={"Retry-After": "3"})
+
+
+from strata.core.instance import Busy as _Busy  # noqa: E402
+
+app.add_exception_handler(_Busy, _busy)
 
 from strata.api.research_api import router as research_router  # noqa: E402
 
@@ -98,6 +159,10 @@ from strata.api.v5_api import router as v5_router  # noqa: E402
 
 app.include_router(v5_router)
 
+from strata.api.v6_api import router as v6_router  # noqa: E402
+
+app.include_router(v6_router)
+
 
 def J(o) -> JSONResponse:
     return JSONResponse(content=json.loads(dumps(o)))
@@ -110,7 +175,12 @@ def store() -> MarketStore:
 # ======================================================================= meta
 @app.get("/api/health")
 def health():
-    return {"ok": True, "engine_version": ENGINE_VERSION, "data_dir": str(get_settings().data_dir)}
+    """Answers in every state. `standby` describes the copy of Strata that holds the data directory when this one may not open it."""
+    from strata.core import instance
+    s_ = instance.status()
+    if standby and not s_.get("standby"):
+        s_ = {"standby": True, "starting": True, "message": "The other copy of Strata has gone: this one is starting."}
+    return {"ok": True, "engine_version": ENGINE_VERSION, "data_dir": str(get_settings().data_dir), "standby": s_ if s_.get("standby") else None}
 
 
 @app.get("/api/meta")
@@ -965,18 +1035,22 @@ class ResearchReq(BaseModel):
 @app.post("/api/research/run")
 def research_run(req: ResearchReq):
     from strata.research.queries import Research
+    from strata.research.queries import TEMPLATES
     r = Research(store())
-    fn = getattr(r, req.template, None)
-    if fn is None or req.template.startswith("_"):
+    if req.template not in TEMPLATES:  # the named studies only: never an arbitrary attribute of the object
         raise HTTPException(404, f"unknown research template {req.template}")
+    fn = getattr(r, req.template)
     p = dict(req.params)
-    for k in ("start", "end"):
-        if p.get(k):
-            p[k] = date.fromisoformat(p[k])
+    try:
+        for k in ("start", "end"):
+            if p.get(k):
+                p[k] = date.fromisoformat(str(p[k]))
+    except ValueError:
+        raise HTTPException(422, "start and end must be dates (YYYY-MM-DD)")
     try:
         return J(fn(**p))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e)[:400])
 
 
 class SqlReq(BaseModel):
@@ -1052,13 +1126,34 @@ async def job_stream(rid: str):
 
 
 # ======================================================================= static frontend
-_dist = Path(__import__("os").environ.get("STRATA_FRONTEND_DIST") or Path(__file__).resolve().parents[3] / "frontend" / "dist")
-if _dist.exists():
-    app.mount("/assets", StaticFiles(directory=_dist / "assets"), name="assets")
+def mount_frontend(application: FastAPI, dist: Path) -> bool:
+    """Serve the built interface: its files, and the application shell for every other path (client-side routing).
 
-    @app.get("/{path:path}", include_in_schema=False)
+    Only files INSIDE the build directory are ever served. The path arrives percent-decoded, so `..%2f..%2f` reaches this
+    function as `../../`: it is resolved and must still lie under the build directory, otherwise the shell is returned.
+    An unknown /api path is a 404, not the shell: a caller must not mistake a page of HTML for an answer."""
+    dist = Path(dist)
+    if not dist.exists():
+        return False
+    root = dist.resolve()
+    if (root / "assets").is_dir():
+        application.mount("/assets", StaticFiles(directory=root / "assets"), name="assets")
+
+    @application.get("/{path:path}", include_in_schema=False)
     def spa(path: str):
-        f = _dist / path
-        if path and f.is_file():
-            return FileResponse(f)
-        return FileResponse(_dist / "index.html")
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(404, "no such endpoint")
+        if path:
+            try:
+                f = (root / path).resolve()
+            except (OSError, ValueError):
+                f = None
+            if f is not None and f.is_relative_to(root) and f.is_file():
+                return FileResponse(f)
+        return FileResponse(root / "index.html")
+
+    return True
+
+
+_dist = Path(__import__("os").environ.get("STRATA_FRONTEND_DIST") or Path(__file__).resolve().parents[3] / "frontend" / "dist")
+mount_frontend(app, _dist)

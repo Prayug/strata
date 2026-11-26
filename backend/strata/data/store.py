@@ -35,6 +35,8 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import os
+import re
 import threading
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date, datetime, timezone
@@ -217,14 +219,95 @@ def _et_date(col: str = "ts") -> pl.Expr:
     return pl.col(col).dt.convert_time_zone("America/New_York").dt.date()
 
 
+def _tmp_of(p: Path) -> Path:
+    return p.with_name(f".{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+
+
+def _atomic_parquet(df, p: Path, **kw) -> None:
+    """Write beside the destination and rename: a reader never sees half a file, and an interrupted write leaves the previous one intact."""
+    tmp = _tmp_of(Path(p))
+    try:
+        df.write_parquet(tmp, **kw)
+        os.replace(tmp, p)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _atomic_text(p: Path, text: str) -> None:
+    tmp = _tmp_of(Path(p))
+    try:
+        tmp.write_text(text)
+        os.replace(tmp, p)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+SAFE_PART = re.compile(r"[A-Za-z0-9^][A-Za-z0-9_.^=-]{0,47}")
+
+
+def safe_name(name) -> bool:
+    """True when a provider, symbol or dataset label can be used as a folder or file name: it comes from requests, imported
+    files and language models, so it is checked wherever it is about to become part of a path."""
+    return isinstance(name, str) and bool(SAFE_PART.fullmatch(name)) and ".." not in name
+
+
+def _ref_name(sym) -> str:
+    if not safe_name(sym):
+        raise ValueError(f"{sym!r} is not a valid symbol name (letters, digits and . _ - ^ = only)")
+    return sym
+_locks: dict[str, "_WriteLock"] = {}
+
+
+class _WriteLock:
+    """One writer at a time, across threads AND processes. The application and an always-on collector (a second
+    process, often a second container) share one data directory: a thread lock alone lets the two interleave a
+    data file with its session index. Re-entrant; the file lock is advisory (flock) and is skipped where it is not
+    available, leaving the thread lock."""
+
+    def __init__(self):
+        self._t = threading.RLock()
+        self._depth = 0
+        self._fh = None
+        self.path: Path | None = None
+
+    def __enter__(self):
+        self._t.acquire()
+        self._depth += 1
+        if self._depth == 1 and self.path is not None:
+            try:
+                import fcntl
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                self._fh = open(self.path, "a+")
+                fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
+            except (ImportError, OSError):
+                self._fh = None
+        return self
+
+    def __exit__(self, *exc):
+        self._depth -= 1
+        if self._depth == 0 and self._fh is not None:
+            try:
+                import fcntl
+                fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+            except (ImportError, OSError):
+                pass
+            self._fh.close()
+            self._fh = None
+        self._t.release()
+        return False
+
+
 class MarketStore:
-    _lock = threading.RLock()
+    _lock = _WriteLock()
 
     def __init__(self, root: Path | None = None):
         self.root = Path(root) if root else get_settings().market_dir
+        self._lock = _locks.setdefault(str(self.root.resolve()) if self.root.exists() else str(self.root), _WriteLock())
+        self._lock.path = self.root / ".write.lock"
         self.root.mkdir(parents=True, exist_ok=True)
         self._opt_cache: dict = {}
         self._sess_cache: dict = {}
+        self._sess_stamp: dict = {}
         if not (self.root / "LAYOUT").exists():
             from strata.data.migrate import migrate_layout
             with self._lock:
@@ -235,7 +318,11 @@ class MarketStore:
         return self.root.joinpath(*parts)
 
     def dataset_dir(self, key: DatasetKey) -> Path:
-        return self._p("datasets", key.provider, key.symbol, key.dtype, key.obs, key.res, f"v{key.version}")
+        for part, what in ((key.provider, "provider"), (key.symbol, "symbol"), (key.dtype, "data type"), (key.obs, "observation type"), (key.res, "resolution")):
+            if not safe_name(part):
+                # these become folder names: a provider or symbol taken from a request must not be able to name a path
+                raise ValueError(f"{part!r} is not a valid {what} name (letters, digits and . _ - ^ = only)")
+        return self._p("datasets", key.provider, key.symbol, key.dtype, key.obs, key.res, f"v{int(key.version)}")
 
     def option_path(self, sym: str, d: date, obs: str = "quote", provider: str | None = None, dataset: DatasetKey | None = None) -> Path | None:
         ds = dataset or self.option_dataset(sym, obs, provider)
@@ -262,7 +349,7 @@ class MarketStore:
                     new[k] = v
             if new != cur:
                 d.mkdir(parents=True, exist_ok=True)
-                f.write_text(json.dumps(new, indent=2, sort_keys=True))
+                _atomic_text(f, json.dumps(new, indent=2, sort_keys=True))
                 self._opt_cache.clear()
         return key
 
@@ -275,6 +362,8 @@ class MarketStore:
         base = self._p("datasets")
         if not base.exists():
             return []
+        if any(x is not None and not safe_name(x) for x in (provider, sym, dtype, obs, res)):
+            return []  # such a name cannot be a folder here, and it must not be read as a pattern or a path either
         pat = "/".join([provider or "*", sym or "*", dtype or "*", obs or "*", res or "*", "v*"])
         found: dict[tuple, DatasetKey] = {}
         for p in base.glob(pat):
@@ -315,7 +404,7 @@ class MarketStore:
             cur = {k: asdict(v) for k, v in self.symbols().items()}
             cur[meta.symbol] = asdict(meta)
             f = self._p("symbols.json")
-            f.write_text(json.dumps(cur, indent=2, sort_keys=True, default=str))
+            _atomic_text(f, json.dumps(cur, indent=2, sort_keys=True, default=str))
 
     def stored_symbols(self) -> set[str]:
         return set(self.symbols()) | {k.symbol for k in self.datasets()}
@@ -324,11 +413,11 @@ class MarketStore:
         with self._lock:
             for k in self.datasets(sym, all_versions=True):
                 self.remove_dataset(k)
-            p = self._p("reference", "corporate_actions", f"{sym}.parquet")
-            if p.exists():
+            p = self._p("reference", "corporate_actions", f"{sym}.parquet") if safe_name(sym) else None
+            if p is not None and p.exists():
                 p.unlink()
             cur = {k: asdict(v) for k, v in self.symbols().items() if k != sym}
-            self._p("symbols.json").write_text(json.dumps(cur, indent=2, sort_keys=True, default=str))
+            _atomic_text(self._p("symbols.json"), json.dumps(cur, indent=2, sort_keys=True, default=str))
 
     def is_synthetic(self, sym: str) -> bool:
         """True when the symbol is a sandbox symbol or any of its datasets is simulated."""
@@ -349,7 +438,7 @@ class MarketStore:
         cur = json.loads(f.read_text()) if f.exists() else {}
         rel = str(path.relative_to(self.dataset_dir(key)))
         cur[rel] = {"provider": key.provider, "written": _now(), **{k: v for k, v in info.items() if v is not None}}
-        f.write_text(json.dumps(cur, sort_keys=True))
+        _atomic_text(f, json.dumps(cur, sort_keys=True))
 
     # ---------- writing: underlying ----------
     @staticmethod
@@ -373,7 +462,7 @@ class MarketStore:
         with self._lock:
             if p.exists():
                 df = pl.concat([pl.read_parquet(p), df]).unique(subset=["date"], keep="last")
-            df.sort("date").write_parquet(p, compression="zstd")
+            _atomic_parquet(df.sort("date"), p, compression="zstd")
             self._note(key, p, source=source, rows=df.height)
         return p
 
@@ -394,7 +483,7 @@ class MarketStore:
                 part = part.drop("_y")
                 if p.exists():
                     part = pl.concat([pl.read_parquet(p), part]).unique(subset=["ts"], keep="last")
-                part.sort("ts").write_parquet(p, compression="zstd")
+                _atomic_parquet(part.sort("ts"), p, compression="zstd")
                 self._note(key, p, source=source, rows=part.height)
                 n += part.height
                 out.append(p)
@@ -557,13 +646,23 @@ class MarketStore:
         return best
 
     def _sessions(self, key: DatasetKey) -> dict:
-        if key.id not in self._sess_cache:
-            f = self.dataset_dir(key) / "sessions.json"
-            self._sess_cache[key.id] = json.loads(f.read_text()) if f.exists() else {}
+        """The session index of a dataset. It is re-read whenever the file on disk is newer than the copy in memory: another
+        process (the collector beside the application) may have written sessions since, and saving a stale copy over the file
+        would erase them."""
+        f = self.dataset_dir(key) / "sessions.json"
+        try:
+            stamp = f.stat().st_mtime_ns
+        except OSError:
+            stamp = None
+        if key.id not in self._sess_cache or self._sess_stamp.get(key.id) != stamp:
+            self._sess_cache[key.id] = json.loads(f.read_text()) if stamp is not None else {}
+            self._sess_stamp[key.id] = stamp
         return self._sess_cache[key.id]
 
     def _save_sessions(self, key: DatasetKey) -> None:
-        (self.dataset_dir(key) / "sessions.json").write_text(json.dumps(self._sess_cache.get(key.id, {}), sort_keys=True))
+        f = self.dataset_dir(key) / "sessions.json"
+        _atomic_text(f, json.dumps(self._sess_cache.get(key.id, {}), sort_keys=True))
+        self._sess_stamp[key.id] = f.stat().st_mtime_ns
 
     def session_states(self, key: DatasetKey) -> dict:
         return dict(self._sessions(key))
@@ -583,7 +682,7 @@ class MarketStore:
 
     # ---------- options: quote snapshots ----------
     def write_option_day(self, sym: str, d: date, df: pl.DataFrame, provider: str = "import", res: str | None = None, status: str = "complete",
-                         source: str | None = None, expected_rows: int | None = None, **desc) -> Path:
+                         source: str | None = None, expected_rows: int | None = None, session_info: dict | None = None, **desc) -> Path:
         """One session of option snapshots. Rows with bid+ask are QUOTES; rows that only
         carry `last` are trade prints and go to a separate (obs=trade) dataset - a session
         is never marked complete unless the caller says so."""
@@ -606,10 +705,10 @@ class MarketStore:
         p = self.dataset_dir(key) / "data" / f"{d.year}" / f"{d.isoformat()}.parquet"
         p.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
-            df.sort(["ts", "expiration", "right", "strike"]).write_parquet(p, compression="zstd", statistics=True)
+            _atomic_parquet(df.sort(["ts", "expiration", "right", "strike"]), p, compression="zstd", statistics=True)
             st = self._sessions(key)
             st[d.isoformat()] = {"status": status, "rows": df.height, "snapshots": int(df["ts"].n_unique()), "written": _now(),
-                                 **({"expected_rows": expected_rows} if expected_rows is not None else {}), **({"source": source} if source else {})}
+                                 **({"expected_rows": expected_rows} if expected_rows is not None else {}), **({"source": source} if source else {}), **(session_info or {})}
             self._save_sessions(key)
             self._note(key, p, source=source, rows=df.height, status=status)
             self._opt_cache.clear()
@@ -653,7 +752,7 @@ class MarketStore:
                     part = part.drop("_d")
                     if p.exists():
                         part = pl.concat([pl.read_parquet(p), part]).unique(subset=["occ", "ts"], keep="last")
-                    part.sort(["ts", "expiration", "right", "strike"]).write_parquet(p, compression="zstd", statistics=True)
+                    _atomic_parquet(part.sort(["ts", "expiration", "right", "strike"]), p, compression="zstd", statistics=True)
                     self._note(key, p, source=source, rows=part.height, contracts=int(part["occ"].n_unique()))
                     written += part.height
             if index_rows:
@@ -661,7 +760,7 @@ class MarketStore:
                 ip = base / "index.parquet"
                 if ip.exists():
                     idx = pl.concat([pl.read_parquet(ip), idx]).unique(subset=["date", "occ"], keep="last")
-                idx.sort(["date", "expiration", "right", "strike"]).write_parquet(ip, compression="zstd")
+                _atomic_parquet(idx.sort(["date", "expiration", "right", "strike"]), ip, compression="zstd")
                 self._dirty(key)
             if contracts is not None and not contracts.is_empty():
                 self.write_contracts(key, contracts)
@@ -690,7 +789,7 @@ class MarketStore:
         with self._lock:
             if p.exists():
                 df = pl.concat([pl.read_parquet(p), df]).unique(subset=["occ"], keep="last")
-            df.sort(["expiration", "right", "strike"]).write_parquet(p, compression="zstd")
+            _atomic_parquet(df.sort(["expiration", "right", "strike"]), p, compression="zstd")
         return p
 
     def read_contracts(self, key: DatasetKey) -> pl.DataFrame:
@@ -703,7 +802,7 @@ class MarketStore:
         if p is None:
             return None
         p.parent.mkdir(parents=True, exist_ok=True)
-        df.write_parquet(p)
+        _atomic_parquet(df, p)
         return p
 
     def read_iv_history(self, sym: str, dataset: DatasetKey | None = None) -> pl.DataFrame:
@@ -722,7 +821,7 @@ class MarketStore:
                 if replace_source:
                     old = old.filter(pl.col("source") != replace_source)
                 df = pl.concat([old, df]).unique(subset=["date", "event_type", "time"], keep="last")
-            df.sort("date").write_parquet(p)
+            _atomic_parquet(df.sort("date"), p)
         return p
 
     def read_events(self) -> pl.DataFrame:
@@ -731,12 +830,14 @@ class MarketStore:
 
     def write_corporate_actions(self, sym: str, df: pl.DataFrame) -> Path:
         df = self._conform(df, CORP_ACTION_SCHEMA, ["ex_date", "action"])
-        p = self._p("reference", "corporate_actions", f"{sym}.parquet")
+        p = self._p("reference", "corporate_actions", f"{_ref_name(sym)}.parquet")
         p.parent.mkdir(parents=True, exist_ok=True)
-        df.sort("ex_date").write_parquet(p)
+        _atomic_parquet(df.sort("ex_date"), p)
         return p
 
     def read_corporate_actions(self, sym: str) -> pl.DataFrame:
+        if not safe_name(sym):
+            return pl.DataFrame(schema=CORP_ACTION_SCHEMA)
         p = self._p("reference", "corporate_actions", f"{sym}.parquet")
         return pl.read_parquet(p) if p.exists() else pl.DataFrame(schema=CORP_ACTION_SCHEMA)
 
@@ -744,7 +845,9 @@ class MarketStore:
     def _dataset_files(self, key: DatasetKey) -> list[Path]:
         base = self.dataset_dir(key)
         files = sorted((base / "data").rglob("*.parquet")) if (base / "data").exists() else []
-        for extra in ("index.parquet", "contracts.parquet", "derived/iv.parquet"):
+        # sessions.json holds which sessions are whole and which only partly present: a session marked partial is not priced,
+        # so the marks are part of what a result depends on and belong to the dataset's version
+        for extra in ("index.parquet", "contracts.parquet", "derived/iv.parquet", "sessions.json"):
             if (base / extra).exists():
                 files.append(base / extra)
         return files
@@ -775,7 +878,7 @@ class MarketStore:
                     entries[rel] = old
                     continue
                 entries[rel] = {"sha256": hashlib.sha256(f.read_bytes()).hexdigest(), "bytes": st.st_size, "mtime": int(st.st_mtime),
-                                "rows": pq.read_metadata(f).num_rows, "provenance": prov.get(rel) or {"provider": key.provider}}
+                                "rows": pq.read_metadata(f).num_rows if f.suffix == ".parquet" else None, "provenance": prov.get(rel) or {"provider": key.provider}}
             version = hashlib.sha256("".join(f"{k}:{v['sha256']}" for k, v in sorted(entries.items())).encode()).hexdigest()[:16]
             if prev.get("version") == version:
                 (base / "DIRTY").unlink(missing_ok=True)
@@ -785,8 +888,8 @@ class MarketStore:
             md = base / "manifests"
             md.mkdir(parents=True, exist_ok=True)
             name = f"{seq:06d}-{version}.json"
-            (md / name).write_text(json.dumps(man))
-            (base / "HEAD").write_text(name)
+            _atomic_text((md / name), json.dumps(man))
+            _atomic_text((base / "HEAD"), name)
             (base / "DIRTY").unlink(missing_ok=True)
             return man
 

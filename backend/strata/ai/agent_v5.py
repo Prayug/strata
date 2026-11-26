@@ -37,6 +37,33 @@ def richer(g: dict) -> bool:
                 or {"scan", "distribution"} & set(g.get("analyses") or []))
 
 
+def prefer_graph(text: str, graph: dict, fresh: dict) -> bool:
+    """Two readers produced a reading of the same question. Neither wins by its place in a list: the reading that accounts
+    for the sentence does. The question reader (research graph) is used when the study reader left something unread, or when
+    both look complete but disagree about what is being measured (its outcome reader knows 'close', 'within N days', 'on the
+    day'). Where the two agree, the older path is kept, with the result views built for it."""
+    from strata.ai import intent as I
+    d = fresh.get("draft")
+    if fresh.get("action") != "new" or d is None or d.kind != "study":
+        return False
+    gi, di = I.from_graph(graph), I.from_draft(d)
+    g_ok = not gi["unsupported"] and all(c["ok"] for c in I.validate(gi, text))
+    if not g_ok or not gi["conditions"]:
+        return False
+    d_ok = not di["unsupported"] and all(c["ok"] for c in I.validate(di, text))
+    if not d_ok:
+        return True
+    go, do = gi.get("outcome") or {}, di.get("outcome") or {}
+    if not do.get("size") and do.get("measure") == "touch":
+        return True  # "touches" with no level to touch is not a reading of the outcome at all
+    size = lambda o: round(float(o.get("size") or 0.0), 6)
+    # "the next session", read from its open or from the close before it: where a sentence names no reference the two readers may
+    # each pick one, and that is not a disagreement about what was asked
+    hz = lambda o: {"sessions:1": "next", "session": "next"}.get(str(o.get("horizon")), str(o.get("horizon")))
+    return len(gi["conditions"]) != len(di["conditions"]) or size(go) != size(do) or (go.get("measure") != do.get("measure") and bool(size(go))) or hz(go) != hz(do) \
+        or (do.get("direction") is not None and go.get("direction") != do.get("direction"))
+
+
 def _headline(res: dict) -> str:
     """The answer in a few sentences, leading with the analysis the request was about. The full result of every
     analysis is one click away; this is not where numbers are hidden, only where they are not all repeated."""
@@ -131,7 +158,14 @@ class ResearchV5:
         if NL.find_structure(low) or re.search(r"\b(?:buy|sell|short|go long|enter|exit|close out|take profits?|stop[- ]loss|contracts?|\d*\s*dte|strikes?|premiums?|calls?|puts?|spreads?|straddles?|condors?|scale in|add another)\b", low):
             return None
         g = NG.plan(text, known, default_symbol, self.store)
-        return g if (g is not None and not g.get("errors")) else None
+        if g is None or g.get("errors"):
+            return None
+        if any(str(u).startswith("the size '") for u in g.get("unsupported") or []):
+            # a number in the question found no place in this reading: answering a different, smaller question is worse than not answering.
+            # The other reader gets the sentence; if it cannot place the number either, the reply says which words were not understood.
+            self._dropped_size = [u for u in g["unsupported"] if str(u).startswith("the size '")]
+            return None
+        return g
 
     # ------------------------------------------------------------------ launching a graph
     def _graph(self, sid: str, graph: dict, interp: str, note: str | None = None, title: str | None = None, force: bool = False, include_holdout: bool = False, derived_from: list[str] | None = None) -> list[dict]:
@@ -593,8 +627,9 @@ class ResearchV5:
             g = graphs[-1]
             exp = FW.create_from_graph(g["graph"], g["result"], session_id=sid, source_run_id=g["run_id"])
             what = f"the market study \"{g['question'][:90]}\""
-        txt = (f"Frozen {what} as forward-validation experiment {exp['id']} (version {exp['version']}).{why} Its parameters can no longer be changed: an edit creates a new version and a new experiment. Only sessions after "
-               f"{exp['activation_date']} count as forward evidence, and none exists yet - evaluate it again after the market has traded. Paper only: nothing here can place an order.")
+        txt = (f"Frozen {what} as forward-validation experiment {exp['id']} (version {exp['version']}).{why} Its parameters can no longer be changed: an edit creates a new version and a new experiment. "
+               f"{(exp.get('activation') or {}).get('rule', '')} Only sessions from {exp['first_session']} on count as forward evidence, whatever data is stored or downloaded later, and none exists yet - "
+               "evaluate it again after the market has traded. Each session is sealed once in an append-only record. Paper only: nothing here can place an order.")
         return [db.add_message(sid, "assistant", "forward", {"text": txt, "view": "forward", "experiment": exp})]
 
 

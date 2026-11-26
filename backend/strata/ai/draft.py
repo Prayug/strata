@@ -8,10 +8,11 @@ mode can answer the question. No financial number is ever produced by a language
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from strata.core import calendar as cal
 from strata.data.store import MarketStore
@@ -82,11 +83,23 @@ class DraftStudy(BaseModel):
     horizon_sessions: int = 1
 
 
+TICKER = re.compile(r"[A-Z^][A-Z0-9^=_-]{0,15}(?:\.[A-Z0-9]{1,6})?")  # a symbol is a ticker: it also names folders in the data store
+
+
 class Draft(BaseModel):
     kind: Literal["options", "study"] = "options"
     title: str = ""
     symbol: str = "SPY"
     symbol_stated: bool = True
+
+    @field_validator("symbol")
+    @classmethod
+    def _symbol_is_a_ticker(cls, v: str) -> str:
+        v = str(v).strip().upper()
+        if not TICKER.fullmatch(v):
+            raise ValueError(f"{v[:40]!r} is not a ticker symbol")
+        return v
+
     entry_time: Optional[str] = None  # New York "HH:MM", or "open" / "close"; None = whenever the conditions hold
     entry_time_stated: Optional[str] = None  # the user's words, e.g. "6:30 AM Pacific"
     tz_assumed: Optional[str] = None  # set when a clock time carried no timezone and one had to be assumed

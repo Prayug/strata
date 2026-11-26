@@ -236,7 +236,7 @@ export function EntryTiming() {
 }
 
 export function Sql() {
-  const [sql, setSql] = useState("-- views: bars(symbol, ts, open, high, low, close, volume), daily, options, iv_history, events\nSELECT symbol, date_trunc('month', date) AS month, avg((high - low) / open) * 100 AS avg_range_pct, count(*) AS sessions\nFROM daily WHERE symbol = 'DEMO'\nGROUP BY 1, 2 ORDER BY 2");
+  const [sql, setSql] = useState("-- views: datasets, daily, bars, options, iv_history, events\n-- every row carries provider, symbol, observation (quote | trade) and resolution: filter on them, nothing is blended for you\nSELECT provider, symbol, observation, resolution, count(DISTINCT CAST(ts AS DATE)) AS sessions, min(ts) AS first, max(ts) AS last\nFROM options\nGROUP BY ALL ORDER BY symbol, provider");
   const run = useMutation({ mutationFn: () => api.post<any>("/api/research/sql", { sql: sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n") }) });
   const cols: Col<{ k: number; r: any[] }>[] = (run.data?.columns || []).map((c: string, i: number) => ({ key: String(i), label: c, render: ({ r }: { r: any[] }) => <span className={typeof r[i] === "number" ? "num" : ""}>{typeof r[i] === "number" ? num(r[i], Math.abs(r[i]) < 100 ? 4 : 2) : String(r[i] ?? "—")}</span>, sort: ({ r }: { r: any[] }) => r[i] }));
   return (
@@ -246,7 +246,7 @@ export function Sql() {
           spellCheck={false} className="field h-36 resize-y py-1.5 font-mono text-xs leading-5" />
         <div className="flex items-center gap-2">
           <Button variant="primary" onClick={() => run.mutate()} disabled={run.isPending}><Play /> Run (⌘↵)</Button>
-          <span className="text-2xs text-faint">Read-only DuckDB over the Parquet store · timestamps in America/New_York · 5,000-row limit · 20s timeout</span>
+          <span className="text-2xs text-faint">One read-only statement over the stored market data; it cannot reach files, the web or settings · timestamps in America/New_York · 5,000-row limit · 20s timeout</span>
           {run.data && <span className="ml-auto num text-2xs text-muted">{run.data.row_count} rows{run.data.truncated ? " (truncated)" : ""}</span>}
         </div>
       </div>

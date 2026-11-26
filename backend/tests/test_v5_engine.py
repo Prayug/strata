@@ -191,7 +191,10 @@ def test_a_delta_hedge_trades_shares_to_minus_delta_and_its_cash_is_part_of_the_
     px = {m: path(D1, m - 1) for m in (30, 90, 150, 210, 360)}  # 10:00, 11:00, 12:00, 13:00, 15:30
     # shares: -50 at 10:00 (delta .50), -60 at 11:00, -70 at 12:00, -55 at 13:00; all 55 bought back at 15:30 with the option
     flows = 50 * px[30] + 10 * px[90] + 10 * px[150] - 15 * px[210] - 55 * px[360]
-    assert t["hedge"]["trades"] == 4 and t["hedge"]["shares_traded"] == 85 and "delta_hedged" in t["flags"]
+    # V6: the buy-back that closes the hedge is a hedge trade too. It used to be left out of the record, which then showed
+    # only the opening proceeds as the hedge's result and a share count that never returned to zero.
+    assert t["hedge"]["trades"] == 5 and t["hedge"]["shares_traded"] == 140 and t["hedge"]["shares"] == 0 and "delta_hedged" in t["flags"]
+    assert t["hedge"]["cash"] == pytest.approx(flows, abs=1e-6) and next(l for l in t["legs"] if l["id"] == "_hedge")["pnl"] == pytest.approx(flows, abs=1e-6)
     assert t["exit_reason"] == "time_exit" and t["pnl"] == pytest.approx(-210 + 100 + flows, abs=1e-6), "option -110 plus every share trade at the price of its tick"
     hedges = [e for e in res.events if e["kind"] == "hedge"]
     assert [("sold" in e["msg"], e["msg"].split("hedge now ")[1].split(" ")[0]) for e in hedges] == [(True, "-50"), (True, "-60"), (True, "-70"), (False, "-55")]

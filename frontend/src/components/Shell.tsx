@@ -4,7 +4,7 @@ import {
   Activity, BarChart3, Bell, Blocks, BookOpenText, BrainCircuit, Briefcase, ChevronsLeft, ChevronsRight, Code2, Database, FlaskConical, Grid3x3, Library, Microscope, PlayCircle, Scale, Settings as SettingsIcon, Sigma, Snowflake,
   Sparkles, Waves,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Kbd, Popover, PopoverContent, PopoverTrigger, Tip } from "@/components/ui";
 import { StatusDot } from "@/components/common";
@@ -83,7 +83,17 @@ export function Shell() {
   const real = (cov.data || []).filter((r) => !r.synthetic);
   const sandbox = (cov.data || []).filter((r) => r.synthetic);
   const jobs = useQuery({ queryKey: ["jobs"], queryFn: () => api.get<{ active: any[]; recent: any[] }>("/api/jobs"), refetchInterval: 3000 });
-  const health = useQuery({ queryKey: ["health"], queryFn: () => api.get<any>("/api/health"), refetchInterval: 15000, retry: false });
+  // while another copy of Strata holds the data directory this one is on standby: ask often, and load everything once it is over
+  const health = useQuery({ queryKey: ["health"], queryFn: () => api.get<any>("/api/health"), refetchInterval: (q) => (q.state.data?.standby ? 3000 : 15000), retry: false });
+  const standby = health.data?.standby || null;
+  const wasStandby = useRef(false);
+  useEffect(() => {
+    if (standby) wasStandby.current = true;
+    else if (wasStandby.current) {
+      wasStandby.current = false;
+      queryClient.invalidateQueries();
+    }
+  }, [standby]);
   const advanced = mode === "advanced";
   const isOn = (n: Item) => (n.to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(n.to)) || (n.match || []).some((m) => loc.pathname.startsWith(m));
 
@@ -124,6 +134,7 @@ export function Shell() {
   }, [nav, set]);
 
   const active = jobs.data?.active || [];
+  if (standby) return <Standby s={standby} />;
   return (
     <div className="flex h-full flex-col">
       <div className="flex min-h-0 flex-1">
@@ -267,6 +278,37 @@ function Palette({ onClose }: { onClose: () => void }) {
           </Command.Group>
         </Command.List>
       </Command>
+    </div>
+  );
+}
+
+/** Another copy of Strata (on the other side of a container boundary) holds this data directory. This copy has not opened
+ * the database, so nothing here would be saved: say so on the whole page, and point at the copy that is running. */
+function Standby({ s }: { s: any }) {
+  const h = s.holder || {};
+  const started = h.started ? `${String(h.started).slice(0, 16).replace("T", " ")} UTC` : null;
+  return (
+    <div className="flex h-full items-center justify-center bg-bg p-6" data-testid="standby">
+      <div className="max-w-[560px] rounded-sm border border-warn/40 bg-bg-1 p-6">
+        <div className="text-2xs uppercase tracking-wider text-warn">Standby</div>
+        <h1 className="mt-1 text-lg text-fg">{s.starting ? "The other copy has gone. Starting…" : "This copy of Strata is not running the app"}</h1>
+        {!s.starting && (
+          <>
+            <p className="mt-3 text-sm leading-relaxed text-fg-2">
+              The same data folder is already open in another copy of Strata: <span className="text-fg" data-testid="standby-holder">{h.where || "another machine"}</span>
+              {(h.engine_version || started) && <span className="text-muted"> ({[h.engine_version && `engine ${h.engine_version}`, started && `started ${started}`].filter(Boolean).join(", ")})</span>}.
+            </p>
+            <p className="mt-2 text-sm leading-relaxed text-fg-2">
+              A copy on your computer and a copy in a container cannot share one database: each silently drops what the other saved. So this copy has not opened it, and <span className="text-fg">nothing entered here would be saved</span>.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              {h.url && <a className="rounded-sm bg-accent px-3 py-1.5 text-sm text-bg hover:opacity-90" href={h.url} data-testid="standby-open">Open the running copy</a>}
+              <span className="text-xs text-muted">{h.url ? "or stop" : "Stop"} that copy and this page continues by itself within about 20 seconds.</span>
+            </div>
+            {s.checking && <p className="mt-3 text-2xs text-muted">Checking whether that copy is still running…</p>}
+          </>
+        )}
+      </div>
     </div>
   );
 }

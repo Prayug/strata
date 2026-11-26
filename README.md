@@ -14,6 +14,7 @@ limits stated next to every number.
 
 ## Contents
 - [Quick start](#quick-start)
+- [What V6 adds](#what-v6-adds)
 - [What V5 adds](#what-v5-adds)
 - [What V4 adds](#what-v4-adds)
 - [What V3 adds](#what-v3-adds)
@@ -48,7 +49,13 @@ backend/.venv/bin/strata fetch SPY --options --years 2015-2025
 ```
 
 Docker: `docker compose up --build` serves the API and built UI on http://localhost:8000 and
-runs the same free download on first start (`STRATA_SKIP_FETCH=1` to skip it).
+runs the same free download on first start (`STRATA_SKIP_FETCH=1` to skip it). The port is
+published on this computer only (`127.0.0.1`); `STRATA_PUBLISH=127.0.0.1:8010` in `.env` moves it
+when 8000 is taken. **Run one copy at a time on a data folder.** A copy on the computer and a copy
+in a container cannot share one database, so the second one to start goes on standby: it shows
+which copy holds the folder and where to open it, saves nothing, and continues by itself about 20
+seconds after the other stops. Rebuild the image after pulling a new version
+(`docker compose up --build -d`): an old container keeps serving the old application.
 
 ### First five minutes
 The sidebar is three workflows: **Explore** (ask, patterns, knowledge base), **Build** (strategy IDE,
@@ -71,6 +78,236 @@ main path through each; *Advanced* adds the specialist tools. The calculations a
 5. **Market Explorer**, **Strategy Builder**, **Backtests** and **Data** remain for working
    by hand. Everything the lab runs appears there too.
 
+## What V6 adds
+V6 adds no data framework. It answers one question, on real observations: **can the strategy this
+project started from be backtested, and if not, what exactly is in the way?** Then it fixes what an
+audit of the forward record, the engine, the statistics and the reader found.
+
+> *Buy ATM SPY 0DTE calls at 6:30 AM Pacific, targeting a 1% increase in SPY, only on days when SPY
+> fell at least 3% the previous trading day.*
+
+### Where the data stands
+The software could always run this strategy. What was missing was **observed intraday option
+prices for the sessions it trades on**. On 2026-11-25 a free Alpaca paper key was connected, the
+access test was run with it, and the history it serves was downloaded and checked. Counted from the
+files on the development machine afterwards (`Data > Readiness`, `strata usecase`,
+`strata bars-audit SPY`, `strata options-audit SPY`):
+
+| Stored for SPY | Sessions | Period | Good for |
+| --- | --- | --- | --- |
+| Daily bars (Yahoo) | 8,515 | 1993-01-29 to 2026-11-25 | the signal (which days qualify) |
+| 1-minute bars, consolidated tape (Alpaca) | 2,741 (2,740 whole) | 2016-01-04 to 2026-11-25 | intraday entries and exits of the underlying |
+| End-of-day option chains, bid/ask | 1,495 | 2020-01-02 to 2025-12-12 | positions entered and exited at the close; whether a 0DTE contract was listed. **Never** an intraday fill |
+| 1-minute option **trade bars** (Alpaca) | 718 (711 whole, 7 the provider holds only in part) | 2024-01-18 to 2026-11-25 | intraday option backtests on observed trades. No bid/ask |
+| Intraday option bid/ask | 0 whole, 1 partial | 2020-03-06 09:30 to 12:00 (a vendor's public sample) | one session, priced by the reference simulator only |
+
+The option set is 43.4 million bars over 331,147 contract-sessions (629 MB): every contract within
+3% of the previous close expiring within 7 days, calls and puts, on every session, plus the
+contracts the original strategy could select around the opening price on its own sessions. QQQ and
+IWM were not asked for and are unchanged; the same two commands download them.
+
+**What the key returns (measured).** `strata access alpaca`, about 140 read-only requests:
+- 100 of 100 expired contract-sessions on ten dates (2024-02-14 to 2026-11-18) returned one-minute
+  trade bars, every expiration found through the listing endpoint; individual trades are served too.
+- **Option history starts on 2024-01-18**: every session from 2024-01-02 was asked and none before
+  it returned a bar. 2024-02-02 returns nothing at all.
+- Stock minute bars come from the consolidated tape (`sip`), 390 of 390 minutes; **they start on
+  2016-01-04**, and the session before returns nothing.
+- No OPRA agreement on the account (real-time OPRA quotes answer 403); history does not need one.
+  There is no historical option bid/ask on any Alpaca plan.
+
+**The original strategy on those observations.** The rule fires on **105 sessions** since 1993
+(plain arithmetic on daily closes and the engine's own scan give the same 105; the sentence and a
+hand-written configuration compile to the same strategy). Of those 105:
+
+| | Sessions |
+| --- | --- |
+| Priced by the engine on stored observations | **5** (Alpaca trade bars) |
+| Priced by the independent reference only (a partly observed session) | 1 (2020-03-06, bid/ask sample, +$150.70) |
+| No contract expiring that day was listed (known from stored end-of-day chains) | 10 |
+| No intraday option prices stored | 89 |
+
+| Session | Fall the day before | Entry | Exit | Net, one contract | Worst to best print |
+| --- | --- | --- | --- | --- | --- |
+| 2025-04-04 | -4.93% | 09:31, 525 call at 4.54 | 15:55 at 0.01 (time) | -$454.30 | -$498.30 to -$418.30 |
+| 2025-04-07 | -5.85% | 09:31, 488 call at 7.64 | 09:57 at 9.82 (SPY +1%) | +$216.70 | +$105.70 to +$234.70 |
+| 2025-04-11 | -4.38% | 09:31, 524 call at 6.22 | 12:33 at 7.25 (SPY +1%) | +$101.70 | +$25.70 to +$112.70 |
+| 2026-11-06 | -4.41% | 09:31, 736 call at 3.65 | 15:55 at 0.27 (time) | -$339.30 | -$347.30 to -$272.30 |
+| 2026-11-23 | -3.64% | 09:31, 722 call at 4.97 | 15:55 at 0.81 (time) | -$417.30 | -$574.30 to -$373.30 |
+
+Total **-$892.50**, 2 winners of 5; between -$1,288.50 and -$716.50 if every fill had been the worst
+or the best price the contract traded at in the minute the fill came from (trade bars carry no bid
+or ask, so that range is the only observed measure of how far a real fill could have been from the
+print used). The engine and the reference simulator agree on all five. These are **all** the
+sessions the rule produced in the 34 months for which any free intraday option history exists.
+Five trades are five observations: nothing about the strategy's profitability is established, and
+the app says so wherever a number from them is shown.
+
+| Variant | Rule fired (since 2024-01-18) | Priced | Net | Worst to best print | Winners |
+| --- | --- | --- | --- | --- | --- |
+| after a fall of 1% or more | 1,079 (75) | 75 | +$2,384.50 | -$962.50 to +$4,268.50 | 38 of 75 |
+| after a fall of 2% or more | 342 (16) | 16 | -$81.80 | -$919.80 to +$429.20 | 8 of 16 |
+| after a fall of 4% or more | 49 (4) | 4 | -$475.20 | -$714.20 to -$343.20 | 2 of 4 |
+| baseline: an ATM 0DTE call at 10:00, out at 15:30, every session | 718 | 707 | -$376.14 | | 269 of 707 |
+
+At 1% the sign of the result depends on which print of the entry minute is assumed. A rule that
+fires often can now be tested on 711 sessions (the baseline runs in 100 seconds); the original
+rule cannot, because it fired five times.
+
+### What is still out of reach
+Of the 105 sessions, 10 had no such contract and **57 fall before 2010**, which no source compared
+here reaches at any price (SPY had no weekly expirations then, so a same-day contract existed only
+on monthly expiration days). **38 could be reached by data at all**; 5 are stored
+(`POST /api/data/budget`, or ask *"Estimate what it would cost to acquire the missing observations"*).
+
+| Budget | What it buys | Sessions reached | Evidence |
+| --- | --- | --- | --- |
+| stored now | Alpaca trade bars | **5** | measured |
+| $0 | Databento's $125 new-account credit: 1-minute bid/ask from 2013-04, about $0.02 of it for 351 contract-sessions | up to 27 | the provider's description; never run from here |
+| $25 | OptionsDX 30-minute bid/ask chains for the eight years that hold signals (2010-2011, 2015-2016, 2018-2020, 2022), $24 | up to 38 | storefront prices; the importer was verified on the vendor's sample |
+| $50, $100, $200 | nothing more for this strategy | up to 38 | |
+
+A session is counted when it lies inside a source's history; whether the contract was listed or
+traded that day is established only for 26 of the 105. A 30-minute snapshot sees an exit at the next
+snapshot, not when it happens. Even all 38 would be a small sample.
+
+**University of Washington** (pages read 2026-11-25): WRDS is managed by the Foster School. Faculty
+and PhD students ask the Foster data research consultant for an account; undergraduate and master's
+students are told to ask their instructor. **OptionMetrics is not in the list of WRDS datasets
+Foster publishes**, and OptionMetrics is end-of-day in any case, so it could not price this strategy.
+TAQ is on the list and would supply minute bars of the underlying, which are now stored from 2016
+anyway. Bloomberg is terminal-only in the Foster Business Library with export limits. UW's
+guidelines allow saving data for a single assignment and forbid systematic downloading and use with
+AI tools, so the only route is a file you export yourself and import (`Data > Bulk import`). Strata
+never logs in to any of it.
+
+### Checked against the source
+| What | How | Result |
+| --- | --- | --- |
+| Option trade bars | 32 stored contract-sessions (2024-02-22 to 2026-11-13, quiet and busy contracts) fetched again as 141,605 **individual trades** and rebuilt into minute bars by separate code (`strata options-audit SPY --verify 32`) | 5,558 of 5,559 bars identical in open, high, low and close (99.98%); 95.16% also in volume; no bar without a trade, no traded minute without a bar |
+| Underlying minute bars | the exchange calendar, the daily record, and Yahoo's minute bars where both exist (`strata bars-audit SPY`) | 2,712 sessions of 390 bars, the 21 early closes of 210, the four halted sessions of March 2020 short by the halt; last bar within 0.05% of the official close on 2,697 of 2,740; all 8,190 bars of the 21 shared sessions match Yahoo's, every close within 0.02% |
+| Every priced trade | the engine against a reference simulator that shares no code with it | 100 of 100 trades across the four thresholds agree on contract, times, prices, fees and P&L |
+| The underlying study | the 35 qualifying sessions since 2016 recomputed from minute bars | the daily and the minute record agree on all 35 (19 reached +1% from the open) |
+| Alpaca against Yahoo, the same contracts and minutes | 481 contract-sessions on 2026-11-23 and 11-24, 73,317 common minutes | the minute's close is identical on 54.9%; 65.6% of Yahoo's bars hold one price (25.7% of Alpaca's); Yahoo has the 09:30 bar for 42 contracts, Alpaca for 388; daily volume within 3% |
+
+Yahoo's option bars are therefore closer to samples of the last price than to trade bars, and
+Alpaca's are read first where both exist. The trade reported earlier for 2026-11-23 from Yahoo's
+bars (721 call, 09:32 at 5.50, -$360.30) is superseded by the one above; both are in the report.
+
+### What running it against the live service found
+None of this was visible while the key-gated code had only run against recorded doubles. Each has
+a regression test.
+
+| Found | Effect | Now |
+| --- | --- | --- |
+| A key saved in an old container (the V2 build, still on port 8000) never reached the database: the container and the app shared one data folder, and SQLite's write-ahead log is not coordinated across a container boundary | a committed write was dropped a minute later | **One machine at a time** opens a data folder (`strata/core/instance.py`): a lease with a heartbeat. The other copy goes on standby, says on the whole page who holds the folder and where to open it, and continues by itself about 20 seconds after that copy stops. Taking the lease is a claim that a live holder refuses |
+| The route that serves the interface returned **any readable file** for a path with encoded `..` | whoever could reach the port could read the database or a key file | only files inside the build directory are served; an unknown `/api` path is a 404 |
+| Inside Docker the computer's own browser arrives from the container network and was refused as remote | the container build could not be used at all since V3 | the compose file publishes the port on `127.0.0.1` only and declares it (`STRATA_LOOPBACK_PUBLISHED`); the Host name must still be local |
+| A running copy remembered "no key" for its whole life; the app on the computer and a container read different credential stores | "I saved it and it says not set" | an absence is remembered for 3 seconds; the native app also reads the protected file a container writes; *where* a key was stored (never the key) is recorded, so a container says "saved in the macOS Keychain, enter it here as well" instead of "not set" |
+| Alpaca lists `multiplier: "0"` for every contract that expired on or before 2024-04-26 (5,584 of 76,080 definitions) | those trades were multiplied by zero, then the margin code divided by it | the contract size and deliverable are read instead; the engine refuses a non-positive multiplier and says so |
+| Alpaca holds seven early sessions only in part (2024-01-22, -23, -24, -29, 02-02, 02-26, 03-15) | an entry would slide to the first print the provider happens to have | recorded as partial with the times; coverage, readiness and the engine leave them out |
+| The rule that removes Yahoo's running-total volume flagged 32 real block prints on the consolidated tape (SPY, 2018-09-21 10:43: 18.7 million shares, 17.7% of the day) | real volume dropped from VWAP on expiration Fridays | applied only to feeds that produce the artefact |
+| On 70 of 2,741 sessions the daily high or low lies outside every regular-session minute bar, 65 of them at about the previous close | the audit said prints were missing | a daily bar counts late and reference-priced trade reports; the finding says so, and a session with intraday bars takes its range from them |
+| A band around the previous close misses the at-the-money strike after a gap open (2026-11-23: close 689.81, open 724.33) | the bulk download alone could not price that session | `strata usecase --acquire` and the lab fetch the contracts around the price at the signal |
+| The engine expanded every session's option data even when nothing traded | 98 seconds to price 5 sessions in the lab | a session's chain is built on first use; all 100 use-case trades are identical before and after |
+
+### What the audit found and fixed
+An independent reference simulator (`strata/audit/reference.py`, sharing no code with the engine)
+and property-based tests (cash + marked positions = equity, fees, exits never exceed open quantity,
+no look-ahead) found these. Each has a regression test.
+
+| Found | Effect before the fix |
+| --- | --- |
+| The official close was rejected when it was more than 1% from the last intraday bar | "fell 4%" did not fire on a day it should have (SPY 2025-04-09: hourly bars end 542.84, official close 548.62), and expiration settled on the wrong price |
+| A position with a small net delta was treated as having no direction | an underlying target never fired; a stop fired either way |
+| Short shares had an unbounded margin requirement | a hedged long call or short put was margin-called at entry |
+| Hedge shares stayed open after the options expired | phantom stock exposure and P&L |
+| The hedge record left out its closing trade and deliveries | cash did not equal the recorded flows |
+| A staged exit followed by expiration overwrote the leg's exit price | wrong per-leg P&L |
+| The last daily row still counted closed positions | wrong open-position count |
+| Yahoo 1-minute bars carry the day's running volume in 5 to 9 bars a session | raw minute volume summed to 289% of the daily volume; those bars now get no weight in VWAP or volume rules |
+
+**Forward validation** used the last *stored* session as the activation date, so a stale dataset
+back-dated an experiment and a later backfill could slip in-sample days into the forward record.
+Activation is now an immutable UTC instant from the clock; the first session that counts comes from
+the exchange calendar (activation during market hours starts with the next session); every decision,
+fill, exit, open position and missing-data event is appended to a hash-chained ledger that the
+database refuses to update or delete; data that changes after a session was sealed is recorded as a
+revision, never applied; open positions are read back from the ledger after a restart.
+
+**ML research** scored every candidate on the reserved test period, so the best-looking one could be
+picked from it. Candidates are now compared on purged cross-validation only; the selected
+configuration is frozen; the test period is scored for that one model, on request, pinned to what
+was frozen (the step is refused if the model, features or rows changed); and every scoring is
+recorded in a table that cannot be edited. A second configuration scored on the same period makes
+both "tested repeatedly", never "confirmed". A failed leakage check is its own verdict.
+
+**Reading requests.** One intent schema and one sequence for every request: understand, validate
+against the sentence, check the data, plan, execute, explain, follow up. Every size and clock time
+in a sentence must have a place in the interpretation or the part is named as unread. Measured with
+`strata eval-nl` on 150 written requests:
+
+| Set | Cases | Correct | Silently wrong |
+| --- | --- | --- | --- |
+| Development (the reader was fixed against these) | 110 | 60.9% before, 99.1% after | 25.5% before, 0% after |
+| Held-out, **first run** (written afterwards; the honest estimate) | 40 | **75.0%** | **20.0%** |
+| Held-out, after fixing what it exposed | 40 | 92.5% | 2.5% |
+
+The built-in reader was evaluated. No language model is configured on the development machine, so
+the model-backed path is **not run** (`strata eval-nl --llm` says so rather than scoring zero).
+
+**Security and reliability.** The research SQL console checked a list of forbidden words that a
+comment or a quoted path walked around: it could read any file on the computer (the stored API keys
+among them), write files and request web addresses. It now runs one read-only statement, as the
+database's own parser sees it, on a connection whose file access is confined to the market store by
+the engine, with network access and extensions off and the configuration locked (its views had also
+pointed at a folder layout abandoned in V3, so it returned nothing; they work again). Also: ZIP and
+gzip bombs and member counts are bounded before extraction; provider and symbol names cannot be
+paths; remote callers can import only from `<data>/imports`; the local-model address must be a
+loopback or private host; store writes are atomic and locked across processes, so the application
+and a collector container sharing one data directory no longer lose each other's sessions; the
+collector's one-cycle-at-a-time claim is atomic; `strata backup` / `strata restore` copy the
+database with SQLite's online backup, hash every file, exclude credentials and refuse a damaged
+backup.
+
+**Interface.** Coverage comes before profitability everywhere: the plan, the result card, the
+report, comparisons and the forward page lead with "N of M qualifying sessions could be priced",
+large, with what the rest are missing. The notebook shows the seven stages of the current piece of
+research and each opens its surface; a result hands the same configuration to the IDE, the visual
+builder, forward validation and the registry. `Data > Readiness` shows the five kinds of research
+per symbol and year, the provider access state and steps, the original question's coverage and the
+bar audit.
+
+### Acceptance: software, data access, research
+Run on 2026-11-25 against the running application over HTTP (as the browser does), with the Alpaca
+key connected and its history stored. The runs carry the engine label 6.0.0: the number was raised
+to 6.0.1 afterwards for the changes listed above, with no change to the engine in between.
+
+| | Status |
+| --- | --- |
+| **Software verified** | 482 backend tests (12 opt-in live ones skip), 24 browser tests, `strata validate` 14 of 14 on freshly downloaded real observations, `strata bench --check` without regression |
+| **Data access verified** | **Alpaca** with a paper key: stock minute bars since 2016-01-04, option trade bars and individual trades since 2024-01-18, expired contracts included. Yahoo daily, intraday and option bars; Cboe VIX; the end-of-day option archive; the OptionsDX importer on the vendor's public 5-minute sample. **BLOCKED:** Massive and Databento (need a key each), ThetaData and ORATS (a subscription), the language-model path (a model key or a local Ollama) |
+| **Research verified** | The underlying study on 105 sessions, its 35 sessions since 2016 confirmed on minute bars. The option strategy on **5 of 105** sessions by the engine (6 with the reference), every trade recomputed independently. Nothing about its profitability is established: no free history holds more of its sessions |
+
+| Prompt | What the application answered |
+| --- | --- |
+| How often does SPY rise 1% from the open after a 3% down day? | 68 of 105 sessions (64.8%, 95% interval 55.3% to 73.2%) against 17.2% of all 8,513 sessions |
+| Test buying ATM SPY 0DTE calls on those days. | Before running: 5 of 105 can be priced; 89 have no stored option prices, 10 had no such contract, 1 is partly observed. Result: 5 trades, -$892.50, 2 winners. "With so few trades the averages say very little about what to expect." |
+| Run the same strategy after 1% and 2% declines. | Coverage first: 75 of 1,079 and 16 of 342 qualifying sessions priced; +$2,384.50 over 75 trades and -$81.80 over 16, "a description of what happened, not evidence" |
+| Compare 0DTE, 1DTE, and 7DTE calls. | 5 of 105 priced for each; from -$892.50 (0DTE) to -$469.50 (7DTE); every variant flagged as fewer than 30 observations |
+| Enter at 6:30 AM Pacific and exit at 12:45 PM Pacific or after a 1% underlying move. | New version; entry at the first print after 09:30 ET, exit 15:45 ET; 5 trades, -$604.50 |
+| Show every actual option fill and its source. | Five fills, each an observed trade print from `alpaca/SPY/options/trade/1m/v1`; no bid or ask existed and none is shown |
+| Show exactly which historical sessions could not be tested. | All 100, each with its reason: 89 no intraday option prices stored, 10 no contract listed, 1 partly observed |
+| Estimate what it would cost to acquire the missing observations. | The budget table above, with the 57 pre-2010 sessions named as unreachable and Alpaca named as the one route that was measured |
+
+New commands: `strata access alpaca`, `strata download SOURCE DATASET SYMBOLS` (resumable),
+`strata usecase [--acquire]`, `strata bars-audit [SYMBOLS]`, `strata options-audit [SYMBOL] [--verify N]`,
+`strata eval-nl [--llm]`, `strata backup DEST`, `strata restore SRC [--verify]`.
+
+To repeat the downloads: `strata download alpaca bars_1m SPY` (51 seconds for eleven years) and
+`strata download alpaca option_trades SPY --band 3 --max-dte 7` (40 minutes, 6,190 requests inside
+the free limit of 200 a minute; what is stored is skipped), then `strata usecase --acquire`.
+
 ## What V5 adds
 V5 removes practical limits rather than adding surface: research is no longer confined to seven
 templates, a strategy can be read and edited as text, what has been tested is tracked across
@@ -88,8 +325,8 @@ verified. Nothing from V2-V4 was rebuilt.
 | **Strategy IDE** | The strategy as text (defaults left out, exact round trip), with syntax colours, completion and inline documentation for the rule language, error markers on the line they belong to, an outline, a form for the selected part with how often a rule was true historically, and a debugger that replays the entry rule on a real session tick by tick with watches and a breakpoint. "Replace this fixed stop with an ATR-based stop" is applied to the selected section only; the changed lines are marked, and an instruction that cannot be expressed changes nothing and says so. |
 | **More of a strategy can be expressed** | Independent entry systems (each may carry its own legs, so calls after a decline and puts after a rally), staged exits with partial closes and a tightened stop, ATR targets and stops, trailing thresholds on the underlying, sizing by expression or by ATR risk, portfolio-level conditions (`portfolio.open_positions`, `portfolio.day_pnl_pct`, ...), a delta hedge in shares, and saved signals (`signal("name")`). Each has a regression test with hand-computed numbers. |
 | **Execution fidelity** | More stress cases (best achievable, impatient, auction windows, expiration-day spreads, early or never assigned) and an execution-quality score built from price evidence, coverage, freshness, liquidity, spread and exits. It never reads the P&L, and a component that cannot be measured is left out and named. |
-| **ML research (optional)** | Logistic, ridge, lasso, tree, forest and gradient-boosted models scored out of sample with purged, embargoed chronological folds and a final test set at the end of history. Reported against the base rate (Brier and log-loss skill), with calibration, a time-shifted placebo, permutation importance and a leakage probe that scrambles the future. Random splits are not offered. The only bridge to a strategy is a saved walk-forward signal, priced by the ordinary backtester. `pip install -e "backend[ml]"`. |
-| **Forward validation** | Freeze a finished backtest or study: the configuration is stored with a hash and the last stored session as its activation date. Only later sessions count; fewer than ten forward observations are reported as a record, not a verdict. A change is a new version with its own date. Paper only: there is no order entry anywhere in Strata. |
+| **ML research (optional)** | Logistic, ridge, lasso, tree, forest and gradient-boosted models scored out of sample with purged, embargoed chronological folds and a final test set at the end of history (since V6 that set is scored once, on request, for the frozen model only). Reported against the base rate (Brier and log-loss skill), with calibration, a time-shifted placebo, permutation importance and a leakage probe that scrambles the future. Random splits are not offered. The only bridge to a strategy is a saved walk-forward signal, priced by the ordinary backtester. `pip install -e "backend[ml]"`. |
+| **Forward validation** | Freeze a finished backtest or study: the configuration is stored with a hash and its activation instant (V5 used the last stored session as the date, which V6 replaced with the clock and a sealed ledger: see above). Only later sessions count; fewer than ten forward observations are reported as a record, not a verdict. A change is a new version with its own date. Paper only: there is no order entry anywhere in Strata. |
 | **Provider marketplace** | Data -> Sources lists twenty-one sources of historical options data with advertised coverage, resolution, price and limits next to what this installation verified with a real request, coverage for SPY, QQQ, IWM and SPX, and a cost estimate for only the observations one strategy needs. Alpaca has a guided connection (credentials, entitlements, an expired contract, its trade bars, a small backtest). |
 | **Collector** | Survives restarts (a cut-off cycle is detected by its heartbeat and resumed), retries failed sessions with growing delays, probes its sources first, checks what it stored, recovers a gap while the source still serves it, and leaves a note in the app. It states what is recoverable after a miss and what is not. |
 | **Three workflows** | Explore, Build and Validate, with a simple and an advanced level, onboarding that says what the stored data can already answer, and an in-app notification list. |
@@ -118,16 +355,17 @@ means a real request from this installation returned the data.
 | Source | Cost | Advertised | Verified here |
 | --- | --- | --- | --- |
 | End-of-day option archive (public mirror, MIT) | free | SPY, QQQ, IWM end-of-day chains with bid/ask, greeks, 2008-2025 | **verified** |
-| Yahoo Finance option trade bars | free | 1-minute trade bars for contracts still listed or just expired | **verified** (an expired contract returned nothing) |
+| Yahoo Finance option bars | free | 1-minute bars for contracts still listed or just expired | **verified** (an expired contract returned nothing). Compared with Alpaca's trade bars they behave like samples of the last price, not trade bars: see [Checked against the source](#checked-against-the-source) |
 | DoltHub options | free | recent end-of-day chains, about three expirations per date | **verified** |
 | Cboe | free | VIX and index history; delayed chain snapshots | **verified** (index history) |
 | Alpha Vantage | $49.99 a month | end-of-day chains from 2008 | parser verified on the demo symbol only; SPY, QQQ, IWM need a paid key |
-| Alpaca | free key | 1-minute option trade bars from February 2024, expired contracts included; quotes with the $99 plan | **unverified**: no credentials. The guided connection reports "not connected" |
+| Alpaca | free key | 1-minute option trade bars from February 2024, expired contracts included; no historical bid/ask on any plan (the $99 plan adds the live OPRA feed) | **verified** with a paper key on 2026-11-25: 100 of 100 expired contract-sessions returned trade bars; the history starts on 2024-01-18, not February; seven early sessions are incomplete at the provider; stock minute bars start on 2016-01-04 |
 | Massive (formerly Polygon) | free key; paid tiers | per-contract minute aggregates, 2 to 20+ years by tier | **unverified**: no credentials |
 | Databento OPRA | pay per use, $125 credit | trades, 1-minute bars and 1-minute bid/ask from 2013-04 | **unverified**: no credentials |
 | ThetaData | from $40 a month | 1-minute quotes from 2020 (Value), earlier on higher tiers | **unverified**: needs their terminal |
 | ORATS | subscription or one-time | 1-minute data from 2020-08 | **unverified** |
-| Cboe DataShop, historicaloptiondata.com, OptionsDX, FirstRate, WRDS OptionMetrics, algoseek sample | paid or institutional | files | import only; layouts tested on files written with the documented columns |
+| OptionsDX | $0 to $50 per symbol-year | bid/ask snapshots of whole chains, SPY 2010-2023 and QQQ 2012-2023 | importer **verified on the vendor's public 5-minute sample** (one partial session, 2020-03-06); no purchased file has been imported |
+| Cboe DataShop, historicaloptiondata.com, FirstRate, WRDS OptionMetrics, algoseek sample | paid or institutional | files | import only; layouts tested on files written with the documented columns |
 | EODHD, Tradier, IBKR, marketdata.app, QuantConnect | varies | - | not integrated (each card says why) |
 
 SPX index options have no free source; they enter through imported files. Strata never calls a
@@ -152,8 +390,15 @@ hundred requests and tens of megabytes a week. What a missed session costs:
 | Daily bars | always |
 | 60-minute bars | for about two years |
 | 5-minute bars | for about two months |
-| 1-minute bars | for about a month (a free Alpaca key reaches back to 2016) |
+| 1-minute bars | for about a month (a free Alpaca key reaches back to 2016-01-04: `strata download alpaca bars_1m SPY`) |
 | Option trade bars (Yahoo) | only while the contract is listed, and about a day after it expires. After that it is gone from this source and is recorded as missing, never filled in |
+
+The application and the collector may share one data directory (V6): every store write is atomic and
+takes a lock across processes, and only one collection cycle can claim the database at a time. On
+macOS a native process and a Docker container do not see each other's file locks, so run both the
+same way. This is how intraday 0DTE history accumulates for free: each close that the collector is
+running for adds that session's option prints, and no close it was not running for can be recovered
+from this source. `strata backup DEST` copies the database and the data with their hashes.
 
 ## What V4 adds
 V4 turns Strata from a tool that answers a question into one that helps decide whether an edge
@@ -240,7 +485,7 @@ Measured from this installation on 2026-11-25:
 | Yahoo Finance option trades | verified | 8,754 one-minute trade bars for 12 at-the-money contracts; a contract that expired weeks ago returned nothing, so history must be collected while it is served |
 | End-of-day option archive | verified | SPY chains listed for 2008-2025 |
 | DoltHub options | verified | latest chain date 2026-11-24, 214 SPY rows |
-| **Alpaca** | **unverified** | no credentials were available. Its pagination, contract discovery, resume and entitlement checks are covered by mocked tests and an opt-in live test; whether a free account can read what the documentation says has not been confirmed here. |
+| **Alpaca** | unverified when V4 was written; **verified in V6** | a paper key was connected on 2026-11-25: see [Where the data stands](#where-the-data-stands) |
 
 The paid adapters and the cloud language-model providers are likewise unverified against live
 endpoints. Other legitimate sources (Cboe DataShop, OptionsDX, historicaloptiondata.com, Massive
@@ -285,7 +530,7 @@ calibration loop. The browser suite records how long the sensitivity map takes t
 | Data ingestion | Alpaca requests follow `next_page_token` to the last page, de-duplicate, validate every record and resume. A session is marked complete only when its request was read to the end; a partial session is stored as partial and never used as if complete. |
 | Point-in-time contracts | Contracts are discovered as of the session being traded: active **and** since-expired definitions, expirations on or after that session, strikes around the price at the signal. Original OCC identifiers, expirations, multipliers and adjusted (non-standard) contracts are preserved. |
 | Selective acquisition | Two stages: signals are found on cheap underlying data, then option data is fetched only for the qualifying sessions and the contracts those signals could select. Unusually large requests show size, time and cost ($0.00 for free sources) and wait for approval. |
-| Trade-priced backtests | A fourth mode executes on observed option **trade prints** (free: Yahoo for the last weeks, Alpaca since Feb 2024). A print is used only while it is recent; otherwise the order is deferred, then rejected. No spread is invented, and trade bars are never read as quotes. |
+| Trade-priced backtests | A fourth mode executes on observed option **trade prints** (free: Alpaca since 2024-01-18, verified against its individual trades; Yahoo's bars for the last weeks). A print is used only while it is recent; otherwise the order is deferred, then rejected. No spread is invented, and trade bars are never read as quotes. |
 | Coverage | Session-level and contract-level coverage are reported separately from results: requested vs. usable sessions, qualifying vs. executable signals, and every skipped signal with its reason. A stated period that cannot be covered stops and asks instead of silently shrinking. |
 | Storage | `provider / symbol / data type / observation / resolution / version`, per-file provenance, append-only manifests. Older data directories are migrated automatically (`strata migrate --dry-run` shows the plan). |
 | Research agent | Multi-step investigations, variant comparisons, exploratory discovery with an untouched final test period, out-of-sample and robustness checks, all computed by the deterministic engine. |
@@ -371,7 +616,7 @@ your words ─► interpreter ─► Draft ─► questions / confirmation ─�
 | EOD options archive | none | Full end-of-day chains for SPY and IWM 2008–2025 and QQQ 2011–2025: bid/ask, sizes, volume, open interest, IV, Greeks | MIT (P. Dubach dataset mirror) |
 | DoltHub `post-no-preference/options` | none | End-of-day chains since 2019 for about 2,000 symbols (four expirations, ~27 strikes; no volume/OI) | CC BY-SA 4.0 |
 | Yahoo option trades | none | 1-minute option **trade** bars for contracts still listed or expired within about a day (rolling window: capture 0DTE history as it happens) | Yahoo terms (personal research) |
-| Alpaca | free key | 1-minute stock bars since 2016; 1-minute option **trade** bars since Feb 2024, including expired contracts (no historical option quotes on the free plan) | Alpaca data agreement |
+| Alpaca | free key | 1-minute stock bars from the consolidated tape since 2016-01-04; 1-minute option **trade** bars since 2024-01-18, including expired contracts (no historical option quotes on any plan). Both measured with a paper key | Alpaca data agreement |
 
 Ingestion estimates size before large downloads, resumes, retries with backoff, skips what is
 already stored, rejects crossed or negative quotes, nulls implausible vendor IV/Greeks so they
@@ -537,6 +782,17 @@ strata collect [--once|--daemon|--status]   # the market-data collector (read-on
 strata providers [yahoo cboe ...]     # live check of what each source actually delivers
 strata bench [--check] [--real]       # time the research workloads and record the result
 strata migrate [--dry-run]       # move an older data directory to the current layout
+strata access alpaca [--json]    # what this account's key actually returns (exit 2 = blocked on credentials)
+strata download alpaca bars_1m SPY                      # 1-minute bars since 2016; resumable (exit 2 = no key)
+strata download alpaca option_trades SPY --band 3       # option trade bars: strikes within 3% of the previous close, <= 7 days out
+strata usecase [--symbol SPY] [--acquire]               # the original 0DTE question on stored observations; --acquire first
+                                                        # fetches the contracts its sessions need around the price at the signal
+strata bars-audit [SYMBOLS]      # missing minutes, early closes, DST, volume artefacts, mixed feeds, two feeds against each other
+strata options-audit [SYMBOL] [--verify N]              # stored option bars: sessions absent, empty or partial at the provider;
+                                                        # --verify refetches N contract-sessions as individual trades and rebuilds the bars
+strata eval-nl [--llm]           # interpretation accuracy on 150 written requests
+strata backup DEST [--no-market] # database (online backup) + data, hashed; credentials excluded
+strata restore SRC [--verify]    # refuses a backup that does not verify
 ```
 
 Code strategies subclass `strata.sdk.Strategy` and use the same point-in-time context, execution,
@@ -561,7 +817,7 @@ alongside builder runs. JSON `BacktestConfig` files work the same way.
 
 ## Testing & validation
 ```bash
-cd backend && .venv/bin/python -m pytest          # 367 tests (12 opt-in live ones skip), about a minute, no network
+cd backend && .venv/bin/python -m pytest          # 482 tests (12 opt-in live ones skip), a few minutes, no network
 cd backend && .venv/bin/strata validate           # fourteen steps on real observations, ~15 seconds
 cd backend && .venv/bin/strata bench --check      # performance against the recorded baseline
 cd backend && STRATA_LIVE=1 .venv/bin/python -m pytest tests/test_live.py -rs   # opt-in, per provider
@@ -592,6 +848,24 @@ three steps: a plan checked against the session engine and against plain arithme
 history, the future-scramble test on real data, and live source verification. The browser suite
 gained six tests covering the plan flow, the reviewer, the canvas, the sensitivity map, the
 encyclopedia and the data panels.
+
+V6 adds 115 tests in thirteen files: the forward ledger (activation from the clock, the stale-dataset
+scenario, backfills, tampering, restarts), the reference simulator against the engine with
+property-based cases, the bar audit, the budget arithmetic, the access classifier against a
+recorded double (credentials redacted, trading paths refused), the OptionsDX layout, the ML test-set
+record (a real relationship, pure noise, a feature that knows the answer, and the pinned final
+test), readiness and the data check, the interpretation evaluation, and the security cases
+(traversal, archive bombs, malformed files, code in a rule, the SQL console, SSRF, a misbehaving
+model, credential exposure, two processes writing one dataset, backup and restore, the interface
+route, a container published on loopback). Two more files came from running Alpaca for real:
+`test_v6_alpaca.py` (a session the provider holds only in part, the zero multiplier, volume on the
+consolidated tape, bars rebuilt from trades, two providers compared, paging and the rate limit, the
+download command) and `test_v6_instance.py` (the lease: a live copy on another kernel keeps the
+database closed, liveness is the counter moving and not the clock, a wrong claim is refused, a
+frozen holder yields, two real processes, standby in the web application, credentials on both
+sides of a container boundary). The browser suite gained six tests: coverage before profitability,
+data readiness and the provider's state, the forward ledger, the two-step ML study, the standby
+page, and a key stored where this copy cannot read it.
 
 **`strata validate`** starts from an empty data directory and uses free, keyless sources only:
 
@@ -644,12 +918,17 @@ Acceptance prompts, run through the browser on real SPY history for this build:
 backend/strata/
   ai/          draft (schema, compiler), nl_rules + nl_stateful (built-in interpreter), research
                (investigations, follow-ups), llm (providers), explain (grounded text), agent,
-               nl_graph (the composing reader), agent_v5 (graph, memory and registry follow-ups)
+               nl_graph (the composing reader), agent_v5 (graph, memory and registry follow-ups),
+               V6: intent (one schema and seven stages for every request), evalset (150 written
+               requests with their expected readings)
   core/        calendar, Black-Scholes / American pricing, causal indicators
+               V6: instance (one machine at a time opens a data folder: the lease, standby, the claim protocol)
   data/        store (datasets, manifests), migrate, catalog, planner (requirements, coverage,
                selective and adaptive acquisition), importers, bulk (streaming imports),
                providers/ (free sources, paid adapters, bench = live verification, market =
-               the provider marketplace and cost estimates)
+               the provider marketplace, cost estimates and V6 budget table, access = what an
+               account's key actually returns), V6: readiness (the five capabilities and the
+               data check before a run), quality (volume artefacts)
   engine/      models, market (point-in-time data, trade-print chains), expr (rule language),
                sequence (ordered stages), scan (signals only), rules, selection, execution,
                margin, portfolio, engine (event loop)
@@ -662,34 +941,68 @@ backend/strata/
                uses), matching (matched comparisons), patterns (event explorer), registry
                (cross-notebook trials and holdouts), memory (findings), ml (optional), forward
                (frozen experiments), signals (saved signal lists)
+               V6: usecase (the original question on stored observations)
+  audit/       V6: reference (an independent simulator that shares no code with the engine),
+               bars (missing minutes, early closes, DST, volume artefacts, mixed feeds, two feeds against
+               each other), options (stored option bars against the calendar, against the provider's
+               individual trades, and one provider against another)
   collector/   the background market-data collector
+  backup.py    V6: `strata backup` / `strata restore`
   bench.py     the `strata bench` command
   analytics/ · optimize/ · portfolio/
-  api/         FastAPI app, research_api, v4_api, v5_api, ide (strategy IDE: compact form, section
+  api/         FastAPI app, research_api, v4_api, v5_api, v6_api, ide (strategy IDE: compact form, section
                edits, debugger), launch (jobs + caching), settings (credential stores), notify, db
   validate.py  the `strata validate` command
 backend/tests/ unit suite, test_live.py (opt-in), test_reproducibility.py, e2e_seed.py
 frontend/src/  pages/lab (research workspace, Canvas, Research and Graph views), pages/explore
                (Patterns, Findings, MlLab), pages/build (Ide, CodeEditor), pages/validate (Forward,
                Registry), pages/research (Sensitivity, Encyclopedia), pages/data (Collector,
-               Marketplace, bulk import), pages/builder, pages/results …
+               Marketplace, bulk import, Readiness), pages/builder, pages/results …
+               pages/lab/Coverage.tsx: the coverage block, stage rail, data check, fills, budget
 benchmarks/    baseline.json, history.jsonl (backend), frontend.jsonl (browser render times)
 frontend/e2e/  browser tests            .github/workflows/ci.yml
 scripts/       setup.sh · dev.sh · init_db.sh · docker-entrypoint.sh
 ```
 
 ## Known limitations
+- **The strategy this project started from has not been backtested.** One of its 105 qualifying
+  sessions can be priced by the engine on stored observations and one more by the reference
+  simulator. Everything else waits on intraday option prices that are not stored: see
+  [What would close the gap](#what-would-close-the-gap). No key-gated provider has been reached
+  from this installation, so their coverage is what they publish, not what was measured.
+- **The reader is right about three times in four on wording it has not seen**, and before the
+  V6 guards one answer in five was wrong without saying so (the held-out first run). Read the
+  "How I read this" card; the Interpretation panel is editable for a reason.
+- **The reference simulator is a second opinion, not a second engine.** It covers option
+  positions on one underlying with the exit rules in its docstring. Agreement with it is evidence
+  for those cases only.
+- **One copy at a time on a data folder.** A process on the computer and one in a container do not
+  see each other's file locks or SQLite's shared memory, so they cannot share a database. The lease
+  in `<data>/instance.json` enforces it for every copy that knows about it (version 6 on): the
+  second copy stands by. A container built from an older version does not know the lease and must
+  be rebuilt or stopped. The application and the collector may run together when both are native
+  or both in Docker.
 - **Free intraday option history is shallow.** Yahoo serves option trade bars only for contracts
-  still listed or expired within about a day, so 0DTE history has to be captured as it happens;
-  Alpaca's free plan reaches back to February 2024. Before that, intraday option backtests need
-  a paid provider or imported files. A request that reaches further back is told so.
+  still listed or expired within about a day, and its bars behave like samples of the last price;
+  Alpaca's free plan reaches back to 2024-01-18 on trade bars, with seven early sessions incomplete
+  at the provider. Before that, intraday option backtests need a paid provider or imported files.
+  A request that reaches further back is told so. A rule that fires a few times a year (the
+  original 3% rule: five sessions since 2024) cannot be tested on this history however complete it is.
+- **The stored option set is a band, not the whole chain.** The bulk download holds contracts
+  within 3% of the previous close expiring within 7 days. After a gap open the at-the-money strike
+  can lie outside it; the lab and `strata usecase --acquire` fetch the contracts around the price
+  at the signal for the sessions a strategy needs, and a contract that is not stored is reported
+  as not stored, never priced another way.
 - **Trade prints are not quotes.** A trade-priced backtest cannot know the spread that was
   available. It refuses stale prints and reports executability, but it is still an
   approximation of what could have been filled.
-- **Not exercised against live endpoints here:** Alpaca (no key was available: its pagination,
-  contract discovery and resume logic are covered with a mocked transport and by an opt-in live
-  test), the paid-provider adapters, the language-model providers (mocked transport plus opt-in
-  live tests), and writing to the real macOS Keychain (the command construction is unit-tested).
+- **Not exercised against live endpoints here:** the paid-provider adapters (Massive, Databento,
+  ThetaData, ORATS) and the language-model providers (mocked transport plus opt-in live tests).
+  Alpaca and the macOS Keychain were exercised for real on 2026-11-25; Alpaca's coverage for QQQ
+  and IWM was not measured.
+- **Two free sources disagree about option minutes.** Where Alpaca and Yahoo hold the same contract
+  and minute, the close differs on 45% of them. Alpaca's bars reproduce from its own trade records
+  and are used first; no third source was available to settle which is closer to the tape.
 - **Language models.** Cancellation is checked between requests, not in the middle of one.
   Gemini uses JSON mode without a schema. Small local models can be unreliable at structured
   output; what happens then is the fallback setting.

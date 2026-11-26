@@ -449,11 +449,11 @@ class Pipeline:
                     n = sum(1 for s in signals if s["date"] >= S.ALPACA_OPTIONS_FIRST)
                     if n:
                         unf.append({"symbol": req["symbol"], "sessions": n, "fix": "connect_alpaca", "reason": "option trade history needs an Alpaca key",
-                                    "detail": f"A free Alpaca account provides 1-minute option trade bars since February 2024: {n} of the {len(signals)} qualifying sessions fall in that range."})
+                                    "detail": f"A free Alpaca account provides 1-minute option trade bars since {S.ALPACA_OPTIONS_FIRST}: {n} of the {len(signals)} qualifying sessions fall in that range."})
             old = sum(1 for s in signals if s["date"] < S.ALPACA_OPTIONS_FIRST)
             if old:
-                unf.append({"symbol": req["symbol"], "sessions": old, "fix": "paid_or_import", "reason": "no free option trade history before February 2024",
-                            "detail": f"{old} qualifying sessions are before February 2024, where no free provider has intraday option prices. A paid provider (never used automatically) or imported files would be needed."})
+                unf.append({"symbol": req["symbol"], "sessions": old, "fix": "paid_or_import", "reason": f"no free option trade history before {S.ALPACA_OPTIONS_FIRST}",
+                            "detail": f"{old} qualifying sessions are before {S.ALPACA_OPTIONS_FIRST}, where no free provider has intraday option prices. A paid provider (never used automatically) or imported files would be needed."})
             if still and cov["executable"]:
                 cov["issues"].append({"reason": "the underlying has no 5-minute or finer bars on the session, which trade-bar execution needs", "signals": len(still), "kind": "underlying",
                                       "sample": [d.isoformat() for d in sorted(still)[-6:]]})
@@ -528,7 +528,7 @@ class Pipeline:
             out.append({"id": "reduced_window", "label": f"Run on the {reduced['sessions']:,} {what} that are covered", "kind": "reduce", "detail": f"Accept the reduced coverage{span}. The report states what was left out."})
         if kind == "options":
             if tried == "historical":
-                out.append({"id": "mode:trades", "label": "Use option trade prices instead", "kind": "mode", "detail": "Execute on observed option trade prints (no bid/ask). Free sources: Yahoo (last ~30 days), Alpaca (since Feb 2024, free key)."})
+                out.append({"id": "mode:trades", "label": "Use option trade prices instead", "kind": "mode", "detail": "Execute on observed option trade prints (no bid/ask). Free sources: Yahoo (last ~30 days), Alpaca (since 2024-01-18, free key)."})
             out.append({"id": "mode:study", "label": "Run the market study on the underlying", "kind": "mode", "detail": "Measures how the underlying behaved on the qualifying sessions. It is not the option position's profit or loss."})
             out.append({"id": "mode:modeled", "label": "Estimate with modeled premiums (opt-in)", "kind": "mode", "detail": "Real underlying prices with THEORETICAL option premiums. Estimates, never shown as observed prices."})
         if any(u.get("fix") == "paid_or_import" for u in unfillable):

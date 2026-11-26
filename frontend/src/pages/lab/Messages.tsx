@@ -5,12 +5,14 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { MODE_NAME, type AiMessage, type PlanItem, type Question, type RunRef } from "@/lib/lab";
 import { Callout, ModeBadge, StatusChip, T } from "./bits";
+import { Alternatives, CoverageHero, CoverageMeter, ResultCoverage, type Alt } from "./Coverage";
 import { ForwardCard, GradeBadge, GraphCard } from "./Graph";
 import { Timeline, usePipeline } from "./Pipeline";
 
 export type OpenTarget =
   | { type: "run"; runId: string; tab?: string; which?: string; messageId?: number }
   | { type: "setup"; versionId: number }
+  | { type: "data"; messageId: number }
   | { type: "message"; messageId: number };
 
 export interface Actions {
@@ -27,6 +29,7 @@ export interface Actions {
   ask: (text: string) => void;
   strategyFrom: (findingId?: number) => void;
   backtestPlan: () => void;
+  pickAlt: (versionId: number, alt: Alt) => void;
   busy: boolean;
   pinned: string[];
 }
@@ -146,7 +149,8 @@ function Card({ children, className, tone, ...rest }: { children: React.ReactNod
 
 function MiniTable({ table, onOpen }: { table: any; onOpen: (runId: string) => void }) {
   if (!table?.rows?.length) return null;
-  const cols = table.columns.slice(0, 5);
+  const hasCov = table.columns.some((c: any) => c.key === "qualifying");
+  const cols = table.columns.slice(0, hasCov ? 6 : 5);
   return (
     <div className="mt-3 overflow-x-auto rounded-lg border border-line">
       <table className="t">
@@ -155,11 +159,29 @@ function MiniTable({ table, onOpen }: { table: any; onOpen: (runId: string) => v
           {table.rows.map((r: any) => (
             <tr key={r.run_id} className="click" onClick={() => onOpen(r.run_id)} title="Open this result">
               <td className="max-w-[220px] truncate">{r.label.replace(/^v\d+\s*-?\s*/, "")}</td>
-              {cols.map((c: any) => <td key={c.key} className="r num">{r.shown[c.key]}</td>)}
+              {cols.map((c: any) => <td key={c.key} className={cn("r num", c.key === "executable" && (r.values?.executable ?? 0) < (r.values?.qualifying ?? 0) && "font-medium text-warn")}>{r.shown[c.key]}</td>)}
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** The data check of a plan: how much of the request the stored observations can answer, and what else could be done. */
+function PlanData({ c, a, messageId }: { c: any; a: Actions; messageId: number }) {
+  const dc = c.data_check;
+  const [more, setMore] = useState(false);
+  const short = dc.signal_sessions > 0 && dc.priced < dc.signal_sessions;
+  return (
+    <div className="mt-3">
+      <CoverageMeter check={dc} onOpen={() => a.open({ type: "data", messageId })} />
+      {short && (dc.alternatives || []).length > 0 && (
+        <div className="mt-2">
+          <button className="flex items-center gap-1 text-xs text-info hover:underline" onClick={() => setMore((x) => !x)} data-testid="toggle-alternatives"><ChevronRight className={cn("size-3 transition-transform", more && "rotate-90")} />{more ? "Hide the other ways to answer this" : `${dc.alternatives.length} other ways to answer this`}</button>
+          {more && <div className="mt-2"><Alternatives alts={dc.alternatives} busy={a.busy} onPick={(x) => a.pickAlt(c.version_id, x)} /></div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -230,6 +252,7 @@ export function Message({ m, a }: { m: AiMessage; a: Actions }) {
           </Callout>
         )}
         {(c.errors || []).length > 0 && c.state === "blocked" && <Callout tone="bad" className="mt-3" title="This cannot run yet">{c.errors.join("; ")}</Callout>}
+        {c.data_check && <PlanData c={c} a={a} messageId={m.id} />}
         {(c.questions || []).length > 0 && <div className="mt-3 flex flex-col gap-2">{c.questions.map((q: Question) => <Ask key={q.id} q={q} busy={a.busy} onPick={(i) => a.answer(c.version_id, q.id, i)} />)}</div>}
         {waiting && open.length === 0 && (
           <div className="mt-3 flex flex-wrap items-center gap-2" data-testid="confirm">
@@ -407,6 +430,19 @@ export function Message({ m, a }: { m: AiMessage; a: Actions }) {
         </Card>
       );
     }
+    if (v === "fills" || v === "untested" || v === "cost") {
+      const u = c.untested;
+      return (
+        <Card data-testid={`result-${v}`}>
+          <div className="mb-2 flex items-center gap-2"><span className="eyebrow">{{ fills: "Every fill and its source", untested: "Sessions that could not be tested", cost: "What the missing data would cost" }[v as string]}</span><span className="flex-1" /><span className="text-[11px] text-faint" title="Assembled from the engine's records; no language model wrote this.">calculated</span></div>
+          {v === "untested" && u && <CoverageHero n={u.priced ?? 0} of={u.of ?? 0} counts={u.counts} first={u.first} last={u.last} className="mb-3" />}
+          <div className="text-[13.5px] soft"><T>{c.text}</T></div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button className="btn sm" data-testid="open-view" onClick={() => a.open({ type: "message", messageId: m.id })}><FileText />{{ fills: "Open the fills", untested: "Open the list of sessions", cost: "Open the budget table" }[v as string]}</button>
+          </div>
+        </Card>
+      );
+    }
     const title = { single: "Result", compare: "Before and after", sweep: `Comparison${c.what ? `: ${c.what}` : ""}`, investigation: "Findings", discovery: "What the exploration found", robustness: "Is it real?",
       breakdown: c.by === "year" ? "By year" : "By day of the week", timing: "Time of day", skipped: "Signals that were not traded", export: "Report ready" }[v as string] || "Result";
     return (
@@ -449,15 +485,13 @@ export function Message({ m, a }: { m: AiMessage; a: Actions }) {
             </div>
           </>
         ) : (
-          <div className="prose text-[13.5px] soft"><T>{v === "compare" && c.compare_text ? c.compare_text : c.text}</T></div>
+          <>
+            {v === "single" && <ResultCoverage cov={cov} mode={c.mode} className="mb-3" />}
+            <div className="prose text-[13.5px] soft"><T>{v === "compare" && c.compare_text ? c.compare_text : c.text}</T></div>
+          </>
         )}
         {c.compatibility?.warning && <Callout tone="warn" className="mt-3">{c.compatibility.warning}</Callout>}
         {["compare", "sweep", "investigation"].includes(v) && <MiniTable table={c.table} onOpen={(id) => a.open({ type: "run", runId: id })} />}
-        {v === "single" && cov && cov.signals?.qualifying !== undefined && cov.executable && cov.executable.signals < cov.signals.qualifying && (
-          <Callout tone="warn" className="mt-3" title={`${cov.executable.signals} of ${cov.signals.qualifying} qualifying sessions could be tested`}>
-            {(cov.options?.issues || []).slice(0, 2).map((x: any) => `${x.reason} (${x.signals})`).join("; ")}
-          </Callout>
-        )}
         {(c.failed || []).length > 0 && v !== "failed" && <div className="mt-2 text-xs text-warn">Not completed: {c.failed.map((f: any) => `${f.label}`).join("; ")}</div>}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {runId && !["export", "sweep", "investigation", "discovery"].includes(v) && (

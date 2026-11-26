@@ -112,7 +112,9 @@ def test_the_cost_estimate_counts_only_what_one_strategy_needs_and_never_invents
     rows = {r["id"]: r for r in est["sources"]}
     assert rows["alpaca"]["covered_sessions"] == 1 and rows["alpaca"]["dollars"] == 0.0 and rows["alpaca"]["requests"] == 1 and rows["alpaca"]["ready"] is False
     assert rows["massive"]["covered_sessions"] == 0 and any("None of the signal sessions" in n for n in rows["massive"]["notes"]), "March 2024 is older than the free plan's two years"
-    assert rows["databento"]["dollars"] is None and "Not estimated" in rows["databento"]["dollars_note"] and rows["databento"]["records"] == 13 * 390 and rows["databento"]["dollars_floor"] >= 0
+    # V6: the provider documents $2 per GB for 1-minute bid/ask, so the figure is an estimate from that rate (labelled as one), and the exact price is still the provider's own quote
+    assert rows["databento"]["dollars"] == 0.0 and "Estimate:" in rows["databento"]["dollars_note"] and "exact price" in rows["databento"]["dollars_note"] and rows["databento"]["records"] == 13 * 390
+    assert rows["databento"]["within_credit"] is True and rows["databento"]["credit"] == 125.0 and rows["databento"]["gigabytes"] == round(13 * 390 * 80 / 1e9, 4)
     assert rows["alphavantage"]["dollars"] == 49.99 and any("cannot price this strategy's intraday entries" in n for n in rows["alphavantage"]["notes"])
     assert rows["github_eod"]["megabytes"] == 180 and any("never called without your approval" in n for n in est["notes"])
     many = MK.estimate({**need, "days": [(date(2026, 1, 5) + timedelta(days=i)).isoformat() for i in range(0, 200, 2)]}, today=date(2026, 11, 25))

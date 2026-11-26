@@ -734,11 +734,15 @@ def trade_coverage(store: MarketStore, req: dict, signals: list[dict], provider:
     step = S.STRIKE_STEP.get(sym, 1.0)
     bad: dict[str, list[date]] = {}
     ok = 0
+    part = {k for k, v in store.session_states(ds).items() if v.get("status") == "partial"}
     for s in signals:
         d = s["date"]
         day = by_day.get(d)
         if day is None:
             bad.setdefault("no option trade data stored for the session", []).append(d)
+            continue
+        if d.isoformat() in part:
+            bad.setdefault("the provider's option trade history for the session is incomplete (it starts late, stops early or is absent)", []).append(d)
             continue
         targets = leg_targets(opt["legs"], float(s["price"]), None, step)
         reason = None

@@ -18,11 +18,23 @@ require. Nothing here is a random split:
                rest by an embargo as long as the label horizon. Inside the rest, K
                contiguous folds with purging (training observations whose label window
                overlaps the fold are dropped) and the same embargo
-  selection    the model shown as "selected" is chosen on the purged cross-validation
-               alone; the test set is scored once for every model and never used to choose
+  selection    every candidate is scored on the purged cross-validation and ONLY there.
+               The best one by log loss is selected and its configuration is frozen
+               (model, hyper-parameters, features, calibration, outcome, the split)
+  final test   nothing touches the final test set until it is asked for, and then only the
+               frozen selected model is scored on it, once. That act is written to a
+               permanent, append-only record. Scoring a different configuration on the
+               same period later is counted: a test period that several configurations
+               have been scored on is no longer an untouched estimate, and the result says
+               so instead of calling it confirmed. (Before version 6 every candidate was
+               scored on the test set, which let the best-looking one be picked from it.)
+  preprocessing scaling is fitted inside each training fold; rows with a missing feature
+               are dropped, never imputed; the calibration map is fitted on later training
+               rows separated by the label embargo; the signal threshold is a quantile of
+               the model's own training predictions
   judged by    Brier score and log loss against the base-rate forecast, calibration by
                decile, AUC, fold-to-fold stability, a circular-shift placebo, permutation
-               importance on the test set, and the same scores by volatility and trend regime
+               importance on held-back validation rows, and the scores by regime
 
 What it deliberately does not say: a model that predicts the UNDERLYING's outcome better
 than the base rate is not a profitable option strategy. Its walk-forward signal can be
@@ -83,25 +95,42 @@ def _make(name: str, n: int):
     raise ValueError(f"unknown model {name!r}")
 
 
-def _fit_predict(name: str, Xtr, ytr, Xte, calibrate: bool):
+class _Fitted:
+    """A fitted model together with its calibration map, so every prediction (the scores, the importance, the signal
+    threshold) is on the same scale. Before version 6 the signal threshold was a quantile of the UNCALIBRATED training
+    predictions and was compared with calibrated ones."""
+
+    def __init__(self, model, iso=None):
+        self.model, self.iso = model, iso
+
+    def proba(self, X) -> np.ndarray:
+        p = self.model.predict_proba(X)[:, 1]
+        return np.clip(self.iso.predict(p), 0.0, 1.0) if self.iso is not None else p
+
+
+def _fit_predict(name: str, Xtr, ytr, Xte, calibrate: bool, embargo: int = 0):
     """Fit on the training rows (chronological) and predict the test rows. With calibration
     the last quarter of the training rows is held out to fit an isotonic map - later than
-    the rows the model was fitted on, earlier than anything it predicts."""
+    the rows the model was fitted on (and separated from them by the label embargo, so no
+    label window straddles the two), earlier than anything it predicts. Scaling lives inside
+    the model's pipeline, so its mean and spread come from these training rows alone."""
     from sklearn.isotonic import IsotonicRegression
     if len(np.unique(ytr)) < 2:
         return np.full(len(Xte), float(ytr.mean())), None
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         if not calibrate or len(ytr) < 400:
-            m = _make(name, len(ytr)).fit(Xtr, ytr)
-            return m.predict_proba(Xte)[:, 1], m
+            f = _Fitted(_make(name, len(ytr)).fit(Xtr, ytr))
+            return f.proba(Xte), f
         k = int(len(ytr) * 0.75)
-        if len(np.unique(ytr[:k])) < 2 or len(np.unique(ytr[k:])) < 2:
-            m = _make(name, len(ytr)).fit(Xtr, ytr)
-            return m.predict_proba(Xte)[:, 1], m
-        m = _make(name, k).fit(Xtr[:k], ytr[:k])
+        kf = max(1, k - max(0, int(embargo)))  # the model's own rows stop `embargo` sessions before the calibration rows begin
+        if len(np.unique(ytr[:kf])) < 2 or len(np.unique(ytr[k:])) < 2:
+            f = _Fitted(_make(name, len(ytr)).fit(Xtr, ytr))
+            return f.proba(Xte), f
+        m = _make(name, kf).fit(Xtr[:kf], ytr[:kf])
         iso = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0).fit(m.predict_proba(Xtr[k:])[:, 1], ytr[k:])
-        return iso.predict(m.predict_proba(Xte)[:, 1]), m
+        f = _Fitted(m, iso)
+        return f.proba(Xte), f
 
 
 def _scores(y: np.ndarray, p: np.ndarray, base: float) -> dict:
@@ -192,6 +221,7 @@ def run(spec: dict, store: MarketStore | None = None, scope: str | None = None, 
     feat_names = [c[0] for c in cols]
     res_models = []
     base_train = float(y[train].mean())
+    oofs: dict[str, np.ndarray] = {}
     for mi, name in enumerate(models):
         if should_cancel and should_cancel():
             from strata.engine.engine import BacktestCancelled
@@ -203,7 +233,7 @@ def run(spec: dict, store: MarketStore | None = None, scope: str | None = None, 
             tr, te = np.asarray(f["train"]), np.asarray(f["test"])
             if tr.size < 100 or te.size < 20 or len(np.unique(y[train][tr])) < 2:
                 continue
-            p, _ = _fit_predict(name, X[train][tr], y[train][tr], X[train][te], calibrate)
+            p, _ = _fit_predict(name, X[train][tr], y[train][tr], X[train][te], calibrate, embargo)
             oof[te] = p
             fold_rows.append({**_scores(y[train][te], p, float(y[train][tr].mean())), "start": str(dates[train][te[0]]), "end": str(dates[train][te[-1]]), "train_n": int(tr.size)})
         if not fold_rows:
@@ -214,15 +244,22 @@ def run(spec: dict, store: MarketStore | None = None, scope: str | None = None, 
         cv["folds"] = fold_rows
         cv["skill_folds_positive"] = sum(1 for r in fold_rows if (r["brier_skill"] or 0) > 0)
         cv["skill_sd"] = float(np.std([r["brier_skill"] or 0 for r in fold_rows], ddof=1)) if len(fold_rows) > 1 else None
-        p_test, fitted = _fit_predict(name, X[train], y[train], X[test], calibrate)
-        te_scores = _scores(y[test], p_test, base_train)
-        cal = _calibration(y[test], p_test)
-        res_models.append({"name": name, "label": MODELS[name]["label"], "family": MODELS[name]["family"], "status": "ok", "cv": cv, "test": te_scores, "calibration": cal, "calibration_error": _calibration_error(cal),
-                           "_p_test": p_test, "_fitted": fitted})
+        cal_v = _calibration(y[train][okm], oof[okm])
+        oofs[name] = oof
+        # no test score here: a candidate that was not selected never sees the final test set
+        res_models.append({"name": name, "label": MODELS[name]["label"], "family": MODELS[name]["family"], "status": "ok", "cv": cv, "test": None, "calibration": [], "calibration_error": None,
+                           "validation_calibration": cal_v, "validation_calibration_error": _calibration_error(cal_v)})
     good = [m for m in res_models if m["status"] == "ok"]
     if not good:
         raise ValueError("no model could be fitted: " + "; ".join(m.get("error", "") for m in res_models))
     best = min(good, key=lambda m: m["cv"]["log_loss"])  # chosen on the purged cross-validation alone
+    # ----- the configuration is frozen here: everything that decides what is scored on the test set
+    import hashlib
+    import json
+    config = {"symbol": sym, "outcome": oc.dump(), "model": best["name"], "features": sorted(feat_names), "calibrate": calibrate, "folds": len(folds), "embargo": embargo, "candidates": sorted(models)}
+    config_key = hashlib.sha256(json.dumps(config, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    frozen = {**config, "config_key": config_key, "train": [str(dates[train[0]]), str(dates[train[-1]])], "test": [str(dates[test[0]]), str(dates[test[-1]])], "selected_by": "lowest log loss in purged cross-validation",
+              "hyperparameters": repr(_make(best["name"], int(train.size)))[:400]}
     # ----- placebo: the same model with the labels circularly shifted in time (keeps both series' own structure, breaks the link)
     if progress:
         progress(0.7, "placebo: labels shifted in time")
@@ -230,7 +267,7 @@ def run(spec: dict, store: MarketStore | None = None, scope: str | None = None, 
     shifts = rng.integers(max(embargo + 20, train.size // 10), train.size - max(embargo + 20, train.size // 10), 12)
     placebo = []
     cut = int(train.size * 0.7)
-    real_p, _ = _fit_predict(best["name"], X[train][:cut - embargo], y[train][:cut - embargo], X[train][cut:], False)
+    real_p, val_fit = _fit_predict(best["name"], X[train][:cut - embargo], y[train][:cut - embargo], X[train][cut:], False)
     real_skill = _scores(y[train][cut:], real_p, float(y[train][:cut - embargo].mean()))["brier_skill"]
     for s in shifts:
         ys = np.roll(y[train], int(s))
@@ -238,67 +275,163 @@ def run(spec: dict, store: MarketStore | None = None, scope: str | None = None, 
         placebo.append(_scores(ys[cut:], p, float(ys[:cut - embargo].mean()))["brier_skill"] or 0.0)
     placebo_test = {"real_skill": real_skill, "placebo_skills": [float(x) for x in placebo], "placebo_max": float(max(placebo)), "beats": int(sum(1 for x in placebo if (real_skill or 0) > x)), "of": len(placebo),
                     "passed": bool((real_skill or 0) > max(placebo)), "how": "The selected model refitted on the first 70% of the training rows and scored on the rest, against the same procedure with the labels circularly shifted in time."}
-    # ----- importance on the test set (permutation: how much the Brier score worsens when one feature is shuffled)
+    # ----- importance on held-back VALIDATION rows (the last 30% of the training period, model fitted on the first 70%): the test set is not used for it
     if progress:
-        progress(0.8, "permutation importance on the test set")
+        progress(0.8, "permutation importance on validation rows")
     imp = []
-    fitted = best["_fitted"]
-    if fitted is not None:
-        b0 = float(np.mean((np.clip(fitted.predict_proba(X[test])[:, 1], 0, 1) - y[test]) ** 2))
+    Xv, yv = X[train][cut:], y[train][cut:]
+    if val_fit is not None:
+        b0 = float(np.mean((np.clip(val_fit.proba(Xv), 0, 1) - yv) ** 2))
         prng = np.random.default_rng(11)
         for j, fname in enumerate(feat_names):
             worse = []
             for _ in range(8):
-                Xp = X[test].copy()
+                Xp = Xv.copy()
                 Xp[:, j] = prng.permutation(Xp[:, j])
-                worse.append(float(np.mean((np.clip(fitted.predict_proba(Xp)[:, 1], 0, 1) - y[test]) ** 2)) - b0)
+                worse.append(float(np.mean((np.clip(val_fit.proba(Xp), 0, 1) - yv) ** 2)) - b0)
             fd = cols[j][1]
             imp.append({"feature": fname, "label": fd.label, "importance": float(np.mean(worse)), "sd": float(np.std(worse, ddof=1)), "matters": bool(np.mean(worse) - 2 * np.std(worse, ddof=1) > 0)})
         imp.sort(key=lambda r: -r["importance"])
     coefs = None
-    if best["family"] == "linear" and fitted is not None and hasattr(fitted, "steps"):
-        lr = fitted.steps[-1][1]
+    if best["family"] == "linear" and val_fit is not None and hasattr(val_fit.model, "steps"):
+        lr = val_fit.model.steps[-1][1]
         coefs = sorted(({"feature": f, "label": cols[j][1].label, "coef_per_sd": float(lr.coef_[0][j])} for j, f in enumerate(feat_names)), key=lambda r: -abs(r["coef_per_sd"]))
     # ----- leakage checks
     leak = _leakage(store, ft, sym, cross, cols, tick, idx, X, y, train)
-    # ----- regimes on the test set
-    regimes = _regimes(ft, idx[test], y[test], best["_p_test"], base_train, tick)
+    # ----- the final test set: only when asked for, only the frozen selected model, and the act is recorded for good
+    outcome_key = f"{tick}|{oc.horizon}|{oc.direction}|{oc.target}|{oc.stop}|{oc.measure}"
+    final = bool(spec.get("final_test", False))
+    prior = exposures(sym, outcome_key, frozen["test"][0], frozen["test"][1])
+    others = sorted({e["config_key"] for e in prior} - {config_key})
+    exposure = {"scored": False, "test": frozen["test"], "previous_scorings": len(prior), "other_configurations": len(others), "this_configuration_scored_before": any(e["config_key"] == config_key for e in prior),
+                "history": [{k: e[k] for k in ("recorded_at", "model", "config_key", "test_start", "test_end", "brier_skill", "n_features")} for e in prior][-12:]}
+    regimes = _regimes(ft, idx[train][np.isfinite(oofs[best["name"]])], y[train][np.isfinite(oofs[best["name"]])], oofs[best["name"]][np.isfinite(oofs[best["name"]])], base_train, tick, "validation rows")
+    expect = spec.get("expect_frozen") or None
+    if final and expect:
+        # the test set is scored for the configuration that was frozen at validation, and for nothing else: if the model, the
+        # features or the rows of the split are no longer the ones that were validated, the step is refused BEFORE any score exists
+        changed = [k for k in ("config_key", "train", "test") if list(expect.get(k) or []) != list(frozen.get(k) or []) and expect.get(k) != frozen.get(k)]
+        if changed:
+            raise ValueError("the final test was not run: what was frozen at validation no longer matches (" + ", ".join(
+                {"config_key": "the selected model or its features", "train": "the training period", "test": "the test period"}[k] for k in changed)
+                + "). The stored data or the configuration changed since then. Validate again, then score the final test once.")
+    if final:
+        if progress:
+            progress(0.84, "scoring the frozen model on the final test set (recorded)")
+        p_test, _fitted = _fit_predict(best["name"], X[train], y[train], X[test], calibrate, embargo)
+        best["test"] = _scores(y[test], p_test, base_train)
+        best["calibration"] = _calibration(y[test], p_test)
+        best["calibration_error"] = _calibration_error(best["calibration"])
+        regimes = _regimes(ft, idx[test], y[test], p_test, base_train, tick, "final test set")
+        if not exposure["this_configuration_scored_before"]:
+            _record_exposure(sym, outcome_key, config_key, best["name"], feat_names, frozen["test"], int(test.size), best["test"]["brier_skill"], best["test"]["auc"], run_id, scope)
+        exposure.update(scored=True, configurations_scored_on_this_period=len(others) + 1)
     # ----- walk-forward signal (every prediction from a model fitted on earlier sessions only)
     sig = None
     if spec.get("signal") is not False:
         if progress:
             progress(0.88, "walk-forward predictions")
-        sig = _walk_forward(best["name"], X, y, starts, ends, dates, embargo, float((spec.get("signal") or {}).get("quantile", 0.8)), calibrate)
-    for m in res_models:
-        m.pop("_p_test", None)
-        m.pop("_fitted", None)
+        sig = _walk_forward(best["name"], X, y, starts, ends, dates, embargo, float((spec.get("signal") or {}).get("quantile", 0.8)), calibrate, upto=None if final else int(train.size))
     notes = [f"{n:,} sessions have the outcome and every feature. The last {test.size:,} ({dates[test[0]]} to {dates[test[-1]]}) are the final test set; an embargo of {embargo} session{'s' if embargo != 1 else ''} separates them from the training rows, "
              f"and the {len(folds)} cross-validation folds are purged the same way.",
-             "The selected model was chosen on the purged cross-validation only. Every model's test score is shown, and none of them was used to choose.",
+             "Every candidate was scored on the purged cross-validation only. The selected model is the one with the lowest log loss there; no other candidate is ever scored on the final test set.",
              "Skill is measured against the base-rate forecast (always predicting the training frequency). A skill of zero means the model knows nothing the base rate does not.",
              "A model that predicts the underlying's outcome is not a profitable option strategy. Save its walk-forward signal and price it on observed option prices to learn anything about profit."]
+    if not final:
+        notes.insert(2, f"The final test set has NOT been scored. Nothing here has looked at {dates[test[0]]} to {dates[test[-1]]}. Scoring it is recorded permanently and should be done once, when the model and its features are no longer being changed.")
     if out.reasons:
         notes.append("Sessions without the outcome: " + "; ".join(f"{c:,} - {w}" for w, c in list(out.reasons.items())[:3]) + ".")
     amb = int((out.valid & pm & (out.code == A)).sum())
     if amb:
         notes.append(f"{amb:,} sessions were excluded because the target and the stop fell inside the same bar (the order cannot be known).")
     bt_, bc = best["test"], best["cv"]
-    verdict = ("no_skill" if (bc["brier_skill"] or 0) <= 0 or (bt_["brier_skill"] or 0) <= 0 else "weak" if not placebo_test["passed"] or bc["skill_folds_positive"] < max(2, len(bc["folds"]) - 1) else "some_skill")
-    sentence = {"no_skill": f"{best['label']} does not beat the base-rate forecast out of sample (Brier skill {_s(bc['brier_skill'])} in cross-validation, {_s(bt_['brier_skill'])} on the final test set): these features do not predict this outcome.",
-                "weak": f"{best['label']} beats the base rate slightly (Brier skill {_s(bc['brier_skill'])} in cross-validation, {_s(bt_['brier_skill'])} on the final test set), but not consistently across folds or not beyond the time-shifted placebo. Treat it as unproven.",
-                "some_skill": f"{best['label']} beats the base-rate forecast in cross-validation (Brier skill {_s(bc['brier_skill'])}, positive in {bc['skill_folds_positive']} of {len(bc['folds'])} folds), beyond every time-shifted placebo, and on the final test set ({_s(bt_['brier_skill'])}, AUC {bt_['auc']:.3f}). That is evidence about the underlying only."}[verdict]
+    cv_ok = (bc["brier_skill"] or 0) > 0
+    steady = placebo_test["passed"] and bc["skill_folds_positive"] >= max(2, len(bc["folds"]) - 1)
+    leaked = [c for c in leak["checks"] if c["passed"] is False]
+    if leaked:
+        verdict, confirmation = "leak_suspected", "not_applicable"
+        sentence = (f"A leakage check failed: {leaked[0]['check'].lower()} ({leaked[0]['detail'][:160]}). A feature that knows the outcome makes every score below meaningless; they are not evidence of predictive skill. "
+                    "Remove the feature or correct its timing and run again.")
+    elif not cv_ok:
+        verdict, confirmation = "no_skill", ("not_tested" if not final else "not_confirmed")
+        sentence = f"{best['label']} does not beat the base-rate forecast in purged cross-validation (Brier skill {_s(bc['brier_skill'])}): these features do not predict this outcome." + ("" if not final else f" On the final test set its skill is {_s(bt_['brier_skill'])}.")
+    elif not final:
+        verdict, confirmation = ("some_skill" if steady else "weak"), "not_tested"
+        sentence = (f"{best['label']} beats the base-rate forecast in purged cross-validation (Brier skill {_s(bc['brier_skill'])}, positive in {bc['skill_folds_positive']} of {len(bc['folds'])} folds)"
+                    + (", beyond every time-shifted placebo. " if steady else ", but not consistently across folds or not beyond the time-shifted placebo. ")
+                    + "This is validation evidence only: the final test set has not been scored, so nothing is confirmed.")
+    elif (bt_["brier_skill"] or 0) <= 0:
+        verdict, confirmation = "no_skill", "not_confirmed"
+        sentence = f"{best['label']} looked better than the base rate in cross-validation (Brier skill {_s(bc['brier_skill'])}) but not on the final test set ({_s(bt_['brier_skill'])}). The validation result did not hold up."
+    else:
+        verdict = "some_skill" if steady else "weak"
+        confirmation = "confirmed_once" if not others else "tested_repeatedly"
+        sentence = (f"{best['label']} beats the base-rate forecast in cross-validation (Brier skill {_s(bc['brier_skill'])}, positive in {bc['skill_folds_positive']} of {len(bc['folds'])} folds) and on the final test set ({_s(bt_['brier_skill'])}, AUC {bt_['auc']:.3f}). "
+                    + ("That is evidence of some predictive skill for the underlying's outcome, not of a profitable option strategy." if steady else "It is not consistent across folds or not beyond the time-shifted placebo: treat it as unproven."))
+        if others:
+            sentence += (f" This test period has now been scored with {len(others) + 1} different configurations. A score chosen after several looks is no longer an untouched estimate: "
+                         "it cannot be called independently confirmed.")
+    for m in res_models:
+        m.pop("_p_test", None)
+        m.pop("_fitted", None)
     if scope:
         sig_ = {"symbol": sym, "features": sorted(feat_names), "outcome": f"{oc.entry}|{oc.horizon}|{oc.direction}|{oc.measure}"}
         LG.record(scope, sym + ("" if tick in ("open", "close") else "@intraday"), [{"kind": "ml", "key": LG.config_key({"model": m["name"], "features": sorted(feat_names), "outcome": oc.dump(), "symbol": sym}), "label": f"{m['label']}: {oc.text()}",
-                                                                                   "run_id": run_id, "start": str(dates[0]), "end": str(dates[-1]), "metric": "brier_skill", "value": m["test"]["brier_skill"], "n": n, "signature": sig_}
+                                                                                   "run_id": run_id, "start": str(dates[0]), "end": str(dates[train[-1]]), "metric": "cv_brier_skill", "value": m["cv"]["brier_skill"], "n": int(train.size), "signature": sig_}
                                                                                   for m in res_models if m["status"] == "ok"], family="ml research")
     if progress:
         progress(1.0, "done")
     return {"kind": "ml", "symbol": sym, "outcome": oc.dump(), "outcome_text": oc.text(), "decision_tick": tick, "n": int(n), "base_rate": float(y.mean()), "features": [{"name": c[0], "label": c[1].label, "group": c[1].group} for c in cols],
             "dropped_features": dropped, "split": {"train": [str(dates[train[0]]), str(dates[train[-1]])], "test": [str(dates[test[0]]), str(dates[test[-1]])], "train_n": int(train.size), "test_n": int(test.size),
                                                   "embargo_sessions": embargo, "folds": len(folds), "method": "purged K-fold with embargo; final test set at the end of the history"},
-            "models": res_models, "selected": best["name"], "selected_by": "lowest log loss in purged cross-validation", "placebo": placebo_test, "importance": imp, "coefficients": coefs, "leakage": leak, "regimes": regimes,
-            "signal": sig, "verdict": verdict, "summary": [sentence], "notes": notes, "calibrated": calibrate, "synthetic": store.is_synthetic(sym)}
+            "models": res_models, "selected": best["name"], "selected_by": "lowest log loss in purged cross-validation", "frozen": frozen, "final_test": final, "test_exposure": exposure, "confirmation": confirmation,
+            "placebo": placebo_test, "importance": imp, "importance_on": "validation rows (the last 30% of the training period)", "coefficients": coefs, "leakage": leak, "regimes": regimes,
+            "preprocessing": PREPROCESSING, "signal": sig, "verdict": verdict, "summary": [sentence], "notes": notes, "calibrated": calibrate, "synthetic": store.is_synthetic(sym),
+            "spec": {k: v for k, v in spec.items() if k not in ("expect_frozen", "final_test")}, "validation_run": spec.get("validation_run")}
+
+
+PREPROCESSING = [{"step": "Scaling", "fitted_on": "the training rows of each fit (inside the model's pipeline)", "leak": False},
+                 {"step": "Missing values", "fitted_on": "nothing is imputed: a session missing any feature is dropped before the split", "leak": False},
+                 {"step": "Feature availability", "fitted_on": "a feature stored for fewer than 30% of all sessions is dropped; this looks at whether values exist, never at what they are", "leak": False},
+                 {"step": "Calibration", "fitted_on": "the last quarter of the training rows, separated from the rows the model was fitted on by the label embargo", "leak": False},
+                 {"step": "Signal threshold", "fitted_on": "a quantile of the calibrated predictions on the rows each walk-forward model was fitted on", "leak": False},
+                 {"step": "Model selection", "fitted_on": "purged cross-validation inside the training period", "leak": False},
+                 {"step": "Base rate", "fitted_on": "the training rows", "leak": False}]
+
+
+# ----------------------------------------------------------------------------- the permanent record of test-set scorings
+def exposures(sym: str, outcome_key: str, test_start: str, test_end: str) -> list[dict]:
+    """Earlier scorings of a final test set for this symbol and outcome whose period overlaps this one by at least half."""
+    import json
+    from datetime import date as _d
+
+    from strata.api import db
+    try:
+        with db.connect() as con:
+            rows = [dict(r) for r in con.execute("SELECT * FROM ml_test_exposures WHERE symbol=? AND outcome_key=? ORDER BY id", (sym, outcome_key))]
+    except Exception:  # noqa: BLE001  (no database: a library call outside the application)
+        return []
+    a, b = _d.fromisoformat(test_start), _d.fromisoformat(test_end)
+    out = []
+    for r in rows:
+        x, y_ = _d.fromisoformat(r["test_start"]), _d.fromisoformat(r["test_end"])
+        inter = (min(b, y_) - max(a, x)).days + 1
+        if inter > 0 and inter >= 0.5 * min((b - a).days + 1, (y_ - x).days + 1):
+            r["n_features"] = len(json.loads(r["features"] or "[]"))
+            out.append(r)
+    return out
+
+
+def _record_exposure(sym, outcome_key, config_key, model, features, test, n_test, skill, auc, run_id, scope) -> None:
+    import json
+
+    from strata.api import db
+    try:
+        with db.connect() as con:
+            con.execute("INSERT INTO ml_test_exposures (symbol, outcome_key, config_key, model, features, test_start, test_end, n_test, brier_skill, auc, run_id, scope, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (sym, outcome_key, config_key, model, json.dumps(sorted(features)), test[0], test[1], n_test, skill, auc, run_id, scope, db.now()))
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(f"the test-set scoring could not be recorded ({type(e).__name__}: {e}); it is not reported without its record") from None
 
 
 def _s(x) -> str:
@@ -343,7 +476,7 @@ def _leakage(store, ft, sym, cross, cols, tick, idx, X, y, train) -> dict:
     return {"checks": checks, "passed": all(c["passed"] is True for c in checks), "not_run": sum(1 for c in checks if c["passed"] is None)}
 
 
-def _regimes(ft, rows: np.ndarray, y: np.ndarray, p: np.ndarray, base: float, tick: str) -> list[dict]:
+def _regimes(ft, rows: np.ndarray, y: np.ndarray, p: np.ndarray, base: float, tick: str, on: str = "final test set") -> list[dict]:
     t = "close" if tick == "close" else "open"
     out = []
     for title, x, bins in (("Volatility (1-year percentile of realised volatility)", ft.col("rv_pctile", t)[rows], [(0, 33.34, "calm third"), (33.34, 66.67, "middle third"), (66.67, 101, "turbulent third")]),
@@ -365,16 +498,19 @@ def _regimes(ft, rows: np.ndarray, y: np.ndarray, p: np.ndarray, base: float, ti
             s = _scores(y[m], p[m], base)
             rs.append({"regime": yv, "n": int(m.sum()), "base_rate": s["base_rate"], "brier_skill": s["brier_skill"], "auc": s["auc"]})
     if rs:
-        out.append({"title": "Calendar year (final test set)", "rows": rs})
+        out.append({"title": f"Calendar year ({on})", "rows": rs})
+    for o in out:
+        o["on"] = on
     return out
 
 
-def _walk_forward(name: str, X, y, starts, ends, dates, embargo: int, quantile: float, calibrate: bool, min_train: int = 300, step: int = 63) -> dict:
+def _walk_forward(name: str, X, y, starts, ends, dates, embargo: int, quantile: float, calibrate: bool, min_train: int = 300, step: int = 63, upto: int | None = None) -> dict:
     """Out-of-sample probability for every session after the first `min_train`: the model is
     refitted every `step` sessions on the sessions whose labels were already known. The
-    signal threshold for each block is a quantile of the model's own predictions on its
-    training rows, so it too is fixed before the block it applies to."""
-    n = len(y)
+    signal threshold for each block is a quantile of the model's own (calibrated) predictions
+    on its training rows, so it too is fixed before the block it applies to. With `upto` the
+    walk stops there: while the final test set has not been scored, no prediction is made for it."""
+    n = len(y) if upto is None else min(len(y), int(upto))
     p = np.full(n, np.nan)
     thr = np.full(n, np.nan)
     t = min_train
@@ -382,14 +518,15 @@ def _walk_forward(name: str, X, y, starts, ends, dates, embargo: int, quantile: 
         hi = min(n, t + step)
         tr = np.flatnonzero(ends[:t] + embargo < starts[t])
         if tr.size >= min_train // 2 and len(np.unique(y[tr])) == 2:
-            pp, fitted = _fit_predict(name, X[tr], y[tr], X[t:hi], calibrate)
+            pp, fitted = _fit_predict(name, X[tr], y[tr], X[t:hi], calibrate, embargo)
             p[t:hi] = pp
-            ptr, _ = _fit_predict(name, X[tr], y[tr], X[tr], calibrate) if fitted is None else (fitted.predict_proba(X[tr])[:, 1], None)
+            ptr = np.full(tr.size, float(y[tr].mean())) if fitted is None else fitted.proba(X[tr])
             thr[t:hi] = float(np.quantile(ptr, quantile))
         t = hi
     ok = np.isfinite(p)
     on = ok & (p >= thr)
-    out = {"model": name, "quantile": quantile, "predicted": int(ok.sum()), "first": str(dates[ok][0]) if ok.any() else None, "last": str(dates[ok][-1]) if ok.any() else None, "signals": int(on.sum()),
+    dates, y = dates[:n], y[:n]
+    out = {"model": name, "quantile": quantile, "covers_final_test": upto is None, "predicted": int(ok.sum()), "first": str(dates[ok][0]) if ok.any() else None, "last": str(dates[ok][-1]) if ok.any() else None, "signals": int(on.sum()),
            "dates": [str(d) for d in dates[on]], "refit_every": step, "min_train": min_train,
            "hit_rate_on_signal": float(y[on].mean()) if on.any() else None, "hit_rate_otherwise": float(y[ok & ~on].mean()) if (ok & ~on).any() else None, "base_rate": float(y[ok].mean()) if ok.any() else None}
     if on.sum() >= 10 and (ok & ~on).sum() >= 10:
@@ -405,7 +542,8 @@ def save_result(rid: str, res: dict) -> dict:
     d.mkdir(parents=True, exist_ok=True)
     (d / "ml.json").write_text(dumps(res))
     b = next(m for m in res["models"] if m["name"] == res["selected"])
-    return {"ml": True, "symbols": [res["symbol"]], "models": len(res["models"]), "selected": res["selected"], "verdict": res["verdict"], "cv_brier_skill": b["cv"]["brier_skill"], "test_brier_skill": b["test"]["brier_skill"],
+    return {"ml": True, "symbols": [res["symbol"]], "models": len(res["models"]), "selected": res["selected"], "verdict": res["verdict"], "cv_brier_skill": b["cv"]["brier_skill"], "test_brier_skill": (b.get("test") or {}).get("brier_skill"),
+            "final_test": bool(res.get("final_test")), "confirmation": res.get("confirmation"),
             "start": res["split"]["train"][0], "end": res["split"]["test"][1], "headline": res["summary"][0][:300]}
 
 

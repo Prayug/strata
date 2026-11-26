@@ -4,16 +4,62 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ErrorBox, Loading, PageHeader, Panel } from "@/components/common";
 import { Button, Field, Input, Select } from "@/components/ui";
-import { api, queryClient } from "@/lib/api";
-import { cn } from "@/lib/format";
+import { api, queryClient, useJob } from "@/lib/api";
+import { ago, cn } from "@/lib/format";
 
 const LLM_KEYS: Record<string, string> = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", gemini: "GEMINI_API_KEY", openrouter: "OPENROUTER_API_KEY" };
 const DATA_KEYS = ["POLYGON_API_KEY", "DATABENTO_API_KEY", "ORATS_API_KEY"];
 const ALPACA_KEYS = ["ALPACA_API_KEY", "ALPACA_API_SECRET"];
 const ZONES = [{ value: "America/Los_Angeles", label: "Pacific" }, { value: "America/Denver", label: "Mountain" }, { value: "America/Chicago", label: "Central" }, { value: "America/New_York", label: "Eastern" }];
 
+/** How well requests are understood, measured on written sentences with known readings. The built-in reader can always be
+    measured; the model-backed path only when a model is configured, and it is reported as not run until then. */
+function EvalPanel() {
+  const q = useQuery({ queryKey: ["nl-eval"], queryFn: () => api.get<any>("/api/ai/evaluation") });
+  const meta = useQuery({ queryKey: ["ai-meta"], queryFn: () => api.get<any>("/api/ai/meta"), staleTime: 30_000 });
+  const [jobId, setJobId] = useState<string | null>(null);
+  const job = useJob(jobId, (st) => { setJobId(null); queryClient.invalidateQueries({ queryKey: ["nl-eval"] }); if (st.status === "error") toast.error(st.error || "The evaluation did not finish"); });
+  const run = useMutation({ mutationFn: (llm: boolean) => api.post<{ run_id: string }>(`/api/ai/evaluation?llm=${llm}`), onSuccess: (r) => setJobId(r.run_id), onError: (e: any) => toast.error(e.message) });
+  const r = q.data || {};
+  const model = meta.data?.llm?.active;
+  const rows: [string, any, string][] = r.development ? [
+    ["Development sentences", r.development, "The reader was corrected against these, so this says what was fixed."],
+    ["Held-out sentences, first run", r.held_out_first_run, "Written afterwards and read once before anything was changed: the honest estimate for a sentence it has not seen."],
+    ["Held-out sentences, now", r.held_out, "After fixing what the first run exposed. These sentences are no longer unseen."],
+  ] : [];
+  const busy = !!jobId || run.isPending;
+  return (
+    <Panel title="How well requests are understood" className="col-span-2">
+      <div className="p-3 text-xs" data-testid="eval-panel">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-fg-2">150 written requests with known readings. A reading counts as wrong whether or not the reader said it was unsure; "silently wrong" is the kind that matters.</span>
+          <span className="flex-1" />
+          {r.run_at && <span className="text-muted">measured {ago(r.run_at)} · {r.interpreter}</span>}
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => run.mutate(false)} data-testid="eval-run">{busy ? <Loader2 className="animate-spin" /> : <Check />} Measure the built-in reader</Button>
+          <Button size="sm" variant="outline" disabled={busy || !model} onClick={() => run.mutate(true)} title={model ? `Reads the same sentences with ${model}` : "No language model is configured"}>Measure with the configured model</Button>
+        </div>
+        {job && <div className="mt-2 text-muted">{job.message || "reading the sentences"}…</div>}
+        {rows.length > 0 ? (
+          <table className="tbl mt-2.5" data-testid="eval-table">
+            <thead><tr><th>Set</th><th className="r">Sentences</th><th className="r">Read correctly</th><th className="r">Wrong, and said it was unsure</th><th className="r">Silently wrong</th><th>What it means</th></tr></thead>
+            <tbody>{rows.map(([label, x, help]) => (
+              <tr key={label}><td>{label}</td><td className="r num">{x.cases}</td><td className="r num">{x.correct} <span className="text-muted">({x.accuracy_pct}%)</span></td><td className="r num">{x.flagged}</td>
+                <td className={cn("r num", x.silent > 0 ? "text-warn" : "text-up")}>{x.silent}{x.silent_pct !== undefined ? <span className="text-muted"> ({x.silent_pct}%)</span> : null}</td><td className="min-w-[280px] whitespace-normal text-muted">{help}</td></tr>
+            ))}</tbody>
+          </table>
+        ) : <div className="mt-2 text-muted">{r.note || "Not measured on this installation yet."}</div>}
+        <div className={cn("mt-2 rounded-sm border px-2.5 py-2", model ? "border-line" : "border-warn/40 bg-warn/5")} data-testid="eval-llm">
+          {model ? <>A language model is configured ({model}). Its reading of the same sentences is measured separately and never mixed into the figures above.</>
+            : <><span className="font-medium text-warn">Model-backed reading: NOT RUN.</span> No language model is configured, so nothing can be said about it. To measure it, add a key under <span className="text-fg">Model API keys</span> below (or start a local Ollama and choose it under AI interpreter), then press <span className="text-fg">Measure with the configured model</span>. It is never reported as passing without being run.</>}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
 export default function Settings() {
   const q = useQuery({ queryKey: ["settings"], queryFn: () => api.get<any>("/api/settings") });
+  const acc = useQuery({ queryKey: ["alpaca-access"], queryFn: () => api.get<any>("/api/data/access/alpaca"), staleTime: 30_000 });
   const ollama = useQuery({ queryKey: ["ollama"], queryFn: () => api.get<{ models: string[] }>("/api/settings/ollama"), staleTime: 60_000 });
   const [draft, setDraft] = useState<Record<string, any>>({});
   const [keys, setKeys] = useState<Record<string, string>>({});
@@ -57,11 +103,12 @@ export default function Settings() {
   const keyRow = (name: string) => {
     const s = d.secrets[name];
     return (
-      <div key={name} className="flex items-center gap-2">
+      <div key={name} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
         <span className="w-36 shrink-0 text-xs text-fg-2">{s.label}</span>
         <Input sz="sm" type="password" autoComplete="off" className="num flex-1" placeholder={s.set ? `${s.hint || "set"}  (${s.source})` : "not set"} value={keys[name] || ""} onChange={(e) => setKeys((k) => ({ ...k, [name]: e.target.value }))} />
         {s.set && s.source !== "environment variable" && <Button size="iconSm" variant="ghost" title="Remove stored key" onClick={() => clearKey(name)}><X /></Button>}
         <span className={cn("w-4", s.set ? "text-up" : "text-faint")}>{s.set ? <Check className="size-3.5" /> : null}</span>
+        {!s.set && s.elsewhere && <div className="basis-full pl-[152px] text-2xs leading-snug text-warn" data-testid={`elsewhere-${name}`}>{s.elsewhere.note}</div>}
       </div>
     );
   };
@@ -121,10 +168,15 @@ export default function Settings() {
               </div>
             </div>
           </Panel>
+          <EvalPanel />
           <Panel title={<span className="flex items-center gap-1.5"><PlugZap className="size-3" /> Connect a free Alpaca account</span>} className="col-span-2">
             <div id="alpaca" className="grid grid-cols-[1.1fr_1fr] gap-5 p-3">
               <div className="text-xs leading-relaxed text-fg-2">
-                <p className="text-muted">Alpaca's free account is what makes intraday option backtests possible without paying for data: 1-minute stock bars since 2016 and 1-minute option trade bars since February 2024. Strata only reads market data with it; it never places an order.</p>
+                {acc.data?.verified ? (
+                  <p className="text-muted" data-testid="alpaca-measured">Measured with the key stored here ({String(acc.data.run_at || "").slice(0, 10)}): {(acc.data.summary || []).filter((x: string) => /matrix|history starts|Stock minute/.test(x)).join(" ")} No bid/ask history exists on any Alpaca plan: its option data is trade prints. The full report is under <a className="text-info hover:underline" href="/data?tab=readiness">Data, Readiness</a>. Strata only reads market data with the key; it has no code that can place an order.</p>
+                ) : (
+                  <p className="text-muted">Alpaca documents, for its free account, 1-minute stock bars since 2016 and 1-minute option trade bars since early 2024 (no bid/ask history on any plan). That is the provider's description: what this account actually returns is established only by the access test under <a className="text-info hover:underline" href="/data?tab=readiness">Data, Readiness</a>, which stays BLOCKED until a key is stored here. Strata only reads market data with it; it has no code that can place an order.</p>
+                )}
                 <ol className="mt-2.5 flex list-inside list-decimal flex-col gap-1.5">
                   <li>Create a free account at <a className="text-info hover:underline" href="https://alpaca.markets" target="_blank" rel="noreferrer">alpaca.markets <ExternalLink className="inline size-3" /></a>. A paper-trading account is enough; no deposit is needed.</li>
                   <li>In the Alpaca dashboard, open <span className="text-fg">API Keys</span> and generate a key. You get a key ID and a secret.</li>
@@ -155,7 +207,7 @@ export default function Settings() {
           <Panel title={<span className="flex items-center gap-1.5"><KeyRound className="size-3" /> Data provider keys</span>}>
             <div className="flex flex-col gap-1.5 p-3">
               {DATA_KEYS.map(keyRow)}
-              <p className="mt-1 text-2xs leading-relaxed text-muted">Yahoo, Cboe, DoltHub and the open option archive need no key. Alpaca's free account adds 1-minute bars since 2016. Paid providers are only ever called when you start a download yourself.</p>
+              <p className="mt-1 text-2xs leading-relaxed text-muted">Yahoo, Cboe, DoltHub and the open option archive need no key. Alpaca's free account adds 1-minute stock bars since 2016 and option trade bars since January 2024. Paid providers are only ever called when you start a download yourself.</p>
             </div>
           </Panel>
           <Panel title="Preferences">

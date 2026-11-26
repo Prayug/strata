@@ -256,6 +256,31 @@ def ml_result(rid: str):
     return J(_file(rid, "ml.json"))
 
 
+@router.post("/api/runs/{rid}/ml/final-test")
+def ml_final_test(rid: str):
+    """Step two of an ML study: score the configuration that run `rid` froze on its final test set, once, and record that it was looked at.
+
+    The new run is pinned to what was frozen (the selected model, its features and the exact rows of the split): if any of them
+    no longer matches, it stops before a test score exists. The test set of a study whose leakage check failed is not scored."""
+    from strata.research import ml as ML
+    ok, info = ML.available()
+    if not ok:
+        raise HTTPException(409, info)
+    res = _file(rid, "ml.json")
+    spec, frozen = res.get("spec"), res.get("frozen")
+    if not isinstance(spec, dict) or not isinstance(frozen, dict):
+        raise HTTPException(409, "this study was run before the two-step procedure existed: run it again, then score its final test")
+    if res.get("final_test"):
+        raise HTTPException(409, "this run already holds the final test score")
+    if res.get("verdict") == "leak_suspected":
+        raise HTTPException(409, "a leakage check failed: a score on the final test set would mean nothing, and looking at it would spend it")
+    sym = str(spec["symbol"]).upper()
+    new = db.create_run("ml", f"ML final test: {sym} - {res.get('outcome_text', '')}"[:90], {"symbol": sym, "outcome": spec.get("outcome"), "models": spec.get("models"), "session": None, "validation_run": rid})
+    pinned = {**spec, "end": frozen["test"][1], "final_test": True, "validation_run": rid, "expect_frozen": {k: frozen[k] for k in ("config_key", "train", "test")}}
+    _jobs().submit(new, "ml", {"spec": pinned, "scope": f"ml:{sym}"})
+    return {"run_id": new}
+
+
 class SignalReq(BaseModel):
     name: Optional[str] = None
 
@@ -317,14 +342,24 @@ def forward_get(eid: str):
         raise HTTPException(404, "experiment not found")
     with db.connect() as con:
         hist = [{"id": r["id"], "evaluated_at": r["evaluated_at"], "through_date": r["through_date"]} for r in con.execute("SELECT id, evaluated_at, through_date FROM forward_evaluations WHERE experiment_id=? ORDER BY id DESC LIMIT 200", (eid,))]
-        kids = [dict(r) for r in con.execute("SELECT id, version, activation_date, status FROM forward_experiments WHERE parent_id=? ORDER BY version", (eid,))]
-    return J({**ex, "history": hist, "newer_versions": kids})
+        kids = [dict(r) for r in con.execute("SELECT id, version, activation_date, first_session, status FROM forward_experiments WHERE parent_id=? ORDER BY version", (eid,))]
+    return J({**ex, "history": hist, "newer_versions": kids, "ledger": FW.verify(eid), "pending_sessions": FW.pending(ex, MarketStore())})
+
+
+@router.get("/api/forward/{eid}/ledger")
+def forward_ledger(eid: str, limit: int = 500):
+    """The append-only record: what was frozen, then every sealed session's entries in the order they were written."""
+    from strata.research import forward as FW
+    if FW.get(eid) is None:
+        raise HTTPException(404, "experiment not found")
+    return J({"entries": FW.ledger(eid, limit=max(1, min(int(limit), 5000))), "verification": FW.verify(eid)})
 
 
 @router.post("/api/forward/{eid}/evaluate")
 def forward_evaluate(eid: str):
     from strata.research import forward as FW
-    return _guard(lambda: FW.evaluate(eid))
+    # what the frozen configuration needs for the sessions about to be sealed is fetched first (free sources only, never offline): a session is sealed once
+    return _guard(lambda: FW.evaluate(eid, refresh=True))
 
 
 class VersionReq(BaseModel):

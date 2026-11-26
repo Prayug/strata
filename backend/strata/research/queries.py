@@ -184,18 +184,23 @@ class Research:
                 "notes": ["Moves measured from the session open to the close of the last 1-minute bar completed by each horizon.", "Filters use information known at the open (previous-day values, gap, prior VIX close)."]}
 
     def premium_decay(self, symbol: str, start=None, end=None, structure: str = "straddle", ref_time: str = "09:45", group_by_vix: bool = True, filters=None, recenter: bool = True, **_):
-        root = self.store.root / "options" / symbol
-        if not root.exists():
-            raise ValueError(f"no option data for {symbol}")
-        con = duckdb.connect()
-        q = f"""
-            SELECT ts, expiration, strike, "right", bid, ask, underlying_price
-            FROM read_parquet('{root.as_posix()}/*/*.parquet')
-            WHERE expiration = CAST(timezone('America/New_York', ts) AS DATE)
-            {f"AND expiration >= DATE '{start}'" if start else ''} {f"AND expiration <= DATE '{end}'" if end else ''}
-        """
-        df = con.sql(q).pl()
-        con.close()
+        start, end = _as_date(start), _as_date(end)
+        keys = [k for k in self.store.datasets(symbol, "options", "quote") if k.res != "EOD"]
+        files = [k for k in keys if any((self.store.dataset_dir(k) / "data").glob("*/*.parquet"))]
+        if not files:
+            raise ValueError(f"no intraday option quotes for {symbol}: this study reads quotes through the session, and end-of-day chains or trade prints cannot stand in for them")
+        key = max(files, key=lambda k: (0 if self.store.descriptor(k).get("synthetic") else 1, sum(1 for _ in (self.store.dataset_dir(k) / "data").glob("*/*.parquet"))))
+        con = locked_connection(self.store)
+        try:
+            q = f"""
+                SELECT ts, expiration, strike, "right", bid, ask, underlying_price
+                FROM read_parquet({_sql_str((self.store.dataset_dir(key) / "data").as_posix() + "/*/*.parquet")}, union_by_name=true)
+                WHERE expiration = CAST(timezone('America/New_York', ts) AS DATE)
+                  AND (CAST(? AS DATE) IS NULL OR expiration >= CAST(? AS DATE)) AND (CAST(? AS DATE) IS NULL OR expiration <= CAST(? AS DATE))
+            """
+            df = con.sql(q, params=[start, start, end, end]).pl()
+        finally:
+            con.close()
         if df.is_empty():
             raise ValueError("no same-day-expiration (0DTE) quotes in the selected range")
         df = df.with_columns(pl.col("ts").dt.convert_time_zone("America/New_York").alias("et")).with_columns(
@@ -378,37 +383,136 @@ TEMPLATES = {
 
 
 # ------------------------------------------------------------------ SQL console
-def sql_query(sql: str, store: MarketStore | None = None, limit: int = 5000, timeout: float = 20.0) -> dict:
-    store = store or MarketStore()
-    root = store.root
-    s = sql.strip().rstrip(";")
-    first = s.split(None, 1)[0].lower() if s else ""
-    if first not in ("select", "with", "describe", "show", "summarize", "pivot"):
-        raise ValueError("only read-only queries (SELECT / WITH / DESCRIBE / SUMMARIZE) are allowed")
-    import re
-    low = re.sub(r"'[^']*'", "''", s.lower())
-    banned = re.search(r"\b(read_\w+|copy|attach|detach|install|load|export|import|pragma|set|create|insert|update|delete|drop|alter|call|glob|httpfs)\b", low)
-    if banned:
-        raise ValueError(f"'{banned.group(1)}' is not allowed in the research console; query the views bars, daily, options, iv_history, events")
-    con = duckdb.connect()
+SQL_MEMORY, SQL_THREADS, SQL_TEMP = "2GB", 2, "4GB"
+META = "regexp_extract(filename, 'datasets/([^/]+)/([^/]+)/[^/]+/([^/]+)/([^/]+)/v([0-9]+)/', {})"
+META_COLS = f"{META.format(1)} AS provider, {META.format(2)} AS symbol, {META.format(3)} AS observation, {META.format(4)} AS resolution, CAST({META.format(5)} AS INTEGER) AS dataset_version"
+SQL_VIEWS = {
+    "datasets": "one row per stored dataset: provider, symbol, data_type, observation, resolution, dataset_version",
+    "daily": "daily bars of every provider: provider, symbol, date, open, high, low, close, volume",
+    "bars": "intraday bars of every provider and resolution: provider, symbol, resolution, ts (bar start), open, high, low, close, volume",
+    "options": "option observations: provider, symbol, observation (quote = bid/ask, trade = prints), resolution, ts, expiration, strike, right, bid, ask, last, ...",
+    "iv_history": "at-the-money implied volatility derived from stored quotes",
+    "events": "scheduled economic events",
+}
+
+
+def _sql_str(text: str) -> str:
+    return "'" + str(text).replace("'", "''") + "'"
+
+
+def _as_date(v) -> date | None:
+    if v is None or v == "":
+        return None
+    return v if isinstance(v, date) else date.fromisoformat(str(v))
+
+
+def locked_connection(store: MarketStore) -> "duckdb.DuckDBPyConnection":
+    """A database connection that can read the market store and nothing else.
+
+    The restriction is the engine's, not a list of forbidden words: file access is confined to the store's directory
+    (so a query cannot read the credential file, the application database or anything else on this computer), network
+    access and extension loading are off, and the configuration is locked so a query cannot switch any of it back on."""
+    root = store.root.resolve()
+    if any(c in str(root) for c in "*?["):
+        raise ValueError("the data directory's path contains a wildcard character; the SQL console cannot be confined to it")
+    tmp = root.parent / "cache" / "duckdb"
+    tmp.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(config={"autoinstall_known_extensions": False, "autoload_known_extensions": False, "temp_directory": tmp.as_posix()})
     con.execute("SET TimeZone='America/New_York'")
+    con.execute(f"SET memory_limit='{SQL_MEMORY}'")
+    con.execute(f"SET threads={SQL_THREADS}")
+    con.execute(f"SET max_temp_directory_size='{SQL_TEMP}'")
     try:
-        if (root / "underlying").exists():
-            con.execute(f"CREATE VIEW bars AS SELECT regexp_extract(filename, 'underlying/([^/]+)/', 1) AS symbol, ts, open, high, low, close, volume FROM read_parquet('{(root / 'underlying').as_posix()}/*/*.parquet', filename=true)")
-        if (root / "daily").exists():
-            con.execute(f"CREATE VIEW daily AS SELECT regexp_extract(filename, 'daily/([^/.]+)', 1) AS symbol, * EXCLUDE (filename) FROM read_parquet('{(root / 'daily').as_posix()}/*.parquet', filename=true)")
-        if (root / "options").exists():
-            con.execute(f"CREATE VIEW options AS SELECT regexp_extract(filename, 'options/([^/]+)/', 1) AS symbol, * EXCLUDE (filename) FROM read_parquet('{(root / 'options').as_posix()}/*/*/*.parquet', filename=true, union_by_name=true)")
-        if (root / "derived").exists():
-            con.execute(f"CREATE VIEW iv_history AS SELECT regexp_extract(filename, 'derived/([^/_]+)_iv', 1) AS symbol, * EXCLUDE (filename) FROM read_parquet('{(root / 'derived').as_posix()}/*_iv.parquet', filename=true)")
-        if (root / "events" / "events.parquet").exists():
-            con.execute(f"CREATE VIEW events AS SELECT * FROM read_parquet('{(root / 'events' / 'events.parquet').as_posix()}')")
+        con.execute(f"SET allowed_directories=[{_sql_str(root.as_posix())}]")
+        con.execute("SET enable_external_access=false")
+        con.execute("SET lock_configuration=true")
+    except duckdb.Error as e:
+        # no confinement, no connection: an older database engine is refused rather than handed an unrestricted console
+        con.close()
+        raise ValueError(f"this DuckDB version ({duckdb.__version__}) cannot confine a connection to the data directory; upgrade duckdb to 1.2 or newer ({str(e).splitlines()[0][:120]})") from None
+    return con
+
+
+def _create_views(con, store: MarketStore) -> list[str]:
+    """Views over the CURRENT version of every stored dataset. Each row carries its provider, observation kind and
+    resolution: two providers' bars for one symbol are both there, and nothing is blended or relabelled."""
+    daily, bars, opts, iv, listing = [], [], [], [], []
+    for k in store.datasets():
+        d = store.dataset_dir(k).resolve()
+        listing.append((k.provider, k.symbol, k.dtype, k.obs, k.res, int(k.version)))
+        if k.dtype == "underlying":
+            if k.res == "1d":
+                if (d / "data" / "daily.parquet").exists():
+                    daily.append(f"{d.as_posix()}/data/daily.parquet")
+            elif any((d / "data").glob("*.parquet")):
+                bars.append(f"{d.as_posix()}/data/*.parquet")
+        elif k.dtype == "options":
+            if any((d / "data").glob("*/*.parquet")):
+                opts.append(f"{d.as_posix()}/data/*/*.parquet")
+            if k.obs == "quote" and (d / "derived" / "iv.parquet").exists():
+                iv.append(f"{d.as_posix()}/derived/iv.parquet")
+    made = []
+
+    def view(name: str, files: list[str]):
+        if not files:
+            return
+        src = f"read_parquet([{', '.join(_sql_str(f) for f in files)}], filename=true, union_by_name=true)"
+        con.execute(f"CREATE VIEW {name} AS SELECT {META_COLS}, * EXCLUDE (filename) FROM {src}")
+        made.append(name)
+    con.execute("CREATE TABLE datasets(provider VARCHAR, symbol VARCHAR, data_type VARCHAR, observation VARCHAR, resolution VARCHAR, dataset_version INTEGER)")
+    if listing:
+        con.executemany("INSERT INTO datasets VALUES (?, ?, ?, ?, ?, ?)", listing)
+    made.append("datasets")
+    view("daily", daily)
+    view("bars", bars)
+    view("options", opts)
+    view("iv_history", iv)
+    ev = store.root.resolve() / "reference" / "events" / "events.parquet"
+    if ev.exists():
+        con.execute(f"CREATE VIEW events AS SELECT * FROM read_parquet({_sql_str(ev.as_posix())})")
+        made.append("events")
+    return made
+
+
+def _one_select(con, sql: str):
+    """Exactly one statement, and a read-only one, as the database's own parser sees it (so a comment, a quoted
+    string or a second statement cannot hide anything from the check)."""
+    try:
+        stmts = con.extract_statements(sql)
+    except duckdb.Error as e:
+        raise ValueError(str(e).splitlines()[0][:300]) from None
+    if len(stmts) != 1:
+        raise ValueError("one statement at a time" if stmts else "there is no query to run")
+    if stmts[0].type != duckdb.StatementType.SELECT:
+        kind = str(stmts[0].type).split(".")[-1]
+        raise ValueError(f"only read-only queries are allowed here (SELECT, WITH, DESCRIBE, SHOW, SUMMARIZE); this is a {kind} statement")
+    return stmts[0]
+
+
+def sql_query(sql: str, store: MarketStore | None = None, limit: int = 5000, timeout: float = 20.0) -> dict:
+    """Run ONE read-only query over the market store. See `locked_connection` for what the query cannot reach."""
+    store = store or MarketStore()
+    s = (sql or "").strip().rstrip(";").strip()
+    limit = max(1, min(int(limit), 50000))
+    con = locked_connection(store)
+    try:
+        stmt = _one_select(con, s)
+        views = _create_views(con, store)
+        try:
+            # the row limit is applied by the database where the statement can be nested
+            stmt = _one_select(con, f"SELECT * FROM (\n{s}\n) LIMIT {limit + 1}")
+        except ValueError:
+            pass
         timer = threading.Timer(timeout, con.interrupt)
         timer.start()
         try:
-            rel = con.execute(f"SELECT * FROM ({s}) LIMIT {limit + 1}" if first in ("select", "with") else s)
+            rel = con.execute(stmt)
             cols = [c[0] for c in rel.description]
-            rows = rel.fetchall()
+            rows = rel.fetchmany(limit + 1)
+        except duckdb.PermissionException:
+            raise ValueError("the research console reads the market store only (views: " + ", ".join(views) + "); files, folders, web addresses and extensions are not reachable from a query") from None
+        except duckdb.InterruptException:
+            raise ValueError(f"the query was stopped after {timeout:g} seconds") from None
         finally:
             timer.cancel()
     finally:

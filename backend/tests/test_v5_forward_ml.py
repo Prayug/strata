@@ -11,6 +11,7 @@ from strata.core import calendar as cal
 from tests.test_v2_research import InlineJobs, tmp_settings  # noqa: F401  (fixtures)
 from tests.test_v3_agent import agent, session
 from tests.test_v4_research import rich_store
+from tests.test_v6_forward import clock  # noqa: F401  (fixture: forward validation reads the clock, never the data, for its dates)
 
 ml_ok = pytest.importorskip("sklearn", reason="the ML workspace is optional")
 
@@ -55,16 +56,27 @@ def test_a_real_relationship_is_found_with_chronological_purged_validation(tmp_s
     sp = r["split"]
     assert sp["train"][1] < sp["test"][0] and sp["embargo_sessions"] == 1 and "purged" in sp["method"], "never a random split: the test set is the end of the history"
     best = next(m for m in r["models"] if m["name"] == r["selected"])
-    assert r["verdict"] == "some_skill" and best["cv"]["brier_skill"] > 0.02 and best["test"]["brier_skill"] > 0.02 and best["test"]["auc"] > 0.6
-    assert r["selected_by"].endswith("cross-validation") and all(m["test"]["n"] == sp["test_n"] for m in r["models"])
+    # V6: validation first. Nothing has looked at the final test set, and the result says so instead of calling anything confirmed.
+    assert r["verdict"] == "some_skill" and r["confirmation"] == "not_tested" and best["cv"]["brier_skill"] > 0.02 and r["final_test"] is False
+    assert all(m["test"] is None for m in r["models"]) and r["test_exposure"]["scored"] is False and "has NOT been scored" in " ".join(r["notes"]) and "validation evidence only" in r["summary"][0]
+    assert r["selected_by"].endswith("cross-validation") and r["frozen"]["model"] == r["selected"] and len(r["frozen"]["config_key"]) == 16
     assert r["placebo"]["passed"] and r["placebo"]["placebo_max"] < best["cv"]["brier_skill"]
     top = [i["feature"] for i in r["importance"][:2]]
     assert set(top) == {"vix_prev", "gap"} and all(i["matters"] for i in r["importance"][:2]) and not next(i for i in r["importance"] if i["feature"] == "weekday")["matters"]
+    assert r["importance_on"].startswith("validation rows")
     assert r["leakage"]["passed"] and len(r["leakage"]["checks"]) == 3 and "identical" in r["leakage"]["checks"][1]["detail"]
-    assert best["calibration"] and best["calibration_error"] < 0.1 and r["regimes"]
+    assert best["validation_calibration"] and best["validation_calibration_error"] < 0.1 and r["regimes"] and r["regimes"][0]["on"] == "validation rows"
     assert any("not a profitable option strategy" in n for n in r["notes"])
     sig = r["signal"]
     assert sig["signals"] > 20 and sig["hit_rate_on_signal"] > sig["hit_rate_otherwise"] and sig["first"] > sp["train"][0], "walk-forward: nothing is predicted before a model could be fitted on earlier sessions"
+    assert sig["covers_final_test"] is False and sig["last"] <= sp["train"][1], "while the test set is unscored, no prediction is made for it"
+    # then the frozen model is scored on the final test set: once, and only that model
+    f = ML.run({"symbol": "PRD", "outcome": UP, "features": ["vix_prev", "gap", "ret_1", "ret_5", "weekday"], "models": ["logistic", "tree", "gbt"], "final_test": True}, st)
+    fb = next(m for m in f["models"] if m["name"] == f["selected"])
+    assert f["selected"] == r["selected"] and f["frozen"]["config_key"] == r["frozen"]["config_key"], "the same configuration that validation froze"
+    assert fb["test"]["n"] == sp["test_n"] and fb["test"]["brier_skill"] > 0.02 and fb["test"]["auc"] > 0.6 and fb["calibration"] and fb["calibration_error"] < 0.1
+    assert [m["name"] for m in f["models"] if m["test"] is not None] == [f["selected"]], "no other candidate ever sees the test set"
+    assert f["verdict"] == "some_skill" and f["confirmation"] == "confirmed_once" and f["test_exposure"]["scored"] is True and f["regimes"][0]["on"] == "final test set" and f["signal"]["covers_final_test"] is True
 
 
 def test_noise_gets_no_skill_and_is_called_that(tmp_settings):
@@ -72,7 +84,11 @@ def test_noise_gets_no_skill_and_is_called_that(tmp_settings):
     st = rich_store(tmp_settings, sessions=1500, effect=0.0, intraday=0)
     r = ML.run({"symbol": "TST", "outcome": UP, "features": ["ret_1", "ret_5", "gap", "rv21", "weekday"], "models": ["logistic", "forest"]}, st)
     best = next(m for m in r["models"] if m["name"] == r["selected"])
-    assert r["verdict"] in ("no_skill", "weak") and best["test"]["brier_skill"] < 0.02 and ("does not beat the base-rate" in r["summary"][0] or "unproven" in r["summary"][0])
+    assert r["verdict"] in ("no_skill", "weak") and best["cv"]["brier_skill"] < 0.02 and best["test"] is None
+    assert "does not beat the base-rate" in r["summary"][0] or "not consistently" in r["summary"][0]
+    f = ML.run({"symbol": "TST", "outcome": UP, "features": ["ret_1", "ret_5", "gap", "rv21", "weekday"], "models": ["logistic", "forest"], "final_test": True}, st)
+    fb = next(m for m in f["models"] if m["name"] == f["selected"])
+    assert f["verdict"] in ("no_skill", "weak") and fb["test"]["brier_skill"] < 0.02 and f["confirmation"] in ("not_confirmed", "confirmed_once")
     with pytest.raises(ValueError, match="at least 400"):
         ML.run({"symbol": "TST", "outcome": UP, "features": ["ret_1"], "start": "2024-01-01"}, st)
     with pytest.raises(ValueError, match="none of the requested features"):
@@ -126,19 +142,22 @@ def _extend(st, sym, n, seed=9, vol="VOLX"):
     _CACHE.clear()
 
 
-def test_a_frozen_study_only_counts_sessions_after_its_activation(tmp_settings):
+def test_a_frozen_study_only_counts_sessions_after_its_activation(tmp_settings, clock):
     from strata.ai import nl_graph as NG
     from strata.research import forward as FW
     from strata.research import graph as G
     st = rich_store(tmp_settings, sessions=900, effect=0.0, intraday=0)
     g = NG.plan("Is TST more likely to close higher when the previous day fell more than 1% and VOLX is above 5?", ["TST", "VOLX"], "TST", st)
     res = G.run_graph(g, st)
+    last_d = st.read_daily("TST")["date"][-1]
+    last = str(last_d)
+    clock.set(last_d)  # frozen on the evening of the last stored session
     ex = FW.create_from_graph(g, res, store=st)
-    last = str(st.read_daily("TST")["date"][-1])
     assert ex["activation_date"] == last and ex["version"] == 1 and ex["status"] == "active" and ex["benchmark"]["n"] > 30 and ex["kind"] == "study"
     rep = FW.evaluate(ex["id"], st)
     assert rep["status"] == "waiting" and rep["forward_sessions"] == 0 and "nothing earlier can count" in rep["notes"][0]
     _extend(st, "TST", 60)
+    clock.set(st.read_daily("TST")["date"][-1])  # sixty sessions later
     rep = FW.evaluate(ex["id"], st)
     assert rep["status"] == "evaluated" and rep["forward_sessions"] == 60 and rep["first"] > last and all(s["date"] > last for s in rep["sessions"])
     assert rep["signals"] == len(rep["sessions"]) and rep["comparison"]["backtest_probability"] == ex["benchmark"]["probability"]
@@ -147,24 +166,30 @@ def test_a_frozen_study_only_counts_sessions_after_its_activation(tmp_settings):
     assert FW.get(ex["id"])["evaluations"] == 2, "every evaluation is kept"
 
 
-def test_changing_a_frozen_configuration_creates_a_new_experiment(tmp_settings):
+def test_changing_a_frozen_configuration_creates_a_new_experiment(tmp_settings, clock):
     from strata.ai import nl_graph as NG
     from strata.api import db
     from strata.research import forward as FW
     from strata.research import graph as G
     st = rich_store(tmp_settings, sessions=900, effect=0.0, intraday=0)
     g = NG.plan("Is TST more likely to close higher when the previous day fell more than 1% and VOLX is above 5?", ["TST", "VOLX"], "TST", st)
+    clock.set(st.read_daily("TST")["date"][-1])
     ex = FW.create_from_graph(g, G.run_graph(g, st), store=st)
     with pytest.raises(ValueError, match="identical"):
         FW.new_version(ex["id"], ex["config"], store=st)
     g2 = NG.plan("Is TST more likely to close higher when the previous day fell more than 2% and VOLX is above 5?", ["TST", "VOLX"], "TST", st)
     _extend(st, "TST", 10)
+    clock.set(st.read_daily("TST")["date"][-1])
     v2 = FW.new_version(ex["id"], {"graph": g2}, store=st)
     old = FW.get(ex["id"])
     assert v2["version"] == 2 and v2["parent_id"] == ex["id"] and v2["id"] != ex["id"] and v2["activation_date"] > old["activation_date"], "the new version starts its own forward record"
     assert old["config_hash"] == ex["config_hash"] and old["config"] == ex["config"] and old["status"] == "active", "the original is untouched"
-    # tampering with the stored configuration is detected instead of being evaluated
+    # the database refuses an edit of what was frozen; with that guard removed, tampering is still detected instead of being evaluated
+    import sqlite3
     with db.connect() as con:
+        with pytest.raises(sqlite3.DatabaseError, match="cannot be edited"):
+            con.execute("UPDATE forward_experiments SET config=? WHERE id=?", ('{"graph": {"nodes": []}}', ex["id"]))
+        con.execute("DROP TRIGGER forward_experiments_frozen")
         con.execute("UPDATE forward_experiments SET config=? WHERE id=?", ('{"graph": {"nodes": []}}', ex["id"]))
     with pytest.raises(ValueError, match="no longer matches the hash"):
         FW.evaluate(ex["id"], st)

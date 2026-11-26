@@ -530,7 +530,7 @@ export function ForwardCard({ ex }: { ex: any }) {
   return (
     <div className="mt-3 rounded-lg border border-line bg-bg-2/40 px-3.5 py-3 text-[13px]">
       <div className="flex items-center gap-2"><Snowflake className="size-4 text-info" /><span className="font-medium">{ex.name}</span><span className="chip !h-5 !text-[11px]">frozen v{ex.version}</span></div>
-      <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-xs dim"><div>Active from <span className="num text-fg-2">{ex.activation_date}</span></div><div>Configuration hash <span className="num text-fg-2">{ex.config_hash}</span></div></div>
+      <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-xs dim"><div>First session that counts <span className="num text-fg-2">{ex.first_session || ex.activation_date}</span></div><div>Configuration hash <span className="num text-fg-2">{ex.config_hash}</span></div></div>
       <a className="btn sm mt-2.5" href={`/forward/${ex.id}`}><ShieldCheck />Open the forward record</a>
     </div>
   );

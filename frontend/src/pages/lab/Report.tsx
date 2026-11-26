@@ -1,15 +1,19 @@
 /* The research report of one result: Overview, Calendar, Observations, Statistics, Robustness, Methodology, Raw data.
    Every number shown here comes from the run's stored result; clicking a headline number opens the observations behind it. */
 import { useQuery } from "@tanstack/react-query";
-import { Check, Download, ExternalLink, FileText, Pin, X } from "lucide-react";
+import { ArrowRight, Blocks, Check, Code2, Download, ExternalLink, FileText, Pin, Scale, Snowflake, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { C, EChart, fmtMoneyAxis } from "@/components/charts/EChart";
 import { Tip } from "@/components/ui";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { pp, sgn, usd, type Fact } from "@/lib/lab";
+import { useBuilder } from "@/lib/store";
 import { Bar, Callout, Empty, ModeBadge, Section, Skeleton, StatTile, StatusChip, T, Term } from "./bits";
 import { CalendarView } from "./CalendarView";
+import { ResultCoverage } from "./Coverage";
 import { Timeline } from "./Pipeline";
 
 export const REPORT_TABS = [["overview", "Overview"], ["calendar", "Calendar"], ["observations", "Trades"], ["statistics", "Statistics"], ["robustness", "Robustness"], ["methodology", "Methodology"], ["raw", "Raw data"]] as const;
@@ -32,7 +36,7 @@ export function Report({ runId, sid, trials, tab, setTab, which, setWhich, onDay
   const openObs = (w: string) => { setWhich(w); setTab("observations"); };
   const openYear = (y: string) => { setYear(Number(y)); onDay(null); setTab("calendar"); };
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col" data-testid="report">
       <div className="shrink-0 px-5 pt-4 pb-3">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
@@ -91,6 +95,47 @@ function Funnel({ r }: { r: any }) {
   );
 }
 
+/** One strategy, every tool: what was asked in words can be edited as code or with forms, and then followed forward.
+    Nothing is copied by hand; each tool opens on the configuration this result was computed from. */
+function NextSteps({ r }: { r: any }) {
+  const nav = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const cfg = r.reproduce.config;
+  const runId = r.reproduce.run_id;
+  const load = (to: string) => {
+    useBuilder.getState().load(cfg.strategies[0], null);
+    useBuilder.getState().patch({ start: cfg.start, end: cfg.end, capital: cfg.capital, execution: cfg.execution });
+    nav(to);
+  };
+  const freeze = async () => {
+    setBusy(true);
+    try {
+      const ex = await api.post<any>("/api/forward", { run_id: runId });
+      toast.success(`Frozen. The first session that counts is ${ex.first_session}.`);
+      nav(`/forward/${ex.id}`);
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
+  const steps: [any, string, string, () => void, string][] = [
+    [Code2, "Edit it as code", "The same strategy as text in the IDE, with a debugger that replays its rules on a real session.", () => load("/ide"), "ide"],
+    [Blocks, "Edit it with forms", "Legs, entry rules and exits in the visual builder.", () => load("/builder"), "builder"],
+    [Snowflake, "Freeze it and follow it forward", "Stored with a hash and the time on the clock. Only sessions that have not happened yet count.", freeze, "forward"],
+    [Scale, "See what has been tested before", "Repeats, related configurations and held-back periods across every notebook.", () => nav("/registry"), "registry"],
+  ];
+  return (
+    <Section title="Take this strategy further" sub="the other tools open on exactly this configuration">
+      <div className="grid gap-2 sm:grid-cols-2" data-testid="next-steps">
+        {steps.map(([Icon, title, sub, go, id]) => (
+          <button key={id} disabled={busy} onClick={go} data-next={id} className="flex items-start gap-2.5 rounded-lg border border-line px-3 py-2.5 text-left transition-colors hover:border-accent/60 hover:bg-bg-2">
+            <Icon className="mt-0.5 size-4 shrink-0 text-accent" />
+            <span className="min-w-0 flex-1"><span className="block text-[13px] font-medium">{title}</span><span className="mt-0.5 block text-xs dim">{sub}</span></span>
+            <ArrowRight className="mt-1 size-3.5 shrink-0 text-faint" />
+          </button>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 function Overview({ r, openObs, setTab, openYear }: { r: any; openObs: (w: string) => void; setTab: (t: string) => void; openYear: (y: string) => void }) {
   const study = r.kind === "study";
   const F: Fact[] = r.facts;
@@ -102,6 +147,7 @@ function Overview({ r, openObs, setTab, openYear }: { r: any; openObs: (w: strin
       {r.mode === "modeled" && <Callout tone="warn" title="Modeled premiums">Option prices here are THEORETICAL estimates from a pricing model. They are not observed market prices and the dollar figures are approximate.</Callout>}
       {r.mode === "trades" && <Callout tone="info" title="Priced on option trade prints">Fills use prices at which the contracts actually traded. This data has no <Term k="bid/ask" />, so no spread is assumed; a print is only used while it is recent.</Callout>}
       {(r.interpretation.unsupported || []).length > 0 && <Callout tone="bad" title="Part of the request was not represented">{r.interpretation.unsupported.map((u: string) => `"${u}"`).join("; ")}</Callout>}
+      {!study && <ResultCoverage cov={r.data} mode={r.mode} onOpen={() => openObs("skipped")} />}
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
         {study ? (
           <>
@@ -138,6 +184,7 @@ function Overview({ r, openObs, setTab, openYear }: { r: any; openObs: (w: strin
           <button className="btn quiet sm" onClick={() => setTab("methodology")}>How it was calculated</button>
         </div>
       </Section>
+      {!study && r.reproduce?.config?.strategies?.length > 0 && <NextSteps r={r} />}
       {(r.limitations || []).length > 0 && (
         <Section title="Limitations" sub={`${r.limitations.length}`} open={r.limitations.length <= 4}>
           <ul className="flex flex-col gap-1.5 text-[13px] soft">{r.limitations.map((x: string, i: number) => <li key={i} className="flex gap-2"><span className="text-faint">·</span><span><T>{x}</T></span></li>)}</ul>

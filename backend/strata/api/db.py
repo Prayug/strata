@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from strata.core import instance
 from strata.config import get_settings
 
 SCHEMA = """
@@ -100,6 +101,7 @@ CREATE TABLE IF NOT EXISTS trials (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS trials_scope ON trials(scope, symbol, id);
+CREATE TRIGGER IF NOT EXISTS trials_no_delete BEFORE DELETE ON trials BEGIN SELECT RAISE(ABORT, 'the experiment registry is permanent: a trial cannot be deleted'); END;
 CREATE TABLE IF NOT EXISTS holdouts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   scope TEXT NOT NULL,
@@ -170,6 +172,41 @@ CREATE TABLE IF NOT EXISTS forward_evaluations (
   report TEXT
 );
 CREATE INDEX IF NOT EXISTS forward_eval_exp ON forward_evaluations(experiment_id, id);
+CREATE TABLE IF NOT EXISTS forward_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  experiment_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  session TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  key TEXT NOT NULL,
+  body TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  prev_hash TEXT NOT NULL,
+  hash TEXT NOT NULL,
+  UNIQUE(experiment_id, seq)
+);
+CREATE INDEX IF NOT EXISTS forward_ledger_exp ON forward_ledger(experiment_id, seq);
+CREATE TRIGGER IF NOT EXISTS forward_ledger_no_update BEFORE UPDATE ON forward_ledger BEGIN SELECT RAISE(ABORT, 'the forward ledger is append-only: an entry cannot be changed'); END;
+CREATE TRIGGER IF NOT EXISTS forward_ledger_no_delete BEFORE DELETE ON forward_ledger BEGIN SELECT RAISE(ABORT, 'the forward ledger is append-only: an entry cannot be deleted'); END;
+CREATE TABLE IF NOT EXISTS ml_test_exposures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  outcome_key TEXT NOT NULL,
+  config_key TEXT NOT NULL,
+  model TEXT NOT NULL,
+  features TEXT NOT NULL,
+  test_start TEXT NOT NULL,
+  test_end TEXT NOT NULL,
+  n_test INTEGER,
+  brier_skill REAL,
+  auc REAL,
+  run_id TEXT,
+  scope TEXT,
+  recorded_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ml_exposures_key ON ml_test_exposures(symbol, outcome_key, id);
+CREATE TRIGGER IF NOT EXISTS ml_exposures_no_update BEFORE UPDATE ON ml_test_exposures BEGIN SELECT RAISE(ABORT, 'a test-set exposure is permanent: it cannot be changed'); END;
+CREATE TRIGGER IF NOT EXISTS ml_exposures_no_delete BEFORE DELETE ON ml_test_exposures BEGIN SELECT RAISE(ABORT, 'a test-set exposure is permanent: it cannot be deleted'); END;
 CREATE TABLE IF NOT EXISTS collector_queue (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,
@@ -209,6 +246,9 @@ def now() -> str:
 def connect() -> sqlite3.Connection:
     p = get_settings().db_path
     p.parent.mkdir(parents=True, exist_ok=True)
+    # the database is opened by one machine at a time (see strata.core.instance): raises instance.Busy when a copy of
+    # Strata on the other side of a container boundary holds this data directory
+    instance.ensure(p.parent)
     con = sqlite3.connect(p, timeout=30, check_same_thread=False)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
@@ -217,7 +257,15 @@ def connect() -> sqlite3.Connection:
 
 
 # columns added after a table first shipped: (table, column, declaration)
-MIGRATIONS = [("trials", "signature", "TEXT"), ("trials", "phase", "TEXT DEFAULT 'exploration'")]
+MIGRATIONS = [("trials", "signature", "TEXT"), ("trials", "phase", "TEXT DEFAULT 'exploration'"),
+              ("forward_experiments", "activated_at", "TEXT"), ("forward_experiments", "first_session", "TEXT"), ("forward_experiments", "engine_version", "TEXT"), ("forward_experiments", "activation", "TEXT")]
+
+# what was frozen cannot be edited once the activation instant is recorded (a row from before version 6 is dated once, then it is frozen too)
+FROZEN = """
+CREATE TRIGGER IF NOT EXISTS forward_experiments_frozen BEFORE UPDATE OF config, config_hash, kind, symbol, version, parent_id, created_at, activated_at, first_session, engine_version, activation, activation_date, assumptions, benchmark
+ON forward_experiments WHEN OLD.activated_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'a frozen experiment cannot be edited: a change is a new version'); END;
+"""
 
 
 def init_db() -> Path:
@@ -226,12 +274,13 @@ def init_db() -> Path:
         for table, col, decl in MIGRATIONS:
             if col not in {r[1] for r in con.execute(f"PRAGMA table_info({table})")}:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        con.executescript(FROZEN)
         con.execute("CREATE INDEX IF NOT EXISTS trials_key ON trials(key)")
         con.execute("CREATE INDEX IF NOT EXISTS trials_symbol ON trials(symbol, id)")
     return get_settings().db_path
 
 
-JSON_COLS = {"config", "dataset_versions", "summary", "tags", "state", "content", "draft", "runs", "uses", "layout", "report", "signature", "numbers", "benchmark", "assumptions"}
+JSON_COLS = {"config", "dataset_versions", "summary", "tags", "state", "content", "draft", "runs", "uses", "layout", "report", "signature", "numbers", "benchmark", "assumptions", "activation"}
 
 
 def _row(r: sqlite3.Row | None) -> dict | None:

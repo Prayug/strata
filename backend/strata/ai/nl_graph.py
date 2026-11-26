@@ -55,6 +55,8 @@ LEADS = re.compile(r"\b(?:leads?\s+to|led\s+to|predicts?|is\s+followed\s+by|are\
 CONTROL = re.compile(r"(?:,?\s*(?:even\s+)?(?:after\s+|when\s+|while\s+)?(?:controlling|adjusting|accounting|correcting|controlled|adjusted)\s+for|,?\s*(?:even\s+)?holding\s+|,?\s*matched\s+on|,?\s*(?:after\s+)?conditioning\s+on|,?\s*regardless\s+of|,?\s*independent(?:ly)?\s+of)\s+"
                      r"(.+?)(?:\s+(?:constant|fixed|equal))?(?=[?.;]|$|,\s*(?:and\s+)?(?:compare|since|from|between|over the))")
 COMPARE = re.compile(r"\b(?:compar\w+\s+(?:that|this|it|the same|those|these)?\s*(?:behaviou?r|result|finding|pattern|effect|idea|analysis)?\s*(?:with|to|against|across|for|on)|same\s+(?:for|on|with)|also\s+(?:for|on|check)|(?:what|how)\s+about|versus|vs\.?)\s+(.+?)(?=[?.;]|$)")
+QUESTION = re.compile(r"[,;]\s*(?:then\s+)?(?:how\s+(?:often|likely|frequently|many\s+times)|what\s+(?:is|are|happens|was)|what'?s|does|do|did|is|are|will|would|can|the\s+(?:probability|odds|chance|likelihood)|"
+                      r"what\s+(?:percentage|fraction|share)|(?:on\s+)?how\s+many)\b")
 HYPOTHESIS = re.compile(r"\b(?:tend|tends|tendency|whether|more likely|less likely|is it true|investigate|test(?:ing)?\s+(?:whether|if)|edge|significan\w+|predict\w*|hypothesis|validate|confirm\w*)\b")
 
 
@@ -215,7 +217,7 @@ def _measure(r: Reader, subj: str | None, span: str, extra: dict, tick: str) -> 
         return {"feature": cat, "expr": None if cat else (f"return_pct({k})" if s is None else f'return_pct("{s}", {k})'), "at": "open", "label": f"{name}'s return over the last {k} sessions", "unit": "%",
                 "q": (cat or "ret_5", "open"), "e": f"return_pct({k})" if s is None else f'return_pct("{s}", {k})', "n": k}
     # intraday spans are read at a clock time
-    at = tick
+    at = extra["at"] if span == "clock" else tick
     if span == "first_n":
         mins = int(extra.get("minutes") or 60)
         at = f"{(570 + mins) // 60:02d}:{(570 + mins) % 60:02d}"
@@ -260,9 +262,19 @@ def _span_match(c: str):
     if m:
         mins = int(m.group(1) or m.group(2)) if (m.group(1) or m.group(2)) else {"half-hour": 30, "half hour": 30, "hour": 60, "two hours": 120}[m.group(3)]
         return "first_n", {"minutes": mins}, m
-    m = re.search(r"\bovernight\b|pre-?market|\bat the open\b|\bgap\w*", c)
+    m = re.search(r"\bovernight\b|pre-?market|\bat the open\b|\bgap\w*|\bopen(?:s|ed|ing)?\s+(?:\S+\s+){0,5}?(?:lower|higher|down|up)\b", c)
     if m:
         return "overnight", {}, m
+    # an explicit clock time: "is up more than 1% at 10:30", "down 1% by 11:00 am" (New York time)
+    m = re.search(r"\b(?:at|by|as of|around)\s+(\d{1,2}):(\d{2})\s*(a\.?m\.?|p\.?m\.?)?(?!\s*%)\b|\b(?:at|by)\s+(\d{1,2})\s*(a\.?m\.?|p\.?m\.?)\b", c)
+    if m:
+        h, mi, ap = int(m.group(1) or m.group(4)), int(m.group(2) or 0), (m.group(3) or m.group(5) or "").replace(".", "")
+        if ap == "pm" and h < 12:
+            h += 12
+        elif not ap and h < 8:
+            h += 12  # "at 2:30" in a trading day is the afternoon
+        if 9 * 60 + 30 < h * 60 + mi < 16 * 60:
+            return "clock", {"at": f"{h:02d}:{mi:02d}"}, m
     m = re.search(r"\bmorning(?:\s+session)?\b|by (?:noon|midday|lunch)|before (?:noon|lunch)|first half of the (?:day|session)", c)
     if m:
         return "morning", {}, m
@@ -292,10 +304,13 @@ def _read_clause(r: Reader, clause: str, prev_span: tuple[str, dict] | None, noo
     out: list[Clause] = []
     # ----- relative performance: A outperformed B (over a span)
     m = w.find(rf"({SUBJ_RE})?\s*(?:has\s+|had\s+|is\s+|was\s+|have\s+)?(out|under)perform\w*\s+({SUBJ_RE})") or \
-        w.find(rf"({SUBJ_RE})\s+(?:is|was|has been|were)\s+(stronger|weaker)\s+than\s+({SUBJ_RE})") or w.find(rf"({SUBJ_RE})\s+(beat|trailed|lagged|led)\s+({SUBJ_RE})")
+        w.find(rf"({SUBJ_RE})\s+(?:is|was|has been|were)\s+(stronger|weaker)\s+than\s+({SUBJ_RE})") or w.find(rf"({SUBJ_RE})\s+(beat|trailed|lagged|led)\s+({SUBJ_RE})") or \
+        w.find(rf"({SUBJ_RE})\s+(?:is|was|are|were|has been)\s+(up|higher|down|lower)\s+(?:by\s+)?more\s+than\s+({SUBJ_RE})") or \
+        w.find(rf"({SUBJ_RE})\s+(?:has\s+|have\s+|had\s+)?(gained|risen|rallied|rose|fallen|dropped|lost|fell)\s+more\s+than\s+({SUBJ_RE})")
     if m:
         a, b = r.subject(m.group(1)), r.subject(m.group(3))
-        up = m.group(2) in ("out", "stronger", "beat", "led")
+        # "A is down more than B" / "A fell more than B": A did worse than B
+        up = m.group(2) in ("out", "stronger", "beat", "led", "up", "higher", "gained", "risen", "rallied", "rose")
         w.take(m)
         span, extra, sm = _span_match(w.s)
         w.take(sm)
@@ -432,7 +447,7 @@ def _read_clause(r: Reader, clause: str, prev_span: tuple[str, dict] | None, noo
 
 def _span_words(span: str, extra: dict, at: str) -> str:
     return {"overnight": "overnight (open against the previous close)", "prev": "in the previous session", "day": "on the session", "last_n": f"over the last {extra.get('n', 5)} sessions",
-            "first_n": f"in the first {extra.get('minutes', 60)} minutes", "morning": f"between the open and {at}", "sofar": f"between the open and {at}"}.get(span, "")
+            "first_n": f"in the first {extra.get('minutes', 60)} minutes", "morning": f"between the open and {at}", "sofar": f"between the open and {at}", "clock": f"between the open and {at}"}.get(span, "")
 
 
 # ----------------------------------------------------------------------------- outcome
@@ -449,8 +464,8 @@ def _read_outcome(r: Reader, part: str, clauses: list[Clause], noon: str, late: 
     elif re.search(r"\bcontinu\w*|follow[- ]through|momentum|keep (?:going|falling|rising)|persist\w*|extend\w*", c):
         direction = "down" if cond_sign < 0 else "up" if cond_sign > 0 else None
     if direction is None:
-        up = re.search(r"\b(?:rall\w+|rise\w*|rose|go(?:es)? up|higher|recover\w*|rebound\w*|bounc\w+|gain\w*|positive|green|up|upside|advance\w*|strength|bullish)\b", c)
-        dn = re.search(r"\b(?:fall\w*|fell|drop\w*|declin\w+|lower|sell[- ]?off|sells? off|negative|red|down|downside|weak\w*|lose\w*|bearish)\b", c)
+        up = re.search(r"\b(?:rall\w+|rise\w*|rose|go(?:es)? up|higher|recover\w*|rebound\w*|bounc\w+|gain\w*|positive|green|up|upside|advance\w*|strength|bullish|above|climb\w*|jump\w*|increas\w+)\b", c)
+        dn = re.search(r"\b(?:fall\w*|fell|drop\w*|declin\w+|lower|sell[- ]?off|sells? off|negative|red|down|downside|weak\w*|lose\w*|bearish|below|sink\w*|sank|slid\w*|decreas\w+)\b", c)
         if up and dn:
             direction = "up" if up.start() < dn.start() else "down"
         elif up or dn:
@@ -463,7 +478,7 @@ def _read_outcome(r: Reader, part: str, clauses: list[Clause], noon: str, late: 
         entry, horizon = noon, "session"
     elif re.search(r"last hour|final hour|power hour|into the close|late in the (?:day|session)", c):
         entry, horizon = late, "session"
-    m = re.search(r"(?:within|over|in|during)\s+(?:the\s+)?(?:next|following|subsequent)?\s*(\w+|\d+)\s+(?:trading\s+)?(day|session|week|month)s?\b|(?:next|following)\s+(\w+|\d+)\s+(?:trading\s+)?(day|session|week|month)s\b|(\w+|\d+)\s+(?:trading\s+)?(day|session|week)s?\s+later", c)
+    m = re.search(r"(?:within|over|in|during)\s+(?:the\s+)?(?:next|following|subsequent)?\s*(\w+|\d+)\s+(?:trading\s+)?(day|session|week|month)s?\b|(?:next|following)\s+(\w+|\d+)\s+(?:trading\s+)?(day|session|week|month)s\b|(\w+|\d+)\s+(?:trading\s+)?(day|session|week)s?\s+(?:later|after|afterwards?|on)\b", c)
     if m:
         tok = m.group(1) or m.group(3) or m.group(5)
         unit = m.group(2) or m.group(4) or m.group(6)
@@ -479,16 +494,34 @@ def _read_outcome(r: Reader, part: str, clauses: list[Clause], noon: str, late: 
             info["sessions"] = 21
     if info["sessions"] is None and entry is None and re.search(r"by the close|rest of the (?:day|session)|that (?:same )?day|same day|same session|intraday|during the (?:day|session)|into the close|close (?:higher|lower|green|red|up|down)", c):
         horizon = "session"
-    info["entry_hint"], info["horizon_stated"] = entry, bool(horizon or info["sessions"])
-    # size: "1% before 0.5%", "reach 1%", "close 1% higher"
+    # a move measured from the open of the session ("rise 1% from the open", "gain 1% intraday"), or over the whole day against the previous close
+    if entry is None and re.search(r"\b(?:from|off|above|below|against|versus|vs\.?|relative to)\s+(?:the|its|that|that day'?s|the (?:next|following) day'?s|the day'?s|the session'?s)?\s*open(?:ing)?(?:\s+price)?\b|\bintraday\b|"
+                                  r"\bat any (?:point|time|moment)\b|\bduring the (?:next |following |same )?(?:trading )?(?:day|session)\b|\bopen[- ]to[- ]close\b", c):
+        entry, horizon = "open", "session"
+        if info["sessions"] == 1:
+            info["sessions"] = None  # "intraday the next session": the session after the condition is the one that opens, not a second one
+    day_move = bool(re.search(r"\b(?:finish\w*|end\w*|clos\w*)\s+the\s+(?:day|session)\b|\bon the (?:day|session)\b|\b(?:up|down|green|red|positive|negative)\s+(?:day|session)\b|\bday(?:'s)? (?:return|change|move)\b", c)) and entry is None and not info["sessions"]
+    info["day_move"] = day_move
+    info["entry_hint"], info["horizon_stated"] = entry, bool(horizon or info["sessions"] or day_move)
+    closes = bool(re.search(r"\b(?:clos\w*|finish\w*|end(?:s|ed|ing)?|settl\w*)\b", c))
+    # size: "1% before 0.5%", "reach 1%", "close 1% higher", "rise 1%"
     m = re.search(rf"{N}\s*%\s*(?:target|gain|rally|rise|move|profit|drop|decline|fall)?\s*(?:\w+\s+){{0,3}}?before\s+(?:a\s+|an\s+)?{N}\s*%", c)
     if m:
         return {"op": "target_stop", "params": {"direction": direction, "target": float(m.group(1)), "stop": float(m.group(2))}, "_entry": entry, "_horizon": horizon}, info
     m = re.search(rf"(?:reach\w*|hit\w*|touch\w*|trade\w*)\s+(?:a\s+)?(?:\w+\s+){{0,2}}?(?:\+|-)?{N}\s*%", c)
     if m:
         return {"op": "target_stop", "params": {"direction": direction, "target": float(m.group(1))}, "_entry": entry, "_horizon": horizon}, info
-    m = re.search(rf"(?:by|of)?\s*(?:more than|at least|over)\s*{N}\s*%|{N}\s*%\s*(?:or more\s+)?(?:higher|lower|gain|rally|rise|drop|decline)", c)
-    thr = float(m.group(1) or m.group(2)) if m else 0.0
+    c = re.sub(rf"{N}\s*(?:percent|pct)\b", r"\1%", c)
+    m = re.search(rf"(?:by|of)?\s*(?:more than|at least|over|≥|>=?)\s*{N}\s*%|{N}\s*%\s*(?:or more\s+)?(?:higher|lower|gain|rally|rise|drop|decline|up|down|above|below|move|increase|decrease)|"
+                  rf"\b(?:ris\w+|rose|gain\w*|rall\w+|climb\w*|jump\w*|advanc\w+|increas\w+|recover\w*|bounc\w+|rebound\w*|fall\w*|fell|drop\w*|declin\w+|los\w+|sink\w*|sank|slid\w*|up|down|higher|lower)\s+(?:by\s+|of\s+|another\s+|a\s+further\s+)?(?:about\s+|roughly\s+)?{N}\s*%", c)
+    thr = float(m.group(1) or m.group(2) or m.group(3)) if m else 0.0
+    info["size"] = thr or None
+    state = bool(info["sessions"]) and bool(re.search(r"\b(?:is|are|was|were|be|stands?|sits?|trad(?:es|ing))\s+(?:still\s+)?(?:up|down|higher|lower|above|below)\b", c))
+    if thr and not closes and not day_move and not state:
+        # "rise 1%", "gain 1% intraday", "drop 2% within a week": the level has to be TRADED at some point before the horizon ends, not closed at
+        info["touch"] = True
+        r.assumptions.append(f"'{m.group(0).strip()}' is read as trading {thr:g}% {'above' if direction == 'up' else 'below'} the starting price at any time before the horizon ends, not as closing there. Say 'close {thr:g}% higher' for the other reading.")
+        return {"op": "target_stop", "params": {"direction": direction, "target": thr}, "_entry": entry, "_horizon": horizon}, info
     return {"op": "forward_return", "params": {"direction": direction, **({"threshold": thr} if thr else {})}, "_entry": entry, "_horizon": horizon}, info
 
 
@@ -501,7 +534,13 @@ def _split(text: str) -> tuple[str, str]:
     if lead and (not m or lead.start() < m.start()):
         return low[lead.end():], low[:lead.start()]
     if m:
-        return low[:m.start()], low[m.end():]
+        head, tail = low[:m.start()], low[m.end():]
+        if not re.search(r"[a-z]{3}", head):
+            # the sentence OPENS with the condition ("after a 3% fall, how often does it ...?"): what follows the comma and asks the question is the outcome
+            q = QUESTION.search(tail)
+            if q:
+                return tail[q.start():], tail[:q.start()]
+        return head, tail
     return low, ""
 
 
@@ -561,6 +600,13 @@ def parse(text: str, known: list[str], default_symbol: str = "SPY", store=None) 
     own_day = [c for c in clauses if c.span == "day"]
     entry = oc.pop("_entry")
     horizon = oc.pop("_horizon")
+    if entry is None and info.get("day_move") and not intraday and not [c for c in clauses if c.span == "overnight"]:
+        # "finish the day up more than 1%": the whole session against the previous close, so the decision instant is that close
+        entry, info["sessions"] = "close", 1
+        r.assumptions.append("A move 'on the day' is the whole session against the previous close, so the question is decided at that close and every condition is read as it stood then.")
+        for c in clauses:
+            if c.span == "day":
+                c.label = c.label.replace(" on the session", " in the previous session")
     if entry is None:
         if intraday:
             entry = max((c.at for c in intraday), key=G.tick_order)
@@ -595,6 +641,15 @@ def parse(text: str, known: list[str], default_symbol: str = "SPY", store=None) 
             r.assumptions.append(f"No horizon was stated. The outcome is measured from {'the open' if entry == 'open' else entry + ' New York time'} to that session's close.")
         horizon = "session"
     oc["params"].update(entry=entry, horizon=horizon)
+    # every size the question states must have landed somewhere: in the outcome, or in a condition. One that did not is reported, never dropped
+    used = {float(v) for v in (oc["params"].get("target"), oc["params"].get("stop"), oc["params"].get("threshold")) if v is not None}
+    out_part, cond_part = (re.sub(rf"{N}\s*(?:percent|pct)\b", r"\1%", x) for x in (out_part, cond_part))
+    for tok in re.findall(rf"{N}\s*%", out_part):
+        if float(tok) not in used and not any(re.search(rf"(?<![\d.]){re.escape(tok)}\s*%", c.source or "") for c in clauses):
+            r.unsupported.append(f"the size '{tok}%' in \"{out_part.strip(' ?.')}\"")
+    for tok in re.findall(rf"{N}\s*%", cond_part):
+        if not any(re.search(rf"(?<![\d.]){re.escape(tok)}\s*%", c.source or "") for c in clauses) and float(tok) not in used and not any(tok in u for u in r.unsupported):
+            r.unsupported.append(f"the size '{tok}%' in \"{cond_part.strip(' ?.')}\"")
     if not info["direction_stated"]:
         r.assumptions.append("No direction was stated for the outcome; 'finishes higher' is measured.")
     if entry not in ("open", "close"):
@@ -824,13 +879,18 @@ def entry_conditions(phrase: str, symbol: str, known: list[str], store=None, ent
 
     Returns the list, or None unless the whole phrase was understood. With `partial=True` it returns
     (conditions, sub-phrases that were not understood) so the caller can keep what was read and report the rest."""
-    text = re.sub(r"^\s*(?:and\s+|but\s+)?(?:only\s+)?(?:if|when|whenever|while|provided(?:\s+that)?|as long as)\s+", "", phrase.strip(" ,.;"), flags=re.I)
+    lead = re.match(r"^\s*(?:and\s+|but\s+)?(?:only\s+)?(?:on\s+(?:days?|sessions?|mornings?)\s+)?(if|when|whenever|while|provided(?:\s+that)?|as long as|after|following|once|that|where|on which)\s+", phrase.strip(" ,.;"), flags=re.I)
+    text = phrase.strip(" ,.;")[lead.end():] if lead else phrase.strip(" ,.;")
     if not text:
         return ([], []) if partial else None
     r = Reader(text, known, symbol, store)
     r.symbol = symbol.upper()  # the strategy's own underlying: another symbol named in the phrase is a subject, not the instrument
     clock = entry if entry and re.fullmatch(r"\d\d:\d\d", entry) else None
     intraday_entry = entry != "close"
+    # "after SPY closes down 3%", "on days after a 2% rally": the session spoken of is finished before this entry. And at the open
+    # nothing has happened yet today, so a move with no reference can only be the previous session's.
+    follows = bool(lead and lead.group(1).lower() in ("after", "following", "once")) or entry in ("open", "09:30")
+    default = ("prev", {}) if follows else (("sofar", {}) if intraday_entry else None)
     out, left = [], []
     prev_span = None
     for bit in _clauses_of(text):
@@ -838,7 +898,12 @@ def entry_conditions(phrase: str, symbol: str, known: list[str], store=None, ent
         n0 = len(r.assumptions)
         spanless = _span_match(" " + bit.lower() + " ")[0] is None
         # a present-tense state with no reference ("QQQ is weak") in an intraday entry rule is read as "so far today"
-        cs = _read_clause(r, bit, prev_span or (("sofar", {}) if intraday_entry else None), clock or "12:00")
+        cs = _read_clause(r, bit, prev_span or default, clock or "12:00")
+        if cs and follows:
+            for c in cs:
+                if c.span == "day":  # the completed session the entry follows
+                    c.span, c.at = "prev", "open"
+                    c.label = c.label.replace(" on the session", " in the previous session")
         rules = [_clause_rule(c, r.symbol, clock) for c in cs] if cs and not r.unsupported else [None]
         if any(x is None for x in rules):
             left.append(bit)

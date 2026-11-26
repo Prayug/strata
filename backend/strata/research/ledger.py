@@ -123,10 +123,8 @@ def list_trials(scope: str, symbol: str | None = None, limit: int = 2000) -> lis
         return [dict(r) for r in con.execute(q + " ORDER BY id DESC LIMIT ?", a + [int(limit)])]
 
 
-def delete_scope(scope: str) -> None:
-    with db.connect() as con:
-        con.execute("DELETE FROM trials WHERE scope=?", (scope,))
-        con.execute("DELETE FROM holdouts WHERE scope=?", (scope,))
+# There is deliberately no way to delete trials. What was evaluated, and on which dates, is the record that makes "this final test period
+# has not been looked at" true. Deleting a notebook keeps its trials (db.delete_session), and the database refuses to delete a trial row.
 
 
 # ----------------------------------------------------------------------------- holdouts

@@ -125,6 +125,29 @@ def execute(rid: str, kind: str, payload: dict, progress, should_cancel) -> dict
         from strata.data.catalog import invalidate
         invalidate()
         return out
+    if kind == "alpaca_access":
+        from strata.data.providers.access import alpaca_matrix
+        out = alpaca_matrix(progress=progress, should_cancel=should_cancel, symbol=payload.get("symbol") or "SPY")
+        return {"status": out["status"], "verified": out["verified"], "summary": out["summary"], "requests": len(out["requests"]), "dates": len(out["matrix"])}
+    if kind == "usecase":
+        from strata.research import usecase as U
+        out = U.run(symbol=payload.get("symbol") or "SPY", progress=progress)
+        return {"thresholds": [{"threshold_pct": r["threshold_pct"], "qualifying": r["qualifying"], **{k: r["counts"][k] for k in ("priced_by_engine", "priced_by_reference_only", "agree", "disagree", "missing", "no_contract")}} for r in out["thresholds"]]}
+    if kind == "nl_eval":
+        import json as _json
+
+        from strata.ai import evalset as EV
+        from strata.ai.agent import Agent
+        from strata.config import get_settings as _settings  # (a plain import here would shadow the module-level name for every other branch)
+        from strata.data.store import MarketStore as _Store
+        llm = bool(payload.get("llm"))
+        progress(0.1, "reading 150 sentences")
+        rep = EV.report(Agent(None, _Store()) if llm else Agent(None, _Store(), llm_factory=lambda: None), llm=llm)
+        rep["run_at"] = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(timespec="seconds")
+        d = _settings().data_dir / "reports"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / ("nl_eval_llm.json" if llm else "nl_eval.json")).write_text(_json.dumps(rep, indent=1, default=str))
+        return {k: {x: rep[k][x] for x in ("cases", "correct", "flagged", "silent", "accuracy_pct")} for k in ("development", "held_out")}
     if kind == "provider_benchmark":
         from strata.data.providers.bench import benchmark_source
         return benchmark_source(payload["source"], progress=progress, should_cancel=should_cancel)

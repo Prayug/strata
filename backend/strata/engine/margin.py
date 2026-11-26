@@ -14,6 +14,12 @@ premium already reflected in cash. Buying-power reduction (BPR) = R - entry cash
     side plus the premium of the other side.
   * Under "cash": uncovered puts are cash-secured (strike x multiplier), uncovered calls
     are not permitted (infinite requirement).
+  * Short shares (a delta hedge of long calls or short puts, or stock delivered by an
+    assignment) that are not covered by long calls are a short sale. Under "regt" they
+    need 150% of their market value: the sale proceeds, which are already in cash, plus
+    Reg-T's 50%. A cash account cannot sell short (infinite requirement). The options
+    are then margined as if those shares were not there, which is conservative: a short
+    put is not given credit for the short shares that would offset it.
 """
 from __future__ import annotations
 
@@ -60,11 +66,21 @@ def naked_req(l: MLeg, spot: float) -> float:
     return per * l.multiplier
 
 
+SHORT_STOCK_RATE = 1.5  # Reg-T initial requirement for a short sale, as a multiple of market value (the proceeds plus 50%)
+
+
 def requirement(legs: list[MLeg], shares: float, spot: float, model: str = "regt") -> float:
     legs = [l for l in legs if l.qty != 0]
     mult = legs[0].multiplier if legs else 100.0
     short_calls = sum(-l.qty for l in legs if l.is_call and l.qty < 0)
     long_calls = sum(l.qty for l in legs if l.is_call and l.qty > 0)
+    if shares < -1e-9:
+        # short shares beyond what long calls cover have no bounded loss: margin them as a short sale, then margin the rest without them
+        uncovered = -shares - min(-shares, max(long_calls - short_calls, 0.0) * mult)
+        if uncovered > 1e-9:
+            if model == "cash" or not math.isfinite(spot):
+                return math.inf
+            return SHORT_STOCK_RATE * uncovered * spot + requirement(legs, shares + uncovered, spot, model)
     short_puts = sum(-l.qty for l in legs if not l.is_call and l.qty < 0)
     long_puts = sum(l.qty for l in legs if not l.is_call and l.qty > 0)
     unc_calls = max(0.0, short_calls - long_calls - max(shares, 0.0) / mult)

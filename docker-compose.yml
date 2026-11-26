@@ -2,13 +2,22 @@ services:
   strata:
     build: .
     image: strata:latest
+    # Published on this computer only. Inside a container the computer's own browser cannot be told apart from another
+    # machine, so the two lines below belong together: the port is reachable from this computer alone, and
+    # STRATA_LOOPBACK_PUBLISHED tells Strata that whoever reaches it is therefore local.
+    # To reach Strata from another machine: publish on all interfaces ("8000:8000"), REMOVE STRATA_LOOPBACK_PUBLISHED and
+    # set STRATA_API_TOKEN (every request must then carry it in the X-Strata-Token header).
+    # STRATA_PUBLISH (in .env) changes the address or port on this computer, e.g. 127.0.0.1:8010 when 8000 is taken;
+    # set STRATA_PUBLIC_URL to the address you then open (http://localhost:8010), so that another copy can point to it.
     ports:
-      - "8000:8000"
+      - "${STRATA_PUBLISH:-127.0.0.1:8000}:8000"
     env_file:
       - path: .env
         required: false
     environment:
       STRATA_DATA_DIR: /app/data
+      STRATA_LOOPBACK_PUBLISHED: "1"
+      STRATA_PUBLIC_URL: ${STRATA_PUBLIC_URL:-http://localhost:8000}
       # Theta Terminal runs on the host; reach it from the container:
       THETADATA_BASE_URL: ${THETADATA_BASE_URL:-http://host.docker.internal:25510}
     volumes:

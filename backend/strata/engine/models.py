@@ -1,12 +1,14 @@
 """Declarative configuration schemas shared by the engine, API and UI."""
 from __future__ import annotations
 
+import re
+
 import hashlib
 import json
 from datetime import date
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class StrikeSel(BaseModel):
@@ -130,7 +132,9 @@ class MaxHold(BaseModel):
 
 class UnderlyingExit(BaseModel):
     """Exits on the UNDERLYING's price. "For" and "against" follow the sign of the position's
-    delta at entry. ATR distances use the daily average true range as it stood at the entry
+    delta at entry (where a delta is unknown or vanishing, the sign of the legs themselves: long
+    calls and short puts are bullish). A position is neutral only when its bullish and bearish
+    legs offset each other, never merely because its delta is small. ATR distances use the daily average true range as it stood at the entry
     (fixed for the life of the position); an entry whose ATR cannot be computed is skipped
     and reported. Trailing thresholds follow the best underlying price since entry, so they
     also act as an initial stop at the same distance; they do not apply to a position that
@@ -241,6 +245,9 @@ class RegimeSettings(BaseModel):
     trend_slow: int = 200
 
 
+_SYMBOL = re.compile(r"[A-Za-z0-9^][A-Za-z0-9^=_-]{0,15}(?:\.[A-Za-z0-9]{1,6})?")
+
+
 class StrategyConfig(BaseModel):
     name: str = "Untitled strategy"
     symbol: str = "SPY"
@@ -252,6 +259,14 @@ class StrategyConfig(BaseModel):
     allocation: float = Field(1.0, gt=0, le=1.0)
     vol_symbol: Optional[str] = None
     regime: RegimeSettings = RegimeSettings()
+
+    @field_validator("symbol", "vol_symbol")
+    @classmethod
+    def _symbol_is_a_name(cls, v):
+        # a symbol also names folders in the data store, so it is a ticker and never a path or a pattern
+        if v is not None and not _SYMBOL.fullmatch(str(v)):
+            raise ValueError(f"{str(v)[:40]!r} is not a ticker symbol")
+        return v
 
     def legs_for(self, system: str | None) -> list[LegSpec]:
         """The legs a position opened by `system` uses (the strategy's own unless that system brings its own)."""

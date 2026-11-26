@@ -13,6 +13,7 @@ import { MODE_NAME, useAiMeta, type AiMessage, type AiPayload } from "@/lib/lab"
 import { Empty, Skeleton, useHotkeys } from "./bits";
 import { Canvas } from "./Canvas";
 import { Compare } from "./Compare";
+import { CostView, DataCheckView, FillsView, StageRail, UntestedView, type Alt } from "./Coverage";
 import { Composer, InterpreterChip, type ComposerHandle } from "./Landing";
 import { Message, type Actions, type OpenTarget } from "./Messages";
 import { Timeline } from "./Pipeline";
@@ -24,7 +25,7 @@ import { DiscoveryView, InvestigationView, SweepView } from "./Views";
 
 type View = OpenTarget | { type: "compare" } | { type: "canvas" } | null;
 const PENDING = ["plan", "sweep", "run", "investigation", "discovery", "hypothesis", "stress", "challenge", "graph"];
-const MSG_VIEWS = ["sweep", "investigation", "discovery", "hypothesis", "execution", "challenge", "analysis", "graph", "graph_batch"];
+const MSG_VIEWS = ["sweep", "investigation", "discovery", "hypothesis", "execution", "challenge", "analysis", "graph", "graph_batch", "fills", "untested", "cost"];
 const MSG_KINDS = ["memory", "registry", "strategy_plan"];  // answers that open on the right without being a run result
 const isPending = (m: AiMessage) => PENDING.includes(m.kind) && m.content?.runs?.length > 0 && !m.content.finalized;
 const TAB_OF: Record<string, string> = { robustness: "robustness", skipped: "observations", breakdown: "statistics", timing: "statistics" };
@@ -49,7 +50,7 @@ function resultName(m: AiMessage, all: AiMessage[]) {
   const c = m.content;
   const kind = { sweep: `Comparison${c.what ? `: ${c.what}` : ""}`, investigation: `${c.plan?.stage === "options" ? "Option structures" : "Investigation"}: ${c.plan?.question || c.plan?.hypothesis || ""}`,
     discovery: `Exploration: ${c.discovery?.hypothesis || c.discovery?.question || ""}`, hypothesis: `Plan: ${c.question || ""}`, execution: `Execution stress: ${strip(c.label || "").replace(/^Execution stress: /, "")}`,
-    challenge: `Review: ${strip(c.label || "").replace(/^Challenge: /, "")}`, analysis: `Answer: ${c.analysis?.title || ""}`, graph: `Graph: ${c.question || c.label || ""}`, graph_batch: `Re-test: ${c.label || ""}` }[c.view as string];
+    challenge: `Review: ${strip(c.label || "").replace(/^Challenge: /, "")}`, fills: "Every fill and its source", untested: "Sessions that could not be tested", cost: "What the missing data would cost", analysis: `Answer: ${c.analysis?.title || ""}`, graph: `Graph: ${c.question || c.label || ""}`, graph_batch: `Re-test: ${c.label || ""}` }[c.view as string];
   if (kind) return kind.slice(0, 80);
   const asked = [...all].reverse().find((x) => x.role === "user" && x.id < m.id)?.content?.text;
   return `${String(asked || strip(c.label || c.title) || "Result").slice(0, 64)}${c.mode && c.mode !== "study" ? ` (${(MODE_NAME[c.mode] || c.mode).replace("Options · ", "")})` : ""}`;
@@ -57,7 +58,7 @@ function resultName(m: AiMessage, all: AiMessage[]) {
 
 const STUDY_NEXT = ["Challenge this result", "How much of the result is explained by volatility?", "Test option structures on this", "Compare that with 2% and 4% down days", "What time of day does it usually hit the target?", "Show every qualifying historical session", "Test ATM 0DTE calls on those days using historical option trade prices", "Is this statistically significant?", "Test whether the results hold up out of sample", "Export the complete research report"];
 const GRAPH_NEXT = ["Compare that behavior with QQQ and IWM.", "Show the distribution of price paths following those events.", "Find which historical conditions are associated with that outcome.", "Build a strategy from the strongest supported finding.", "Check whether I've already tested similar configurations on this holdout.", "What have we found so far?"];
-const OPTION_NEXT = ["Challenge this strategy", "Stress-test the execution", "Are most profits concentrated in a handful of sessions?", "Compare the results with 7DTE calls", "Include commissions and conservative slippage", "Show me every skipped signal and why", "Show me the losing trades", "Test whether the results hold up out of sample", "Export the complete research report"];
+const OPTION_NEXT = ["Show exactly which historical sessions could not be tested", "Show every actual option fill and its source", "Estimate what it would cost to acquire the missing observations", "Challenge this strategy", "Stress-test the execution", "Are most profits concentrated in a handful of sessions?", "Compare the results with 7DTE calls", "Include commissions and conservative slippage", "Show me every skipped signal and why", "Show me the losing trades", "Test whether the results hold up out of sample", "Export the complete research report"];
 
 export function Workspace({ sid }: { sid: string }) {
   const nav = useNavigate();
@@ -147,7 +148,7 @@ export function Workspace({ sid }: { sid: string }) {
     return null;
   }, [view, messages, lastPlan]);
   const pinned = data?.pinned || [];
-  const runNames = useMemo(() => Object.fromEntries(results.filter((m) => m.content.run_id).map((m) => [m.content.run_id, resultName(m, messages)])), [results, messages]);
+  const runNames = useMemo(() => Object.fromEntries(results.filter((m) => m.content.run_id && !["fills", "untested", "cost"].includes(m.content.view)).map((m) => [m.content.run_id, resultName(m, messages)])), [results, messages]);
   const pin = (runId: string, on?: boolean) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/pin`, { run_id: runId, on: on ?? !pinned.includes(runId) }));
   const actions: Actions = {
     answer: (version_id, question_id, option) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/answer`, { version_id, question_id, option })),
@@ -163,6 +164,12 @@ export function Workspace({ sid }: { sid: string }) {
     ask: (text) => send(text),
     strategyFrom: (finding_id) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/strategy-from-finding`, { finding_id: finding_id ?? null })),
     backtestPlan: () => act.mutate(() => api.post(`/api/ai/sessions/${sid}/backtest-plan`, {})),
+    pickAlt: (version_id, alt: Alt) => {
+      // each alternative is an explicit choice by the person; none of them alters the strategy that was asked for
+      const mode = ({ study: "study", subset: "auto", modeled: "modeled" } as Record<string, string>)[alt.id];
+      if (mode) act.mutate(() => api.post(`/api/ai/sessions/${sid}/run`, { version_id, mode }));
+      else nav(alt.id === "connect" ? "/data?tab=readiness" : "/data?tab=bulk");
+    },
     busy: act.isPending,
     pinned,
   };
@@ -198,7 +205,43 @@ export function Workspace({ sid }: { sid: string }) {
   const graphLast = lastRes && ["graph", "graph_batch"].includes(lastRes.content.view) && (!lastRun || lastRes.id > lastRun.id);
   const chips = act.isPending || pending ? [] : graphLast ? GRAPH_NEXT : !lastRun || lastRes?.content.view === "hypothesis" ? [] : optionRes ? OPTION_NEXT : STUDY_NEXT;
   const planMsg = eff?.type === "setup" ? plans.find((m) => m.content.version_id === eff.versionId) || lastPlan : null;
-  const msg = eff?.type === "message" ? messages.find((m) => m.id === eff.messageId) : null;
+  const msg = eff?.type === "message" || eff?.type === "data" ? messages.find((m) => m.id === eff.messageId) : null;
+  // the stages of the newest request, and the surface each one opens
+  // The rail follows the newest piece of research (a request that was planned or run), not the newest sentence: a question
+  // about its result is its "follow up" stage. What happened after the plan was written is read from the conversation.
+  const stagedOf = (pred: (st: any[]) => boolean) => [...messages].reverse().find((m) => m.role === "assistant" && pred(m.content?.intent?.stages || []));
+  const launched = [...messages].reverse().find((m) => m.role === "assistant" && m.kind !== "result" && (m.content?.intent?.stages || []).some((x: any) => ["plan", "execute"].includes(x.stage)));
+  const staged = launched || stagedOf((st) => st.length > 0);
+  const stages = (() => {  // computed in place: this sits below the early returns, where a hook may not be
+    if (!staged) return [];
+    const st: any[] = (staged.content.intent.stages as any[]).map((x) => ({ ...x }));
+    const set = (stage: string, status: string, detail: string) => { const x = st.find((y) => y.stage === stage); if (x) Object.assign(x, { status, detail }); else st.push({ stage, status, detail }); };
+    const after = messages.filter((m) => m.id > staged.id);
+    const res = after.filter((m) => m.kind === "result");
+    const failed = res.some((m) => m.content?.view === "failed");
+    const done = res.some((m) => m.content?.view !== "failed") || (staged.kind === "result" && staged.content?.view !== "failed");
+    const ex = st.find((x) => x.stage === "execute");
+    if (ex && ex.status === "running" && (done || failed || staged.content?.finalized)) set("execute", failed && !done ? "failed" : "done", failed && !done ? "the run did not finish" : "finished");
+    if (done) set("explain", "done", "the result is reported with its coverage, its observations and its limits");
+    if (staged.kind === "sweep" && !st.some((x) => x.stage === "plan")) set("plan", "done", String(staged.content?.text || "a set of variants of the current version"));
+    // a set of variants is checked against the data run by run: its coverage is read from the result's own table
+    const rows: any[] = res.map((m) => m.content?.table?.rows || []).find((r) => r.some((x: any) => Number.isFinite(x.values?.qualifying))) || [];
+    if (!st.some((x) => x.stage === "data") && rows.length) {
+      const of = Math.max(...rows.map((x) => x.values.qualifying || 0)), priced = Math.min(...rows.map((x) => x.values.executable || 0));
+      const short = rows.some((x) => (x.values.executable || 0) < (x.values.qualifying || 0));
+      st.push({ stage: "data", status: short ? "attention" : "done", priced, of, detail: rows.map((x) => `${String(x.label).replace(/^v\d+\s*-?\s*/, "")}: ${(x.values.executable || 0).toLocaleString()} of ${(x.values.qualifying || 0).toLocaleString()} qualifying sessions priced`).join("; ") });
+    }
+    const asks = after.filter((m) => m.role === "user").length;
+    if (asks) set("followup", "done", `${asks} follow-up question${asks === 1 ? "" : "s"} on this result`);
+    return st;
+  })();
+  const checked = [...messages].reverse().find((m) => m.kind === "plan" && m.content?.data_check);
+  const openStage = (id: string) => {
+    if (id === "data") { if (checked) go({ view: { type: "data", messageId: checked.id } }); return; }
+    if (["understand", "validate", "plan"].includes(id)) { if (lastPlan) go({ view: { type: "setup", versionId: lastPlan.content.version_id } }); return; }
+    if (id === "execute" || id === "explain") { if (lastRes) go(targetOf(lastRes)); return; }
+    comp.current?.focus();
+  };
   const liveRun = [...messages].reverse().find(isPending);
 
   const right = (
@@ -233,6 +276,10 @@ export function Workspace({ sid }: { sid: string }) {
         {eff?.type === "message" && msg?.content.view === "challenge" && <ChallengeView runId={msg.content.run_id} />}
         {eff?.type === "message" && msg?.content.view === "analysis" && <AnalysisView c={msg.content} />}
         {eff?.type === "message" && msg && ["graph", "graph_batch"].includes(msg.content.view) && <GraphView key={msg.content.run_id} runId={msg.content.run_id} findings={msg.content.findings || []} busy={act.isPending} onStrategy={(id) => actions.strategyFrom(id)} onAsk={send} />}
+        {eff?.type === "data" && msg?.content.data_check && <DataCheckView check={msg.content.data_check} busy={act.isPending} onPick={(x) => actions.pickAlt(msg.content.version_id, x)} />}
+        {eff?.type === "message" && msg?.content.view === "fills" && <FillsView c={msg.content} />}
+        {eff?.type === "message" && msg?.content.view === "untested" && <UntestedView c={msg.content} />}
+        {eff?.type === "message" && msg?.content.view === "cost" && <CostView c={msg.content} busy={act.isPending} onPick={(x) => actions.pickAlt(msg.content.version_id, x)} />}
         {eff?.type === "message" && msg?.kind === "memory" && <MemoryView key={messages.length} sid={sid} onAsk={send} />}
         {eff?.type === "message" && msg?.kind === "registry" && <RegistryCheckView c={msg.content} />}
         {eff?.type === "message" && msg?.kind === "strategy_plan" && <StrategyPlanView c={msg.content} busy={act.isPending} onBacktest={actions.backtestPlan} />}
@@ -261,6 +308,7 @@ export function Workspace({ sid }: { sid: string }) {
         <InterpreterChip />
         {!showRight && <button className="btn quiet sm !px-1.5" onClick={() => setShowRight(true)} aria-label="Show the workspace" title="Show the workspace"><PanelRightOpen /></button>}
       </div>
+      {stages.length > 0 && <div className="shrink-0 border-b border-line bg-bg-1/60 px-3 py-1"><StageRail stages={stages} onStage={openStage} /></div>}
       <div className="min-h-0 flex-1 overflow-auto">
         <div className={cn("mx-auto flex w-full flex-col gap-3 px-4 py-4", showRight ? "max-w-[720px]" : "max-w-[820px]")} data-testid="conversation">
           {messages.length === 0 && !act.isPending && <div className="pt-10 text-center text-[13.5px] dim">Ask a question about the market, or describe a strategy in plain words.</div>}

@@ -134,11 +134,11 @@ test("forward validation freezes a study and refuses to judge it on sessions it 
   await page.getByTestId("forward-freeze").click();
   const d = page.getByTestId("forward-detail");
   await expect(d).toBeVisible();
-  await expect(d).toContainText("frozen after");
+  await expect(d).toContainText("first session that counts");
   await d.getByTestId("forward-evaluate").click();
-  // nothing after the activation date is stored, so there is no forward evidence yet, and it says so
+  // no session has closed since the configuration was frozen, so there is no forward evidence yet, and it says so
   await expect(d).toContainText("waiting", { timeout: 30_000 });
-  await expect(d).toContainText(/No session after \d{4}-\d{2}-\d{2} is stored yet/);
+  await expect(d).toContainText(/No session since activation has closed yet\. The first session that can count is \d{4}-\d{2}-\d{2}/);
   // the frozen configuration cannot be edited through the API either: a change is a new version
   const ex = (await (await request.get("/api/forward")).json()).experiments[0];
   const same = await request.post(`/api/forward/${ex.id}/version`, { data: { config: ex.config } });

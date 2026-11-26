@@ -304,16 +304,23 @@ def run_once(progress=None, should_cancel=None, trigger: str = "manual", store: 
     from strata.data.providers import sources as S
     if not _lock.acquire(blocking=False):
         raise RuntimeError("a collection cycle is already running in this process")
-    recover_interrupted()
-    other = _other_running()
-    if other is not None:
+    try:
+        recover_interrupted()
+        store = store or MarketStore()
+        cfg = load_config()
+        started = db.now()
+        with db.connect() as con:
+            # the check and the claim are one step: the application and a collector beside it share this database, and
+            # two processes that both looked first and wrote second would both have found nothing running
+            con.execute("BEGIN IMMEDIATE")
+            other = con.execute("SELECT id, started_at FROM collector_runs WHERE status='running' ORDER BY id DESC LIMIT 1").fetchone()
+            if other is not None:
+                con.rollback()
+                raise RuntimeError(f"another collector process is running (cycle {other['id']}, started {other['started_at']}); two cycles never run at once")
+            run_id = con.execute("INSERT INTO collector_runs (started_at, status, trigger, report) VALUES (?,?,?,?)", (started, "running", trigger, json.dumps({"heartbeat": started, "pid": os.getpid()}))).lastrowid
+    except BaseException:
         _lock.release()
-        raise RuntimeError(f"another collector process is running (cycle {other['id']}, started {other['started_at']}); two cycles never run at once")
-    store = store or MarketStore()
-    cfg = load_config()
-    started = db.now()
-    with db.connect() as con:
-        run_id = con.execute("INSERT INTO collector_runs (started_at, status, trigger, report) VALUES (?,?,?,?)", (started, "running", trigger, json.dumps({"heartbeat": started, "pid": os.getpid()}))).lastrowid
+        raise
     rep = {"trigger": trigger, "started_at": started, "symbols": {}, "requests": 0, "bars": 0, "errors": [], "notes": [], "bytes_before": store.storage_bytes(), "health": [], "integrity": [], "recovered": [], "unrecoverable": []}
     status = "done"
     t0 = time.time()

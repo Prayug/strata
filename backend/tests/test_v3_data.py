@@ -182,25 +182,38 @@ def test_discovery_is_unchanged_when_the_future_is_rewritten(store, monkeypatch,
 
 def test_discovery_asks_for_inactive_contracts_too(store, monkeypatch):
     """A contract that expired long ago is `inactive` today, yet it was tradable on its
-    session. Filtering on today's status (the endpoint's default is active only) loses it."""
+    session. Filtering on today's status (the endpoint's default is active only) loses it.
+    Only the statuses that can match the expiration window are asked for: an expired window
+    is `inactive` only, a window around today needs both."""
     def handler(req):
         st = req.url.params["status"]
         return httpx.Response(200, json={"option_contracts": [_contract_json(A, "inactive")] if st == "inactive" else [], "next_page_token": None})
     calls = use(monkeypatch, handler)
     with S._client() as client:
         got = S.Alpaca(store).list_contracts(client, "SPY", D1, D1, D1 + timedelta(days=3), 490, 510)
-    assert {c.url.params["status"] for c in calls} == {"active", "inactive"}
+    assert {c.url.params["status"] for c in calls} == {"inactive"}, "expirations in the past: `active` cannot match and is not asked for"
     assert [c.occ for c in got] == [A] and got[0].status == "inactive" and got[0].provider_id == f"id-{A}" and got[0].multiplier == 100.0
     assert all(c.url.params["expiration_date_gte"] == D1.isoformat() for c in calls)  # never an expiration before the session
+    # a window that reaches today: a contract may be either, so both are asked
+    today = datetime.now(cal.ET).date()
+    calls.clear()
+    with S._client() as client:
+        S.Alpaca(store).list_contracts(client, "SPY", today - timedelta(days=2), today - timedelta(days=2), today + timedelta(days=3), 490, 510)
+    assert {c.url.params["status"] for c in calls} == {"active", "inactive"}
+    # entirely in the future: only `active`
+    calls.clear()
+    with S._client() as client:
+        S.Alpaca(store).list_contracts(client, "SPY", today, today + timedelta(days=10), today + timedelta(days=20), 490, 510)
+    assert {c.url.params["status"] for c in calls} == {"active"}
 
 
 def test_contract_listing_is_paginated(store, monkeypatch):
     def handler(req):
-        if req.url.params["status"] != "active":
+        if req.url.params["status"] != "inactive":
             return httpx.Response(200, json={"option_contracts": [], "next_page_token": None})
         if req.url.params.get("page_token") == "t2":
-            return httpx.Response(200, json={"option_contracts": [_contract_json(B, "active")], "next_page_token": None})
-        return httpx.Response(200, json={"option_contracts": [_contract_json(A, "active")], "next_page_token": "t2"})
+            return httpx.Response(200, json={"option_contracts": [_contract_json(B, "inactive")], "next_page_token": None})
+        return httpx.Response(200, json={"option_contracts": [_contract_json(A, "inactive")], "next_page_token": "t2"})
     use(monkeypatch, handler)
     with S._client() as client:
         got = S.Alpaca(store).list_contracts(client, "SPY", D1, D1, D1, 490, 510)

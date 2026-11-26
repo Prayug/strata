@@ -213,6 +213,10 @@ def expand_trade_bars(bars: pl.DataFrame, ticks: list[int], ser: "UnderlyingSeri
     return df, stats
 
 
+SCALE_BAND = 0.2  # an official close more than 20% from the last intraday bar means different price scales (an unadjusted split), not a late print
+CLOSE_GAP_PCT = 0.25  # a gap larger than this between the last intraday bar and the official close is reported as a data-quality finding
+
+
 class UnderlyingSeries:
     """Price bars for the whole run (+warmup) with point-in-time lookups.
 
@@ -233,12 +237,29 @@ class UnderlyingSeries:
         self.c = df["close"].to_numpy().astype(float)
         self.v = df["volume"].fill_null(0).to_numpy().astype(float)
         self.day = df["_d"].to_numpy().astype(np.int64)
+        self.volume_artefacts = 0
         self.bar_seconds = bar_seconds
         # nominal resolution of each bar in seconds (86400 marks a daily bar)
         self.res = df["res"].to_numpy().astype(np.int64) if "res" in df.columns else (self.end - self.ts)
         self.days, self.day_start = np.unique(self.day, return_index=True)
         self.day_end = np.r_[self.day_start[1:], len(self.ts)]
         n = len(self.ts)
+        if n:
+            # a bar that carries the day's running total instead of its own volume gets no weight (in VWAP, in volume sums): its volume is unknown
+            # (only on feeds that can produce it: the consolidated tape's own volume is kept as it is, large blocks included)
+            from strata.data.quality import artefact_prone, cumulative_volume_artefacts
+            prov = df["provider"].to_list() if "provider" in df.columns else None
+            fine = np.flatnonzero(self.res[self.day_start] <= 300)
+            if fine.size:
+                self.v = self.v.copy()
+                for k in fine:
+                    a, b = int(self.day_start[k]), int(self.day_end[k])
+                    if prov is not None and not artefact_prone(prov[a]):
+                        continue
+                    bad = cumulative_volume_artefacts(self.v[a:b], int(self.res[a]))
+                    if bad.any():
+                        self.v[a:b][bad] = 0.0
+                        self.volume_artefacts += int(bad.sum())
         self.d_o = self.o[self.day_start] if n else np.array([])
         self.d_c = self.c[self.day_end - 1] if n else np.array([])
         self.d_h = np.maximum.reduceat(self.h, self.day_start) if n else np.array([])
@@ -249,18 +270,32 @@ class UnderlyingSeries:
         # finest bar length (seconds) available in each session
         self.d_res = np.minimum.reduceat(self.res, self.day_start) if n else np.array([], np.int64)
         self.official_closes = 0
+        self.close_gaps: list[tuple[int, float, float]] = []  # (day number, close of the last intraday bar, official close) where they differ by more than CLOSE_GAP_PCT
+        self.scale_mismatches = 0
         if official is not None and n and not official.is_empty():
-            # Session closes come from the daily record (the official closing print) where one
-            # exists: the last intraday bar's close can differ from it by a few cents, and
-            # day-over-day returns should match published closes. Intraday bars are untouched.
+            # Session closes come from the daily record (the official closing print) wherever one exists: day-over-day
+            # returns, "fell 3% yesterday" and expiration settlement must match the published close. The last intraday
+            # bar usually agrees to a few cents, but not always: free intraday feeds can end before the closing auction
+            # (SPY, 2025-04-09: last hourly bar 542.84, official close 548.62). The official close wins unless the two are
+            # on different price scales (an unadjusted split), which only a large ratio can indicate. Intraday bars are untouched.
             od = official["date"].cast(pl.Int32).to_numpy().astype(np.int64)
             oc = official["close"].to_numpy().astype(float)
             idx = np.searchsorted(od, self.days)
             ok = (idx < len(od)) & (self.d_res < 86400)
             ok[ok] &= od[idx[ok]] == self.days[ok]
-            ok[ok] &= np.isfinite(oc[idx[ok]]) & (np.abs(oc[idx[ok]] / self.d_c[ok] - 1) < 0.01)
+            ok[ok] &= np.isfinite(oc[idx[ok]])
+            ratio = np.ones(len(self.days))
+            ratio[ok] = oc[idx[ok]] / self.d_c[ok]
+            same_scale = np.abs(ratio - 1) < SCALE_BAND
+            self.scale_mismatches = int((ok & ~same_scale).sum())
+            ok &= same_scale
+            for i in np.flatnonzero(ok & (np.abs(ratio - 1) * 100 > CLOSE_GAP_PCT)):
+                self.close_gaps.append((int(self.days[i]), float(self.d_c[i]), float(oc[idx[i]])))
             self.d_c = self.d_c.copy()
             self.d_c[ok] = oc[idx[ok]]
+            # the official close is a print of the session: its range cannot exclude it
+            self.d_h = np.where(ok, np.maximum(self.d_h, self.d_c), self.d_h)
+            self.d_l = np.where(ok, np.minimum(self.d_l, self.d_c), self.d_l)
             self.official_closes = int(ok.sum())
         self._tf_cache: dict = {}
         self._ind_cache: dict = {}
@@ -317,8 +352,9 @@ class UnderlyingSeries:
         return float(self.o[self.day_start[di]]) if di >= 0 else float("nan")
 
     def session_close(self, d: date) -> float:
+        """The session's closing price: the official close where a daily record exists (settlement uses this), else the last bar's close."""
         di = self.day_index(d)
-        return float(self.c[self.day_end[di] - 1]) if di >= 0 else float("nan")
+        return float(self.d_c[di]) if di >= 0 else float("nan")
 
     def range_between(self, t0: int, t1: int) -> tuple[float, float]:
         """High/low of bars that completed in (t0, t1]."""

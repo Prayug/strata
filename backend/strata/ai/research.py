@@ -171,6 +171,15 @@ def detect_followup(text: str, cur: Draft, known: list[str]) -> dict | None:
     low = text.lower().strip()
     if re.search(r"\b(export|download|save|share|print)\b[^.]{0,40}\b(report|results?|research|trade log|trades|configuration|config)\b|\breport\b.*\b(pdf|html|file)\b", low):
         return {"action": "export"}
+    # the three questions a result has to be able to answer about itself: what was filled and from what, what could not be tested, what the rest would cost
+    if re.search(r"\b(?:every|each|all|the)\b[^.?]{0,40}\bfills?\b|\bfills?\b[^.?]{0,30}\b(?:source|came from|come from|priced)|where (?:did|do) the (?:prices?|fills?|premiums?) come from|source of (?:each|every|the) (?:fill|price|premium)", low):
+        return {"action": "fills"}
+    if re.search(r"(?:which|what|exactly which)\b[^.?]{0,50}\b(?:sessions?|days|dates|signals?)\b[^.?]{0,40}\b(?:could not|couldn'?t|cannot|can'?t|were not|weren'?t|was not|not)\s+(?:be\s+)?(?:tested|priced|evaluated|backtested|filled)|"
+                 r"\buntested (?:sessions?|days|dates)|(?:sessions?|days|dates) (?:that )?(?:are|were) (?:missing|untested|not tested)|what (?:is|was) missing", low):
+        return {"action": "untested"}
+    if re.search(r"(?:estimate|how much|what would it cost|what does it cost|cost)\b[^.?]{0,70}\b(?:acquire|obtain|buy|get|download|fill in|purchase)\b[^.?]{0,50}\b(?:missing|data|observations|sessions|prices)|cost (?:of|to get) (?:the )?missing|"
+                 r"what would (?:the )?(?:missing )?data cost|how much (?:would|does) (?:the )?(?:missing )?data cost", low):
+        return {"action": "cost"}
     m = re.search(r"\b(show|list|display|see|give me|open|view)\b[^.?]{0,40}\b(sessions?|days|dates|trades|observations|occurrences|instances)\b", low)
     if m and not re.search(r"skipped|not taken|unexecuted|missed signal|why", low):
         w = low[m.start():m.end()]

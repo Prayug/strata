@@ -70,6 +70,9 @@ def dataset_coverage(store: MarketStore, key: DatasetKey) -> dict:
             out.update(first=days[0].isoformat(), last=days[-1].isoformat(), sessions=len(days), rows=int(idx["bars"].sum()), contract_sessions=idx.height,
                        contract_sessions_with_trades=ok.height, contract_sessions_without_trades=idx.height - ok.height, contracts=int(idx["occ"].n_unique()),
                        expirations=int(idx["expiration"].n_unique()), selective=True,
+                       # sessions the provider holds only in part (its history starts late, stops early or is absent): stored, never priced
+                       partial_sessions=sorted(d for d, v in store.session_states(key).items() if v.get("status") == "partial")[-40:],
+                       partial_count=sum(1 for v in store.session_states(key).values() if v.get("status") == "partial"),
                        per_session=[{"date": r["date"].isoformat(), "contracts": r["n"], "bars": r["bars"]} for r in idx.group_by("date").agg(pl.len().alias("n"), pl.col("bars").sum()).sort("date").iter_rows(named=True)][-400:])
     else:
         od = store.option_days(key.symbol, key.obs, dataset=key)
@@ -151,7 +154,7 @@ def symbol_coverage(store: MarketStore, sym: str) -> dict:
     if t is not None and by.get(t.id, {}).get("sessions"):
         c = by[t.id]
         out["option_trades"] = {**{k: c.get(k) for k in ("first", "last", "sessions", "rows", "contract_sessions", "contract_sessions_with_trades", "contract_sessions_without_trades",
-                                                         "contracts", "expirations", "per_session", "license", "limitations", "format")},
+                                                         "contracts", "expirations", "per_session", "partial_sessions", "partial_count", "license", "limitations", "format")},
                                 "resolution": c["resolution"], "quote_type": "trades", "provider": c["provider"], "dataset": c["id"], "selective": bool(c.get("selective")),
                                 "alternatives": [d["id"] for d in dsets if d["dtype"] == "options" and d["obs"] == "trade" and d["id"] != c["id"]]}
     iv = store.read_iv_history(sym)

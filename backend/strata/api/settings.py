@@ -5,6 +5,13 @@ operating system's keychain where one is available (macOS Keychain, or the Secre
 through `secret-tool` on Linux) and otherwise in a file readable only by the owner
 (`<data>/secrets.json`, mode 0600). They can also be supplied as environment variables.
 
+A data directory can be used by the app running directly on the computer and, at another
+time, by a container: the two do not see the same credential store. A key saved inside a
+container lands in the protected file, which the native app reads as well (after its own
+keychain). A key saved in the macOS Keychain cannot be read from a container; the settings
+table records WHERE each key was stored (never the key), so the other side can say so
+instead of reporting that no key exists.
+
 A credential is never returned by an endpoint (only whether it is set, where it is stored
 and its last four characters), never written to a log, never placed in a prompt, and is
 scrubbed from any provider error before that error is shown or stored.
@@ -18,6 +25,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 
 from strata.api import db
 from strata.config import get_settings
@@ -78,6 +86,17 @@ def _file_write(d: dict) -> None:
     os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)
 
 
+def _file_drop(name: str) -> None:
+    """Remove one key from the protected file (a copy a container left there), if the file holds it."""
+    d = _file_read()
+    if name in d:
+        d.pop(name)
+        if d:
+            _file_write(d)
+        else:
+            _secrets_file().unlink(missing_ok=True)
+
+
 def _run(cmd: list[str], data: str | None = None) -> tuple[int, str]:
     try:
         r = subprocess.run(cmd, input=data, capture_output=True, text=True, timeout=10)
@@ -87,14 +106,23 @@ def _run(cmd: list[str], data: str | None = None) -> tuple[int, str]:
 
 
 def _store_get(name: str) -> str | None:
+    return _store_find(name)[0]
+
+
+def _store_find(name: str) -> tuple[str | None, str | None]:
+    """(value, where it was found). The operating system's store is asked first; the protected file in the data directory
+    second, because a copy of Strata running in a container on this data directory can only have saved a key there."""
     b = secret_backend()
     if b == "keychain":
         code, out = _run(["security", "find-generic-password", "-s", SERVICE, "-a", name, "-w"])
-        return out.strip() or None if code == 0 else None
-    if b == "secret-tool":
+        if code == 0 and out.strip():
+            return out.strip(), "keychain"
+    elif b == "secret-tool":
         code, out = _run(["secret-tool", "lookup", "service", SERVICE, "account", name])
-        return out.strip() or None if code == 0 else None
-    return _file_read().get(name) or None
+        if code == 0 and out.strip():
+            return out.strip(), "secret-tool"
+    v = _file_read().get(name) or None
+    return (v, "file") if v else (None, None)
 
 
 def _store_set(name: str, value: str | None) -> None:
@@ -109,6 +137,7 @@ def _store_set(name: str, value: str | None) -> None:
             code, out = _run(["security", "find-generic-password", "-s", SERVICE, "-a", name, "-w"])
             if code != 0 or out.strip() != value:
                 raise RuntimeError("the macOS keychain did not store the credential")
+        _file_drop(name)
         return
     if b == "secret-tool":
         if value:
@@ -117,6 +146,7 @@ def _store_set(name: str, value: str | None) -> None:
                 raise RuntimeError("the system keyring refused to store the credential")
         else:
             _run(["secret-tool", "clear", "service", SERVICE, "account", name])
+        _file_drop(name)
         return
     d = _file_read()
     if value:
@@ -126,15 +156,41 @@ def _store_set(name: str, value: str | None) -> None:
     _file_write(d)
 
 
-_cache: dict[str, str | None] = {}
+_cache: dict[str, tuple[str | None, str | None, float]] = {}  # name -> (value, where, good until)
+FOUND_TTL, MISSING_TTL = 60.0, 3.0  # an absence is only remembered briefly: another process (or a container) may have just saved the key
+WHERE_KEY = "secrets.where"  # settings row: which store each key was saved to, and from where. Never the key.
+STORE_LABEL = {"keychain": "macOS Keychain", "secret-tool": "system keyring", "file": "protected file (owner-only)"}
+
+
+def _where_map() -> dict:
+    try:
+        m = get_setting(WHERE_KEY)
+        return m if isinstance(m, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _record_where(name: str, store: str | None) -> None:
+    from strata.core import instance
+    try:
+        m = _where_map()
+        if store:
+            m[name] = {"store": store, "label": STORE_LABEL.get(store, store), "from": instance.where(), "container": instance.in_container(), "at": db.now()}
+        else:
+            m.pop(name, None)
+        set_setting(WHERE_KEY, m or None)
+    except Exception:  # noqa: BLE001
+        pass  # the note is a convenience for the other side; storing the key does not depend on it
 
 
 def set_secret(name: str, value: str | None) -> None:
     if name not in SECRETS:
         raise ValueError(f"unknown credential {name!r}")
-    _store_set(name, (value or "").strip() or None)
+    value = (value or "").strip() or None
+    _store_set(name, value)
     _cache.pop(name, None)
     _legacy_remove(name)
+    _record_where(name, secret_backend() if value else None)
 
 
 def _legacy_remove(name: str) -> None:
@@ -165,10 +221,22 @@ def migrate_legacy_secrets() -> int:
                 _store_set(name, str(val))
             except RuntimeError:
                 continue  # leave it where it is rather than lose it
+            _record_where(name, secret_backend())
             moved += 1
         _legacy_remove(name)
     _cache.clear()
     return moved
+
+
+def backfill_where() -> int:
+    """Note where each key that is readable here is stored, for keys saved before that note existed. Returns how many were added."""
+    m, n = _where_map(), 0
+    for name in SECRETS:
+        v, where = _lookup(name)
+        if v and where in STORE_LABEL and name not in m:
+            _record_where(name, where)
+            n += 1
+    return n
 
 
 def known_secret_values() -> list[str]:
@@ -203,8 +271,11 @@ def _row(key: str):
 
 
 def get_setting(key: str, default=None):
+    from strata.core.instance import Busy
     try:
         r = _row(key)
+    except Busy:
+        raise  # the database may not be opened here: that is not "no such setting"
     except Exception:  # table not created yet (CLI before init)
         r = None
     if r is None:
@@ -225,19 +296,30 @@ def set_setting(key: str, value) -> None:
                         (key, json.dumps(value), db.now()))
 
 
-def get_secret(name: str) -> str | None:
-    if name not in _cache:
-        v = None
+def _lookup(name: str) -> tuple[str | None, str | None]:
+    hit = _cache.get(name)
+    if hit is not None and hit[2] > time.monotonic():
+        return hit[0], hit[1]
+    v, where = None, None
+    try:
+        v, where = _store_find(name)
+    except Exception:  # noqa: BLE001
+        v, where = None, None
+    if not v:
+        from strata.core.instance import Busy
         try:
-            v = _store_get(name)
-        except Exception:  # noqa: BLE001
-            v = None
-        if not v:
             legacy = get_setting(f"secret.{name}")  # a V2 database that has not been migrated yet
-            v = str(legacy) if legacy else None
-        _cache[name] = v
-    if _cache[name]:
-        return _cache[name]
+        except Busy:
+            legacy = None  # the database is held by another copy: the credential stores above are still readable
+        v, where = (str(legacy), "legacy") if legacy else (None, None)
+    _cache[name] = (v, where, time.monotonic() + (FOUND_TTL if v else MISSING_TTL))
+    return v, where
+
+
+def get_secret(name: str) -> str | None:
+    v, _ = _lookup(name)
+    if v:
+        return v
     for env in [name] + ENV_ALIASES.get(name, []):
         if os.environ.get(env):
             return os.environ[env]
@@ -245,9 +327,24 @@ def get_secret(name: str) -> str | None:
 
 
 def secret_source(name: str) -> str | None:
-    if _cache.get(name) or (name not in _cache and get_secret(name) and _cache.get(name)):
-        return {"keychain": "macOS Keychain", "secret-tool": "system keyring", "file": "protected file (owner-only)"}[secret_backend()]
+    v, where = _lookup(name)
+    if v:
+        return STORE_LABEL.get(where or "", "the database of an older version")
     return "environment variable" if get_secret(name) else None
+
+
+def secret_elsewhere(name: str) -> dict | None:
+    """A key that is not readable here but was saved from the other side of a container boundary: where it is, never what it is."""
+    if get_secret(name):
+        return None
+    w = _where_map().get(name)
+    if not isinstance(w, dict) or w.get("store") == "file":
+        return None  # a key saved to the protected file would have been found
+    from strata.core import instance
+    if bool(w.get("container")) == instance.in_container() and w.get("store") == secret_backend():
+        return None  # same side, same store: it was removed there, not hidden from here
+    return {"label": w.get("label") or w.get("store"), "from": w.get("from"), "at": w.get("at"),
+            "note": f"A key was saved in the {w.get('label') or w.get('store')} by {w.get('from') or 'another copy of Strata'}. This copy cannot read that store: enter the key here as well to use it from here."}
 
 
 def public_settings() -> dict:
@@ -256,5 +353,8 @@ def public_settings() -> dict:
     for name, label in SECRETS.items():
         v = get_secret(name)
         secrets[name] = {"label": label, "set": bool(v), "source": secret_source(name), "hint": (f"…{v[-4:]}" if v and len(v) > 8 else None)}
+        other = None if v else secret_elsewhere(name)
+        if other:
+            secrets[name]["elsewhere"] = other
     return {"settings": out, "secrets": secrets, "secret_store": {"backend": secret_backend(),
                                                                   "label": {"keychain": "macOS Keychain", "secret-tool": "system keyring (Secret Service)", "file": "protected file readable only by you"}[secret_backend()]}}

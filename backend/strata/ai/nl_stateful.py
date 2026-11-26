@@ -169,6 +169,8 @@ def read(text: str, symbol: str | None = None) -> Reading:
         t = m.group(1)
         if t in NL.NOT_UNDERLYING or t == (symbol or ""):
             continue
+        if re.match(r"\s+(?:by\s+)?(?:more|less)\s+than\b|\s+(?:a\s+|an\s+)?(?:at least|more than|over)?\s*\d", text[m.end():]):
+            continue  # "QQQ is up more than SPY", "QQQ is up 1%": a comparison or a size follows, so this is not the bare "QQQ is up" (the research reader takes the whole clause)
         up = (m.group(3) in ("up", "green", "higher", "positive")) != bool(m.group(2))
         r.conditions.append(DraftCondition(expr=f"{t}.change_pct {'>' if up else '<'} 0", text=f"{t} is {'up' if up else 'down'} versus its previous close"))
         r.take(m)
@@ -394,7 +396,48 @@ def find_unsupported(text: str, spans: list[tuple[int, int]], d: Draft) -> list[
             res.append(u)
         elif d.kind == "options":  # in a market question the rest of the clause IS the question, so only a strategy is checked
             res += _remainder(u, [], d.symbol)
+    res += _unread_conditionals(text, spans, d, res + partly)
     return list(dict.fromkeys(res + partly))
+
+
+# "when ...", "if ...", "after ...", "on days when ...", "only if ...": a clause that makes the entry conditional
+COND_CLAUSE = re.compile(r"(?:\b(?:but\s+)?(?:only\s+)?(?:when(?:ever)?|if|after|once|provided(?:\s+that)?|as\s+long\s+as|following)\b|\bon\s+(?:days?|sessions?|mornings?)\s+(?:when|after|that|where|on\s+which|following)\b)"
+                         r"\s+(?P<body>.+?)(?=\s*(?:\.(?!\d)|;|,\s*(?:\d+\s+contracts?|using|with\s+a|stop|target|take|exit|exiting|sell|selling|close|closing|and\s+(?:exit|sell|close|take|stop|hold|get\s+out))|$|"
+                         r",?\s*(?:but\s+|and\s+)?(?:only\s+)?(?:if|when(?:ever)?|provided(?:\s+that)?|as\s+long\s+as|unless)\b|"
+                         r"\s+(?:and\s+)?(?:exit(?:ing)?|sell\s+(?:it|them|at|when|after)|close\s+(?:it|them|at|when|the)|get\s+out|take\s+profits?|with\s+a\s+\d|using\s+\d|stop\s+(?:at|out)|hold\s+(?:to|until|for))\b))", re.I)
+TIMEISH = re.compile(r"^\s*(?:the\s+)?(?:market|session|trading|bell|day)?\s*(?:opens?|open(?:ing)?|closes?|close|closing)\s*$|^\s*(?:\d{1,2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?(?:\s+\w+)?|noon|midday|lunch)\s*$|^\s*(?:filled|assigned|expir\w*|possible|available)\b", re.I)
+
+
+def _unread_conditionals(text: str, spans: list[tuple[int, int]], d: Draft, already: list[str]) -> list[str]:
+    """Every clause that makes the entry conditional must have become a rule. The first pass above lets a whole clause through
+    when it contains one phrase the static parser knows ("at the open ... after SPY closes down 3%") or no market vocabulary at all
+    ("when Mercury is in retrograde"), so the condition in it could vanish without a word. Here each conditional clause is
+    checked by itself: either a rule was read from it, or it is returned as not understood (the research reader is then
+    asked, and what it cannot read either stays in front of the user)."""
+    out = []
+    seen = " ".join(already).lower()
+    exprs = {c.expr for c in d.conditions}
+    for m in COND_CLAUSE.finditer(text):
+        body = m.group("body").strip(" ,.;")
+        a, b = m.span("body")
+        low = body.lower()
+        if len(low) < 4 or TIMEISH.search(low) or low in seen or (seen and any(low in x or x in low for x in (u.lower() for u in already))):
+            continue
+        # part of an exit statement: "exit when SPY moves up 1%", "sell after 3 days", "close it if ..."
+        before = text[max(0, m.start() - 28):m.start()].lower()
+        if re.search(r"(?:exit|exits|sell|sells|close|closes|out|cover|profit|profits|stop|stops|target|targets|hold|holding)\s*(?:it|them|the\s+\w+|early|everything|out)?\s*$", before) and not re.search(r"\b(?:buy|enter|open)\b[^.;]*$", before[-12:]):
+            continue
+        if re.match(r"\d+\s+(?:trading\s+)?(?:days?|sessions?|hours?|minutes?|weeks?)\b", low) or re.match(r"(?:the\s+)?(?:open|close|bell)\b", low):
+            continue  # "after 3 days", "after the open": a duration or a clock reference, not a market condition
+        if any(s_ < b and e_ > a for s_, e_ in spans):
+            continue  # the stateful reader took (at least part of) it: its remainder was checked above
+        found = NL.find_conditions(low, [])
+        if found and all(c.expr in exprs or NL._cat_of(c.expr) in {NL._cat_of(e) for e in exprs} for _, c in found):
+            continue  # the static parser read a rule from this clause
+        if d.weekdays and re.search(r"\b(?:mon|tues?|wed(?:nes)?|thur?s?|fri)(?:day)?s?\b", low) and not re.search(r"\d", low):
+            continue  # "on Mondays": the weekday filter has it
+        out.append(m.group(0).strip(" ,.;"))
+    return out
 
 
 def _remainder(clause: str, read: list[tuple[int, int]], symbol: str = "") -> list[str]:
@@ -430,7 +473,7 @@ def _covered(clause: str, low: str, known: str, d: Draft) -> bool:
     return False
 
 
-def _read_with_research_reader(d: Draft, known: list[str], window: tuple[str, int, int] | None = None) -> None:
+def _read_with_research_reader(d: Draft, known: list[str], window: tuple[str, int, int] | None = None, full_text: str | None = None) -> None:
     """A condition the strategy reader did not understand is offered to the research question reader, which knows
     many more (other symbols, relative performance, gaps, volatility, streaks, weekdays, moving averages). A
     sub-phrase is accepted only when every word of it was understood and it can be evaluated at the entry
@@ -462,14 +505,31 @@ def _read_with_research_reader(d: Draft, known: list[str], window: tuple[str, in
             if g["expr"].replace(" ", "") not in have:
                 d.conditions.append(DraftCondition(expr=g["expr"], text=g["text"]))
                 have.add(g["expr"].replace(" ", ""))
+        # a size that this condition used is not ALSO a target or a stop: "up at least 0.5% from the open" was being read twice
+        used = {float(x) for x in re.findall(rf"{N}\s*%", phrase)} & {abs(float(x)) for g in got for x in re.findall(r"-?\d+(?:\.\d+)?", g["expr"])}
+        rest_txt = (full_text or "").replace(phrase.strip(" ,.;"), " ")
+        for f in ("underlying_target_pct", "underlying_stop_pct", "premium_target_pct", "premium_stop_pct"):
+            v = getattr(d, f)
+            if v is not None and float(v) in used and not re.search(rf"(?<![\d.]){float(v):g}\s*%", rest_txt):
+                setattr(d, f, None)
         if d.entry_time == "open" and re.match(r"\s*(?:from|off|since|versus|vs)\b", (d.entry_time_stated or "").lower()) and any("from_open" in g["expr"] for g in got):
             d.entry_time, d.entry_time_stated = None, None
             d.notes.append("\"from the open\" describes the move, not when to enter (a move from the open is always zero at the open). The position is opened on the first evaluation at which every condition holds.")
         d.notes.append("Read as: " + "; ".join(f"{g['text']} (`{g['expr']}`)" for g in got) + ". Evaluated at the entry time.")
         for a_ in dict.fromkeys(a_ for g in got for a_ in g.get("assumptions", [])):
             d.notes.append(a_)
-        left += [x for x in rest if re.search(r"[a-z]{3,}", x.lower())]
+        # what is left of the clause counts only if it is itself about the market: the order ("buy 0DTE calls at 10:00") is not an unread condition
+        left += [x for x in rest if re.search(r"[a-z]{3,}", x.lower()) and not re.search(r"\b(?:buy|sell|short|enter|contracts?|calls?|puts?|spreads?|condors?|straddles?|strangles?|dte|delta|expir\w*|strike)\b", x.lower())
+                 and not re.fullmatch(r"\s*(?:on\s+)?(?:days?|sessions?|mornings?)\s*", x.lower())]
     d.unsupported = left
+    # the bridge can restate what the static parser already read loosely ("lost 2.5% the day before" as "the previous session fell"):
+    # a bare sign next to a stated size on the same quantity adds nothing and is dropped
+    sized = {m.group(1) for c in d.conditions for m in [re.fullmatch(r"(previous_session\.return_pct|return_pct\(1\)|from_open_pct|gap_pct)\s*(?:<=|>=)\s*-?\d+(?:\.\d+)?", c.expr.strip())] if m and not re.search(r"(?:<=|>=)\s*-?0(?:\.0+)?$", c.expr.strip())}
+    same = {"previous_session.return_pct": {"previous_session.return_pct", "return_pct(1)"}, "return_pct(1)": {"previous_session.return_pct", "return_pct(1)"}}
+    def bare(c):
+        m = re.fullmatch(r"(previous_session\.return_pct|return_pct\(1\)|from_open_pct|gap_pct)\s*(?:<|>|<=|>=)\s*-?0(?:\.0+)?", c.expr.strip())
+        return bool(m and (same.get(m.group(1), {m.group(1)}) & sized))
+    d.conditions = [c for c in d.conditions if not bare(c)]
 
 
 def enrich(text: str, known: list[str], default_symbol: str = "SPY") -> Draft:
@@ -522,7 +582,7 @@ def enrich(text: str, known: list[str], default_symbol: str = "SPY") -> Draft:
     # by a target or a stop" if it still is one after the questions' default readings were applied
     wspan = read_window(text, d)
     d.unsupported = list(dict.fromkeys(r.unsupported + find_unsupported(text, r.spans, d)))
-    _read_with_research_reader(d, known, (text[wspan[0]:wspan[1]], *wspan) if wspan else None)
+    _read_with_research_reader(d, known, (text[wspan[0]:wspan[1]], *wspan) if wspan else None, text)
     if d.kind == "options" and d.structure is None:
         bias = -1 if r.direction < 0 or detect_direction(d) < 0 else 1
         opts = [{"label": "Calls (long)", "patch": {"structure": "long_call"}, "detail": "buy calls: profits if the underlying rises"},

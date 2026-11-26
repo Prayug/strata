@@ -20,7 +20,58 @@ const VERDICT: Record<string, { glyph: string; word: string; tone: "good" | "war
   no_skill: { glyph: "○", word: "No out-of-sample skill", tone: "info" },
   weak: { glyph: "◐", word: "Weak, not dependable", tone: "warn" },
   some_skill: { glyph: "●", word: "Some out-of-sample skill", tone: "good" },
+  leak_suspected: { glyph: "✕", word: "A leakage check failed: these scores mean nothing", tone: "warn" },
 };
+const CONFIRM: Record<string, { word: string; tone: string; help: string }> = {
+  not_tested: { word: "validation only, not confirmed", tone: "text-warn border-warn/40 bg-warn/[0.07]", help: "Candidates were compared on purged cross-validation inside the training period. The final test set has not been looked at, so nothing is confirmed." },
+  confirmed_once: { word: "confirmed once on the final test set", tone: "text-up border-up/40 bg-up/[0.07]", help: "The frozen model was scored on the final test set one time, and this period had not been scored with any other configuration." },
+  tested_repeatedly: { word: "final test set used repeatedly", tone: "text-warn border-warn/40 bg-warn/[0.07]", help: "This test period has been scored with more than one configuration. A score chosen after several looks is not an untouched estimate and cannot be called independently confirmed." },
+  not_confirmed: { word: "not confirmed on the final test set", tone: "text-down border-down/40 bg-down/[0.07]", help: "The validation result did not hold up on the final test set." },
+  not_applicable: { word: "not applicable", tone: "text-muted border-line-2 bg-bg-2", help: "A leakage check failed, so no score here is evidence of anything." },
+};
+
+/** Step two of a study. The final test set is looked at once, for the configuration validation froze, and the look is recorded for good. */
+function FinalTest({ r, busy, arming, setArming, onScore, job, onOpen }: { r: any; busy: boolean; arming: boolean; setArming: (x: boolean) => void; onScore: () => void; job: any; onOpen: (rid: string) => void }) {
+  const ex = r.test_exposure || {};
+  const hist: any[] = ex.history || [];
+  if (r.final_test === undefined) return null;  // a study from before the two-step procedure
+  const leak = r.verdict === "leak_suspected";
+  return (
+    <div className={cn("rounded-[12px] border px-4 py-3.5", r.final_test ? "border-line" : "border-accent/45 bg-accent/[0.05]")} data-testid="ml-final-test" data-scored={r.final_test ? "yes" : "no"}>
+      <div className="flex flex-wrap items-center gap-2.5">
+        <span className="text-[13.5px] font-medium">{r.final_test ? "Final test set: scored" : "Final test set: not looked at"}</span>
+        <span className="num text-xs dim">{r.split.test[0]} to {r.split.test[1]} · {r.split.test_n.toLocaleString()} sessions</span>
+        <span className="flex-1" />
+        {r.validation_run && <button className="btn quiet sm" onClick={() => onOpen(r.validation_run)}>Open the validation run</button>}
+        {!r.final_test && !arming && <button className="btn primary sm" disabled={busy || leak || !r.spec} onClick={() => setArming(true)} data-testid="ml-score-final">{busy ? <Loader2 className="animate-spin" /> : <ShieldCheck />}Score the frozen model on it</button>}
+      </div>
+      <div className="mt-1.5 text-[13px] soft">
+        {r.final_test
+          ? `The frozen ${r.frozen?.model} model was scored on this period. ${ex.configurations_scored_on_this_period > 1 ? `It is one of ${ex.configurations_scored_on_this_period} configurations scored on the same period, so the score is not an untouched estimate.` : "No other configuration has been scored on it."}`
+          : leak ? "A leakage check failed. The test set is not scored for a model whose features may know the answer: a look would spend it and prove nothing."
+          : !r.spec ? "This study was run before the two-step procedure existed. Run it again to be able to score its final test."
+          : `Every number above comes from the training period (${r.split.train[0]} to ${r.split.train[1]}). Change the features and models as often as you like here: none of it touches the final test set.`}
+      </div>
+      {(ex.previous_scorings > 0 || hist.length > 0) && (
+        <div className="mt-2 text-xs text-warn" data-testid="ml-exposures">This period has already been scored {ex.previous_scorings} time{ex.previous_scorings === 1 ? "" : "s"}{ex.other_configurations ? `, with ${ex.other_configurations} other configuration${ex.other_configurations === 1 ? "" : "s"}` : ""}. The record cannot be erased.
+          <div className="mt-1 flex flex-col gap-0.5 dim">{hist.slice(-5).map((h, i) => <div key={i} className="num">{String(h.recorded_at).replace("T", " ").slice(0, 16)} · {h.model} · {h.n_features ?? "?"} features · Brier skill {skill(h.brier_skill)} · configuration {String(h.config_key).slice(0, 8)}</div>)}</div>
+        </div>
+      )}
+      {arming && (
+        <div className="mt-3 rounded-[10px] border border-warn/45 bg-warn/[0.07] px-3.5 py-3" data-testid="ml-final-confirm">
+          <div className="text-[13px] font-medium">This is the one look at the final test set</div>
+          <ul className="mt-1.5 flex list-disc flex-col gap-1 pl-5 text-[12.5px] soft">
+            <li>Only the frozen configuration is scored: {r.frozen?.model}, {(r.frozen?.features || []).length} features, configuration {String(r.frozen?.config_key || "").slice(0, 8)}.</li>
+            <li>The scoring is recorded permanently against this symbol, outcome and period. Scoring a different configuration on it later is recorded too, and from then on no result on this period can be called independently confirmed.</li>
+            <li>If the stored data or the configuration changed since validation, the step stops before any score exists.</li>
+          </ul>
+          <div className="mt-2.5 flex gap-2"><button className="btn primary sm" onClick={onScore} data-testid="ml-final-go">Score it once</button><button className="btn sm" onClick={() => setArming(false)}>Not yet</button></div>
+        </div>
+      )}
+      {job && <div className="mt-3"><JobBar job={job} onCancel={() => cancelJob(job.id)} /></div>}
+    </div>
+  );
+}
 
 function Result({ rid }: { rid: string }) {
   const nav = useNavigate();
@@ -28,6 +79,17 @@ function Result({ rid }: { rid: string }) {
   const [name, setName] = useState(`ml_${rid}`);
   const [saved, setSaved] = useState<any>(null);
   const [saving, setSaving] = useState(false);
+  const [arming, setArming] = useState(false);
+  const [finalJob, setFinalJob] = useState<string | null>(null);
+  const fjob = useJob(finalJob, (st) => {
+    setFinalJob(null);
+    queryClient.invalidateQueries({ queryKey: ["runs", "ml"] });
+    if (st.status === "done") nav(`/ml/${st.id}`); else if (st.status === "error") toast.error(st.error || "The final test was not run");
+  });
+  const scoreFinal = async () => {
+    setArming(false);
+    try { const x = await api.post<{ run_id: string }>(`/api/runs/${rid}/ml/final-test`); setFinalJob(x.run_id); } catch (e: any) { toast.error(e.message); }
+  };
   const r = q.data;
   const sel = r?.models?.find((m: any) => m.name === r.selected);
   const calOpt = useMemo(() => {
@@ -65,16 +127,17 @@ function Result({ rid }: { rid: string }) {
         <div className="flex flex-wrap items-center gap-2 text-xs dim"><span>{r.symbol}</span><span>·</span><span>decided at the {r.decision_tick}</span><span>·</span><span>{r.split.train[0]} to {r.split.test[1]}</span><SyntheticBadge on={r.synthetic} /></div>
         <h1 className="mt-1 !text-[21px]">Can these features predict: {r.outcome_text}?</h1>
       </div>
-      <Callout tone={v.tone} title={<span><span aria-hidden className="mr-1.5">{v.glyph}</span>{v.word}</span>}>{(r.summary || []).join(" ")}</Callout>
+      <Callout tone={v.tone} title={<span><span aria-hidden className="mr-1.5">{v.glyph}</span>{v.word}{r.confirmation && CONFIRM[r.confirmation] && <span title={CONFIRM[r.confirmation].help} className={cn("ml-2.5 inline-flex h-[22px] items-center rounded-full border px-2 align-middle text-[11.5px] font-medium", CONFIRM[r.confirmation].tone)} data-testid="ml-confirmation" data-confirmation={r.confirmation}>{CONFIRM[r.confirmation].word}</span>}</span>}>{(r.summary || []).join(" ")}</Callout>
+      <FinalTest r={r} busy={!!finalJob} arming={arming} setArming={setArming} onScore={scoreFinal} job={fjob} onOpen={(x) => nav(`/ml/${x}`)} />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatTile label="Sessions" value={r.n.toLocaleString()} sub={`${r.split.train_n.toLocaleString()} train · ${r.split.test_n.toLocaleString()} final test`} />
         <StatTile label="Base rate" value={pp(r.base_rate)} sub="how often the outcome happens" hint="A forecast that always says this number is the baseline every model has to beat." />
         <StatTile label="Brier skill, cross-validation" value={skill(sel?.cv?.brier_skill)} sub={sel ? `positive in ${sel.cv.skill_folds_positive} of ${sel.cv.folds.length} folds` : undefined} hint="Improvement in the Brier score over the base-rate forecast, on purged and embargoed folds. Zero means the model adds nothing." />
-        <StatTile label="Brier skill, final test" value={skill(sel?.test?.brier_skill)} sub={`${r.split.test[0]} onward`} hint="The last fifth of the history. No model was chosen using it." />
+        <StatTile label="Brier skill, final test" value={sel?.test ? skill(sel.test.brier_skill) : "not scored"} sub={`${r.split.test[0]} onward`} tone={sel?.test ? undefined : "text-muted"} hint="The last fifth of the history. No model is chosen using it; it is scored for the frozen model only, when asked, and every scoring is recorded." />
         <StatTile label="Calibration error" value={sel?.calibration_error === null || sel?.calibration_error === undefined ? "—" : `${(sel.calibration_error * 100).toFixed(1)} pts`} sub={r.calibrated ? "after calibration" : "uncalibrated"} hint="Average gap between the predicted probability and how often the outcome then happened, on the final test set." />
       </div>
 
-      <Section title="Models" sub={`selected by ${r.selected_by}; every test score is shown and none was used to choose`}>
+      <Section title="Models" sub={`selected by ${r.selected_by}; only the selected model is ever scored on the final test set`}>
         <div className="overflow-auto">
           <table className="t">
             <thead><tr><th>Model</th><th className="r">CV Brier skill</th><th className="r">Folds positive</th><th className="r">CV log-loss skill</th><th className="r">Test Brier skill</th><th className="r">Test log loss</th><th className="r">Test AUC</th><th className="r">Test accuracy</th><th className="r">Always-majority accuracy</th></tr></thead>
@@ -85,8 +148,10 @@ function Result({ rid }: { rid: string }) {
                 <tr key={m.name} className={cn(m.name === r.selected && "sel")}>
                   <td>{m.label}{m.name === r.selected && <span className="ml-2 text-[11px] text-accent">◆ selected</span>}</td>
                   <td className="r num">{skill(m.cv.brier_skill)}</td><td className="r num">{m.cv.skill_folds_positive} / {m.cv.folds.length}</td><td className="r num">{skill(m.cv.log_loss_skill)}</td>
-                  <td className="r num">{skill(m.test.brier_skill)}</td><td className="r num">{m.test.log_loss.toFixed(4)}</td><td className="r num">{m.test.auc === null ? "—" : m.test.auc.toFixed(3)}</td>
-                  <td className="r num">{pp(m.test.accuracy)}</td><td className="r num dim">{pp(m.test.accuracy_baseline)}</td>
+                  {m.test ? (
+                    <><td className="r num">{skill(m.test.brier_skill)}</td><td className="r num">{m.test.log_loss.toFixed(4)}</td><td className="r num">{m.test.auc === null ? "—" : m.test.auc.toFixed(3)}</td>
+                      <td className="r num">{pp(m.test.accuracy)}</td><td className="r num dim">{pp(m.test.accuracy_baseline)}</td></>
+                  ) : <td colSpan={5} className="r text-xs dim">{m.name === r.selected ? "not scored yet" : "never scored: not the selected model"}</td>}
                 </tr>
               ))}
             </tbody>
@@ -97,7 +162,7 @@ function Result({ rid }: { rid: string }) {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Section title="Calibration on the final test set" sub="points on the dashed line mean the stated probability is honest">
-          {calOpt ? <EChart option={calOpt} height={260} /> : <div className="text-xs dim">Too few test sessions to bin.</div>}
+          {calOpt ? <EChart option={calOpt} height={260} /> : <div className="text-xs dim">{r.final_test === false ? "Shown once the final test set has been scored." : "Too few test sessions to bin."}</div>}
         </Section>
         <Section title="Skill by cross-validation fold" sub="each fold is a later stretch of history">
           {sel && <EChart height={260} option={{ grid: { left: 44, right: 10, top: 14, bottom: 40 }, tooltip: { trigger: "axis", valueFormatter: (x: number) => skill(x) },
@@ -107,7 +172,7 @@ function Result({ rid }: { rid: string }) {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Section title="What the model relies on" sub="how much the test score worsens when one feature is shuffled">
+        <Section title="What the model relies on" sub={`how much the score worsens when one feature is shuffled${r.importance_on ? `, on ${r.importance_on}` : ""}`}>
           {(r.importance || []).length === 0 ? <div className="text-xs dim">Not available for this model.</div> : (
             <div className="flex flex-col gap-1.5">
               {r.importance.slice(0, 12).map((f: any) => {

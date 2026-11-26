@@ -326,8 +326,32 @@ def _model_for(provider: str) -> str:
     return str(get_setting(f"llm.model.{provider}") or PROVIDERS[provider]["default_model"])
 
 
+def local_model_url(url: str) -> str:
+    """The address of a model server on this machine or this network, or ValueError. The server itself makes requests to this
+    address, so it must not be usable to reach somewhere else: only http(s), no credentials in the URL, and a host that is
+    loopback, a private network address or the Docker host. Link-local addresses (cloud metadata services) are refused."""
+    import ipaddress
+    from urllib.parse import urlsplit
+    u = urlsplit((url or "").strip())
+    host = (u.hostname or "").lower()
+    if u.scheme not in ("http", "https") or not host or u.username or u.password:
+        raise ValueError("the local model address must be an http(s) URL with a host and no credentials in it")
+    if host in ("localhost", "host.docker.internal") or host.endswith(".localhost") or host.endswith(".local"):
+        return url.rstrip("/")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        raise ValueError(f"the local model address must be on this machine or this network; '{host}' is a public name") from None
+    if ip.is_link_local or ip.is_multicast or ip.is_unspecified or not (ip.is_loopback or ip.is_private):
+        raise ValueError(f"the local model address must be on this machine or a private network; {host} is not")
+    return url.rstrip("/")
+
+
 def ollama_models(url: str | None = None, timeout: float = 2.5) -> list[str]:
-    url = (url or str(get_setting("llm.ollama_url") or "http://127.0.0.1:11434")).rstrip("/")
+    try:
+        url = local_model_url(url or str(get_setting("llm.ollama_url") or "http://127.0.0.1:11434"))
+    except ValueError:
+        return []
     try:
         r = httpx.get(f"{url}/api/tags", timeout=timeout)
         return [m["name"] for m in r.json().get("models", [])] if r.status_code == 200 else []
@@ -366,7 +390,7 @@ def build(provider: str) -> LLM:
     if provider not in PROVIDERS:
         raise LLMError(f"unknown provider {provider!r}")
     if provider == "ollama":
-        url = str(get_setting("llm.ollama_url") or "http://127.0.0.1:11434")
+        url = local_model_url(str(get_setting("llm.ollama_url") or "http://127.0.0.1:11434"))
         model = _model_for("ollama")
         if not model:
             found = ollama_models(url)

@@ -1,37 +1,58 @@
-"""Forward validation: freeze a configuration, then judge it only on sessions that did not
-exist when it was frozen.
+"""Forward validation: freeze a configuration, then judge it only on sessions that had not
+begun when it was frozen.
 
 A backtest can always be made to look good, because its author has seen the data. The one
 test that cannot be tuned is the future. An EXPERIMENT here is
 
-  frozen      the full configuration is stored with its hash at activation. Nothing can
-              edit it. A change is a NEW experiment (version + 1) with its own activation
-              date; the old one keeps running as it was
-  dated       the activation date is the last session stored when it was frozen. Only
-              sessions AFTER that date count as forward evidence, so nothing can be
-              backdated into it
+  frozen      the full configuration, its hash, the engine version and the execution
+              assumptions are stored at activation. Nothing can edit them (the database
+              refuses the update). A change is a NEW experiment (version + 1) with its own
+              activation; the old one keeps running as it was
+  dated       activation is an immutable UTC instant taken from the clock, never from the
+              data. The first session that can count is the first one that had not yet
+              opened at that instant, by the exchange calendar: a session already in
+              progress does not count, and no session before it ever can, whenever its
+              data is stored. Stale local data cannot move the date, and filling in old
+              sessions later cannot add evidence
+  sealed      each session after activation is evaluated once, after its close, with the
+              data stored at that moment, and written to an append-only ledger: signal
+              decisions, simulated fills, contracts, fees, P&L, positions left open,
+              observations that were missing, and the sources read. Entries are chained by
+              hash; the database refuses to change or delete them. If stored data is later
+              revised or filled in and the same session would now come out differently,
+              the difference is recorded as a revision and the sealed record stands
   paper only  it is evaluated by the same deterministic engines on observed prices as
               they are collected. There is no order entry anywhere in Strata
 
-`evaluate` runs the frozen configuration over the forward sessions stored so far and
-appends a report (the history of reports is kept): forward signals, simulated fills,
-forward P&L, signals that could not be filled and why, how much of the forward window has
-the data the configuration needs, and how the forward numbers compare with the historical
-benchmark recorded at activation - with the plain statement that a handful of forward
-observations cannot confirm or reject anything yet.
+`evaluate` replays the frozen configuration from the first eligible session, seals the
+sessions that are new, and reports from the ledger: forward signals, simulated fills,
+forward P&L, positions still open (rebuilt from the ledger and the replay, so nothing is
+lost across a restart), signals that could not be filled and why, sessions still waiting
+for data, and how the forward record compares with the historical benchmark - with the
+plain statement that a handful of forward observations cannot confirm or reject anything.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 
 from strata.api import db
+from strata.core import calendar as cal
 from strata.data.store import MarketStore
 from strata.research import robust as R
 
 MIN_FORWARD = 10  # below this many forward observations no comparison is drawn
+MISSING_KINDS = {"no_option_data", "no_recent_trade", "no_quote", "no_price", "no_contract", "no_atr"}  # a signal that was not filled because an observation was missing
+LATE_OK = {"observation"}  # a study's outcome can resolve sessions after its condition: it is appended once, when it is known, and only for a condition that was itself sealed
+REPLAYED = {"fill", "exit", "signal", "missing_data", "condition", "observation"}  # entry kinds the replay reproduces (and that are therefore checked against it)
+GENESIS = "0" * 64
+
+
+def _now() -> datetime:
+    """The clock. Activation and sealing times come from here and from nowhere else."""
+    return datetime.now(timezone.utc)
 
 
 def _canon(x):
@@ -52,32 +73,134 @@ def _hash(cfg: dict) -> str:
     return hashlib.sha256(json.dumps(_canon(cfg), sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()[:16]
 
 
-def _last_session(store: MarketStore, symbol: str) -> str:
+def _r(x):
+    """Stored figures are rounded to 6 decimals, so that replaying a session reproduces its entries exactly."""
+    if isinstance(x, dict):
+        return {str(k): _r(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_r(v) for v in x]
+    if isinstance(x, float):
+        return None if x != x or x in (float("inf"), float("-inf")) else round(x, 6)
+    return x
+
+
+def _text(body) -> str:
+    return json.dumps(_canon(_r(body)), sort_keys=True, default=str, separators=(",", ":"))
+
+
+def first_session(at: datetime) -> tuple[date, str, str]:
+    """The first session that had not yet opened at `at`, with the state of the market at that instant.
+
+    A session that is already in progress has begun to be observed, so it is excluded and the
+    next one is the first that counts. This reads the exchange calendar only: what happens to
+    be stored locally plays no part."""
+    et = at.astimezone(cal.ET)
+    d = et.date()
+    if cal.is_trading_day(d):
+        o, c = cal.session_bounds(d)
+        if et < o:
+            return d, "before_open", f"Activated before the {d} session opened, so that session is the first that counts."
+        nxt = cal.next_trading_day(d)
+        if et < c:
+            return nxt, "during_session", f"Activated while the {d} session was in progress. That session had already begun, so it does not count; the first that does is {nxt}."
+        return nxt, "after_close", f"Activated after the {d} session closed. The first session that counts is {nxt}."
+    nxt = cal.next_trading_day(d)
+    return nxt, "market_closed", f"Activated while the market was closed. The first session that counts is {nxt}."
+
+
+def _stored_through(store: MarketStore, symbol: str) -> str | None:
     try:
         d = store.read_daily(symbol)
-        if not d.is_empty():
-            return str(d["date"][-1])
+        return str(d["date"][-1]) if not d.is_empty() else None
     except Exception:  # noqa: BLE001
-        pass
-    return date.today().isoformat()
+        return None
+
+
+def _upgrade(r: dict) -> dict:
+    """An experiment made before V6 was dated by the last session STORED when it was frozen. With stale local data
+    that date was too early, and sessions downloaded afterwards counted as forward evidence although they had
+    already happened. Such an experiment is re-dated once, from the instant it was created."""
+    if r.get("activated_at") and r.get("first_session"):
+        return r
+    at = datetime.fromisoformat(r["created_at"])
+    first, state, rule = first_session(at)
+    act = {"state": state, "rule": rule, "legacy_activation_date": r["activation_date"],
+           "migrated": f"Created before version 6, when activation was the last stored session ({r['activation_date']}). It is now dated from the moment it was created; evaluations made under the old rule are superseded."}
+    from strata.config import ENGINE_VERSION
+    with db.connect() as con:
+        con.execute("UPDATE forward_experiments SET activated_at=?, first_session=?, activation=?, activation_date=?, engine_version=COALESCE(engine_version, ?) WHERE id=? AND activated_at IS NULL",
+                    (at.astimezone(timezone.utc).isoformat(timespec="seconds"), first.isoformat(), json.dumps(act), cal.prev_trading_day(first).isoformat(), "unrecorded (before version 6; evaluated with " + ENGINE_VERSION + ")", r["id"]))
+        return db._row(con.execute("SELECT * FROM forward_experiments WHERE id=?", (r["id"],)).fetchone())
 
 
 def _pub(r: dict | None) -> dict | None:
     if r is None:
         return None
+    r = _upgrade(r)
     with db.connect() as con:
         ev = con.execute("SELECT id, evaluated_at, through_date, report FROM forward_evaluations WHERE experiment_id=? ORDER BY id DESC LIMIT 1", (r["id"],)).fetchone()
         n = con.execute("SELECT COUNT(*) FROM forward_evaluations WHERE experiment_id=?", (r["id"],)).fetchone()[0]
+        led = con.execute("SELECT COUNT(*), SUM(kind='session') FROM forward_ledger WHERE experiment_id=?", (r["id"],)).fetchone()
     out = dict(r)
     out["evaluations"] = int(n)
-    out["latest"] = (json.loads(ev["report"]) | {"evaluated_at": ev["evaluated_at"]}) if ev and ev["report"] else None
+    out["ledger_entries"], out["sealed_sessions"] = int(led[0] or 0), int(led[1] or 0)
+    latest = (json.loads(ev["report"]) | {"evaluated_at": ev["evaluated_at"]}) if ev and ev["report"] else None
+    if latest is not None and "ledger" not in latest:
+        latest = {**latest, "superseded": True, "notes": ["This evaluation was made under the previous activation rule (the last stored session) and is superseded. Evaluate again: only sessions from "
+                                                          f"{out['first_session']} on can count."] + list(latest.get("notes") or [])}
+    out["latest"] = latest
     return out
+
+
+# ----------------------------------------------------------------------------- the ledger
+def _append(con, eid: str, session: str, kind: str, key: str, body: dict) -> dict:
+    last = con.execute("SELECT seq, hash FROM forward_ledger WHERE experiment_id=? ORDER BY seq DESC LIMIT 1", (eid,)).fetchone()
+    seq, prev = (int(last["seq"]) + 1, last["hash"]) if last else (0, GENESIS)
+    text, at = _text(body), _now().isoformat(timespec="seconds")
+    h = hashlib.sha256(f"{prev}|{eid}|{seq}|{session}|{kind}|{key}|{text}|{at}".encode()).hexdigest()
+    con.execute("INSERT INTO forward_ledger (experiment_id, seq, session, kind, key, body, recorded_at, prev_hash, hash) VALUES (?,?,?,?,?,?,?,?,?)", (eid, seq, session, kind, key, text, at, prev, h))
+    return {"seq": seq, "session": session, "kind": kind, "key": key, "body": json.loads(text), "recorded_at": at, "hash": h}
+
+
+def ledger(eid: str, kinds: set[str] | None = None, limit: int | None = None) -> list[dict]:
+    """The experiment's entries in the order they were written."""
+    with db.connect() as con:
+        rows = con.execute("SELECT seq, session, kind, key, body, recorded_at, prev_hash, hash FROM forward_ledger WHERE experiment_id=? ORDER BY seq", (eid,)).fetchall()
+    out = [{**dict(r), "body": json.loads(r["body"])} for r in rows if kinds is None or r["kind"] in kinds]
+    return out[-limit:] if limit else out
+
+
+def verify(eid: str) -> dict:
+    """Recompute the hash chain. Any entry that was altered, removed or inserted breaks it from that point on."""
+    ex = get(eid)
+    with db.connect() as con:
+        rows = con.execute("SELECT seq, session, kind, key, body, recorded_at, prev_hash, hash FROM forward_ledger WHERE experiment_id=? ORDER BY seq", (eid,)).fetchall()
+    prev, n = GENESIS, 0
+    for i, r in enumerate(rows):
+        h = hashlib.sha256(f"{prev}|{eid}|{r['seq']}|{r['session']}|{r['kind']}|{r['key']}|{r['body']}|{r['recorded_at']}".encode()).hexdigest()
+        if r["seq"] != i or r["prev_hash"] != prev or r["hash"] != h:
+            return {"ok": False, "entries": len(rows), "broken_at": i, "detail": f"entry {i} ({r['kind']} for {r['session']}) does not match the chain: the ledger was altered after it was written"}
+        prev, n = h, n + 1
+    if rows:
+        root = json.loads(rows[0]["body"])
+        if rows[0]["kind"] != "activation" or (ex is not None and root.get("config_hash") != ex["config_hash"]):
+            return {"ok": False, "entries": len(rows), "broken_at": 0, "detail": "the ledger does not start from this experiment's activation"}
+    return {"ok": True, "entries": n, "head": prev if rows else None, "broken_at": None, "detail": f"{n} entries, each chained to the one before it" if rows else "no entry yet"}
+
+
+def _root(con, ex: dict) -> None:
+    """The first entry: what was frozen. Everything after it is chained to it."""
+    if con.execute("SELECT 1 FROM forward_ledger WHERE experiment_id=? LIMIT 1", (ex["id"],)).fetchone():
+        return
+    _append(con, ex["id"], ex["first_session"], "activation", ex["id"], {"config_hash": ex["config_hash"], "activated_at": ex["activated_at"], "first_session": ex["first_session"], "engine_version": ex.get("engine_version"),
+                                                                        "kind": ex["kind"], "symbol": ex["symbol"], "version": ex["version"], "assumptions": ex.get("assumptions") or {}, "activation": ex.get("activation") or {}})
 
 
 def create(kind: str, symbol: str, config: dict, name: str, benchmark: dict | None = None, assumptions: dict | None = None, session_id: str | None = None, source_run_id: str | None = None,
            parent_id: str | None = None, store: MarketStore | None = None) -> dict:
     if kind not in ("strategy", "study"):
         raise ValueError("an experiment freezes a strategy or a market study")
+    from strata.config import ENGINE_VERSION
     store = store or MarketStore()
     eid = uuid.uuid4().hex[:10]
     version = 1
@@ -86,18 +209,26 @@ def create(kind: str, symbol: str, config: dict, name: str, benchmark: dict | No
         if p is None:
             raise LookupError("the experiment this is a new version of was not found")
         version = int(p["version"]) + 1
-    now = db.now()
-    act = _last_session(store, symbol)
+    at = _now()
+    first, state, rule = first_session(at)
+    stored = _stored_through(store, symbol)
+    behind = len(cal.trading_days(date.fromisoformat(stored), first)) - 1 if stored and date.fromisoformat(stored) < first else 0
+    act = {"state": state, "rule": rule, "stored_through": stored, "sessions_not_yet_stored": max(0, behind - 1),
+           "note": "The activation date comes from the clock and the exchange calendar. What is stored locally does not affect it."}
+    now = at.isoformat(timespec="seconds")
     with db.connect() as con:
-        con.execute("INSERT INTO forward_experiments (id, name, kind, symbol, config, config_hash, version, parent_id, session_id, source_run_id, benchmark, assumptions, activation_date, status, created_at, updated_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (eid, name[:120], kind, symbol.upper(), json.dumps(config, default=str), _hash(config), version, parent_id, session_id, source_run_id,
-                                                               json.dumps(benchmark or {}, default=str), json.dumps(assumptions or {}, default=str), act, "active", now, now))
+        con.execute("INSERT INTO forward_experiments (id, name, kind, symbol, config, config_hash, version, parent_id, session_id, source_run_id, benchmark, assumptions, activation_date, status, created_at, updated_at, "
+                    "activated_at, first_session, engine_version, activation) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (eid, name[:120], kind, symbol.upper(), json.dumps(config, default=str), _hash(config), version, parent_id, session_id, source_run_id, json.dumps(benchmark or {}, default=str), json.dumps(assumptions or {}, default=str),
+                     cal.prev_trading_day(first).isoformat(), "active", now, now, now, first.isoformat(), ENGINE_VERSION, json.dumps(act)))
+        _root(con, db._row(con.execute("SELECT * FROM forward_experiments WHERE id=?", (eid,)).fetchone()))
     return get(eid)
 
 
 def get(eid: str) -> dict | None:
     with db.connect() as con:
-        return _pub(db._row(con.execute("SELECT * FROM forward_experiments WHERE id=?", (eid,)).fetchone()))
+        r = db._row(con.execute("SELECT * FROM forward_experiments WHERE id=?", (eid,)).fetchone())
+    return _pub(r)
 
 
 def listing() -> list[dict]:
@@ -158,34 +289,75 @@ def create_from_graph(graph: dict, result: dict, session_id: str | None = None, 
 
 
 # ----------------------------------------------------------------------------- evaluation
-def _forward_days(store: MarketStore, symbol: str, after: str) -> list[str]:
+def _eligible(ex: dict, now: datetime | None = None) -> list[date]:
+    """Sessions since activation that have closed, by the exchange calendar (whether or not their data is stored)."""
+    now = now or _now()
+    first, today = date.fromisoformat(ex["first_session"]), now.astimezone(cal.ET).date()
+    return [d for d in cal.trading_days(first, today) if cal.session_bounds(d)[1] <= now] if first <= today else []
+
+
+def _stored_days(store: MarketStore, symbol: str) -> set[date]:
     try:
-        d = store.read_daily(symbol)
+        return set(store.read_daily(symbol)["date"].to_list())
     except Exception:  # noqa: BLE001
+        return set()
+
+
+def pending(ex: dict, store: MarketStore) -> list[str]:
+    """Closed sessions since activation whose prices are stored and that are not sealed yet."""
+    stored = _stored_days(store, ex["symbol"])
+    have = [d for d in _eligible(ex) if d in stored]
+    if not have:
         return []
-    return [str(x) for x in d["date"].to_list() if str(x) > after]
+    with db.connect() as con:
+        sealed = {r[0] for r in con.execute("SELECT session FROM forward_ledger WHERE experiment_id=? AND kind='session'", (ex["id"],))}
+    return [d.isoformat() for d in _eligible(ex) if d <= have[-1] and d.isoformat() not in sealed]
 
 
-def evaluate(eid: str, store: MarketStore | None = None) -> dict:
-    """Run the frozen configuration on the sessions after its activation date and store the report."""
+def evaluate(eid: str, store: MarketStore | None = None, refresh: bool = False) -> dict:
+    """Replay the frozen configuration from its first eligible session, seal the sessions that are new and store the
+    report. With `refresh`, what the configuration needs for the unsealed sessions is first fetched from the free
+    sources (never offline, never a paid provider), because a session is sealed with the data stored at that moment."""
+    from strata.config import ENGINE_VERSION
     store = store or MarketStore()
     ex = get(eid)
     if ex is None:
         raise LookupError("experiment not found")
     if _hash(ex["config"]) != ex["config_hash"]:
         raise ValueError("the stored configuration no longer matches the hash recorded at activation: the experiment is not evaluated")
-    days = _forward_days(store, ex["symbol"], ex["activation_date"])
-    rep = {"experiment": eid, "version": ex["version"], "activation_date": ex["activation_date"], "forward_sessions": len(days), "first": days[0] if days else None, "last": days[-1] if days else None,
-           "benchmark": ex.get("benchmark") or {}, "notes": [], "kind": ex["kind"], "config_hash": ex["config_hash"]}
+    chain = verify(eid)
+    if not chain["ok"]:
+        raise ValueError(f"the forward ledger failed its integrity check ({chain['detail']}): the experiment is not evaluated")
+    now = _now()
+    days = _eligible(ex, now)
+    rep = {"experiment": eid, "version": ex["version"], "kind": ex["kind"], "config_hash": ex["config_hash"], "activation_date": ex["activation_date"], "activated_at": ex["activated_at"], "first_session": ex["first_session"],
+           "activation": ex.get("activation") or {}, "engine_version": ex.get("engine_version"), "engine_version_now": ENGINE_VERSION, "benchmark": ex.get("benchmark") or {}, "notes": [], "as_of": now.isoformat(timespec="seconds"),
+           "eligible_sessions": len(days), "forward_sessions": 0, "first": None, "last": None, "awaiting_data": [], "newly_sealed": [], "revisions": [], "ledger": chain}
     if not days:
         rep["status"] = "waiting"
-        rep["notes"].append(f"No session after {ex['activation_date']} is stored yet. Forward evidence starts with the first session collected after the activation date; nothing earlier can count.")
+        rep["notes"].append(f"No session since activation has closed yet. The first session that can count is {ex['first_session']}; nothing earlier can count, whenever its data is stored.")
         return _store(eid, rep)
-    if ex["kind"] == "strategy":
-        rep.update(_eval_strategy(ex, days, store))
-    else:
-        rep.update(_eval_study(ex, days, store))
-    return _store(eid, rep)
+    if refresh:
+        rep["refresh"] = _refresh(ex, days, store)
+    stored = _stored_days(store, ex["symbol"])
+    have = [d for d in days if d in stored]
+    if not have:
+        rep["status"] = "awaiting_data"
+        rep["awaiting_data"] = [d.isoformat() for d in days][-60:]
+        rep["notes"].append(f"{len(days)} session{'s have' if len(days) != 1 else ' has'} closed since activation ({days[0]} to {days[-1]}), but no {ex['symbol']} price is stored for {'any of them' if len(days) != 1 else 'it'} yet. "
+                            f"Refresh the data or run the collector, then evaluate again. Sessions before {ex['first_session']} are never used.")
+        return _store(eid, rep)
+    window = [d for d in days if d <= have[-1]]
+    rep["awaiting_data"] = [d.isoformat() for d in days if d > have[-1]][-60:]
+    events, extra = (_strategy_events if ex["kind"] == "strategy" else _study_events)(ex, window, store)
+    if extra.get("failed"):
+        rep["status"] = "awaiting_data"
+        rep["notes"].append(extra["failed"])
+        rep["awaiting_data"] = [d.isoformat() for d in days][-60:]
+        return _store(eid, rep)
+    new, revs = _reconcile(ex, window, stored, events, extra)
+    rep["newly_sealed"], rep["revisions_new"] = new, len(revs)
+    return _store(eid, _report(ex, rep, window, extra))
 
 
 def _store(eid: str, rep: dict) -> dict:
@@ -196,41 +368,255 @@ def _store(eid: str, rep: dict) -> dict:
     return json.loads(dumps(rep))
 
 
-def _eval_strategy(ex: dict, days: list[str], store: MarketStore) -> dict:
-    from strata.analytics.metrics import compute_metrics
+REVISION = {"changed": "Replaying this session now gives a different result from the one that was sealed (the stored data was revised or filled in afterwards, or the engine changed). The sealed entry stands.",
+            "appeared": "Replaying this sealed session now produces an entry that did not exist when it was sealed (data for it was stored afterwards). It is not added to the record.",
+            "vanished": "A sealed entry can no longer be reproduced from the stored data. It stays in the record as it was sealed.",
+            "orphan": "The replay closes a position that the sealed record never opened. It is not added to the record."}
+
+
+def _reconcile(ex: dict, window: list[date], stored: set[date], events: list[dict], extra: dict) -> tuple[list[str], list[dict]]:
+    """Append the entries of every session that is new, in order, and seal it. Sessions already sealed are only
+    compared with the replay: a difference becomes a `revision` entry and changes nothing that was sealed."""
+    eid = ex["id"]
+    win = {d.isoformat() for d in window}
+    new: list[str] = []
+    revs: list[dict] = []
+    with db.connect() as con:
+        _root(con, ex)
+        rows = con.execute("SELECT session, kind, key, body FROM forward_ledger WHERE experiment_id=? ORDER BY seq", (eid,)).fetchall()
+        have = {(r["kind"], r["key"]): r["body"] for r in rows}
+        sealed = {r["session"] for r in rows if r["kind"] == "session"}
+        by_day: dict[str, list] = {}
+        for ev in events:
+            by_day.setdefault(ev["session"], []).append(ev)
+
+        def revise(session, what, kind, key, was, now_):
+            rk = hashlib.sha256(f"{what}|{kind}|{key}|{_text(now_) if now_ is not None else ''}".encode()).hexdigest()[:16]
+            if ("revision", rk) in have:
+                return
+            body = {"what": what, "entry": kind, "of": key, "sealed": was, "replay": now_, "note": REVISION[what]}
+            _append(con, eid, session, "revision", rk, body)
+            have[("revision", rk)] = ""
+            revs.append({"session": session, **body})
+
+        for d in window:
+            iso = d.isoformat()
+            evs = by_day.get(iso, [])
+            was_sealed = iso in sealed
+            for ev in evs:
+                k, text = (ev["kind"], ev["key"]), _text(ev["body"])
+                if k in have:
+                    if have[k] != text:
+                        revise(iso, "changed", ev["kind"], ev["key"], json.loads(have[k]), _r(ev["body"]))
+                elif was_sealed and not (ev["kind"] in LATE_OK and ("condition", ev["key"]) in have):
+                    revise(iso, "appeared", ev["kind"], ev["key"], None, _r(ev["body"]))
+                elif ev["kind"] == "exit" and ("fill", ev["key"]) not in have:
+                    revise(iso, "orphan", ev["kind"], ev["key"], None, _r(ev["body"]))
+                else:
+                    _append(con, eid, iso, ev["kind"], ev["key"], ev["body"])
+                    have[k] = text
+            if not was_sealed:
+                n = {k: sum(1 for e in evs if e["kind"] == k) for k in ("fill", "exit", "signal", "missing_data", "condition", "observation")}
+                _append(con, eid, iso, "session", iso, {"date": iso, "underlying_stored": d in stored, "entries": n, "realised_pnl": sum(float(e["body"].get("pnl") or 0) for e in evs if e["kind"] == "exit"),
+                                                        "sources": extra.get("sources") or {}, "engine_version": extra.get("engine_version"), "window_end": window[-1].isoformat(), "minutes_after_close": int((_now() - cal.session_bounds(d)[1]).total_seconds() // 60)})
+                new.append(iso)
+        replayed = {(ev["kind"], ev["key"]) for ev in events}
+        for r in rows:
+            if r["kind"] in REPLAYED and r["session"] in win and (r["kind"], r["key"]) not in replayed:
+                revise(r["session"], "vanished", r["kind"], r["key"], json.loads(r["body"]), None)
+        if new:
+            _append(con, eid, new[-1], "position", new[-1], {"through": new[-1], "open": extra.get("open") or []})
+    return new, revs
+
+
+def _fill_key(t: dict) -> str:
+    legs = ",".join(sorted(f"{l.get('right') or 'S'}{l.get('strike')}@{l.get('expiration')}x{l.get('ratio')}" for l in t["legs"]))
+    return f"{t.get('strategy_idx', 0)}|{t['entry_ts']}|{t.get('lot', 1)}|{legs}"
+
+
+def _strategy_events(ex: dict, window: list[date], store: MarketStore) -> tuple[list[dict], dict]:
+    """Replay the frozen strategy over the forward window and turn the result into dated entries."""
+    from strata.config import ENGINE_VERSION
     from strata.engine.engine import DataUnavailable, run_backtest
     from strata.engine.models import BacktestConfig
-    cfg = {**ex["config"], "start": days[0], "end": days[-1]}
-    sym = ex["symbol"]
-    mode = (cfg.get("pricing") or {}).get("mode", "historical")
+    cfg = {**ex["config"], "start": window[0].isoformat(), "end": window[-1].isoformat()}
+    sym, mode = ex["symbol"], (ex["config"].get("pricing") or {}).get("mode", "historical")
+    have: set[str] = set()
     try:
-        have = {str(d) for d in (store.option_days(sym, "quote") if mode == "historical" else [])}
-    except Exception:  # noqa: BLE001
-        have = set()
-    if mode == "trades":
-        try:
+        if mode == "trades":
             idx = store.option_bar_index(sym)
             have = {str(x)[:10] for x in idx["date"].to_list()} if not idx.is_empty() and "date" in idx.columns else set()
-        except Exception:  # noqa: BLE001
-            have = set()
+        elif mode == "historical":
+            have = {str(d) for d in store.option_days(sym, "quote")}
+    except Exception:  # noqa: BLE001
+        have = set()
+    days = [d.isoformat() for d in window]
     covered = [d for d in days if d in have] if mode != "modeled" else list(days)
-    out = {"data": {"sessions": len(days), "with_option_data": len(covered), "pricing": mode, "missing": [d for d in days if d not in set(covered)][:60]}, "assumptions": ex.get("assumptions") or {}}
+    extra: dict = {"engine_version": ENGINE_VERSION, "data": {"sessions": len(days), "with_option_data": len(covered), "pricing": mode, "missing": [d for d in days if d not in set(covered)][:60]}, "open": []}
     try:
         res = run_backtest(BacktestConfig.model_validate(cfg), store=store, record_paths=False)
     except DataUnavailable as e:
-        out.update(status="no_data", signals=None, trades=[], notes=[f"The forward sessions cannot be evaluated yet: {str(e)[:240]}"])
-        return out
-    m = compute_metrics(res.trades, res.daily, cfg.get("capital", {}).get("initial_capital", 100000.0), cfg.get("capital", {}).get("risk_free_rate", 0.0))
-    exe = res.meta.get("executability") or {}
-    trades = [{"entry_date": t["entry_date"], "entry_time": t["entry_time"], "exit_time": t["exit_time"], "exit_reason": t["exit_reason"], "pnl": t["pnl"], "units": t["units"], "flags": t["flags"],
-               "fill_delay_seconds": t.get("fill_delay_seconds"), "legs": [{"right": l["right"], "strike": l["strike"], "expiration": l["expiration"], "entry_price": l["entry_price"], "exit_price": l["exit_price"], "price_source": l["price_source"]} for l in t["legs"]]}
-              for t in res.trades]
-    missed = [{"signal_time": x.get("signal_time") or x.get("signal_t"), "kind": x.get("kind"), "reason": x.get("reason")} for x in (res.diagnostics or {}).get("skipped_signals", [])][:200]
-    out.update(status="evaluated", signals=exe.get("signals"), executed=exe.get("executed"), not_executed=exe.get("not_executed"), not_executed_by_reason=exe.get("not_executed_by_reason") or {}, trades=trades, missed_signals=missed,
-               metrics={k: m.get(k) for k in ("trades", "net_pnl", "win_rate", "expectancy", "profit_factor", "max_drawdown")}, excluded_sessions=len((res.diagnostics or {}).get("excluded_sessions") or []) if isinstance((res.diagnostics or {}).get("excluded_sessions"), list) else None)
-    out["comparison"], notes = _compare_strategy(ex.get("benchmark") or {}, out, len(days))
-    out["notes"] = notes
-    return out
+        extra["failed"] = f"The sessions since activation cannot be evaluated yet: {str(e)[:240]}"
+        return [], extra
+    extra["sources"] = {"datasets": res.meta.get("dataset_versions") or {}, "options": (res.meta.get("data") or {}).get("options_dataset") or res.meta.get("options_dataset"), "pricing": mode}
+    events: list[dict] = []
+    win = set(days)
+    for t in res.trades:
+        key = _fill_key(t)
+        legs = [{"right": l["right"], "strike": l["strike"], "expiration": l["expiration"], "ratio": l["ratio"], "side": l["side"], "multiplier": l["multiplier"], "price_source": l["price_source"],
+                 "entry_price": l["entry_price"], "entry_bid": l["entry_bid"], "entry_ask": l["entry_ask"], "entry_print": l["entry_print"]} for l in t["legs"]]
+        if t["entry_date"] in win:
+            events.append({"session": t["entry_date"], "kind": "fill", "key": key, "body": {"strategy": t["strategy"], "signal_time": cal.to_et(int(t["signal_ts"]) * 1_000_000_000).isoformat(), "entry_time": t["entry_time"],
+                                                                                           "fill_delay_seconds": t["fill_delay_seconds"], "units": t["original_units"], "entry_cash": t["entry_cash"] if not t.get("stage_exits") else None,
+                                                                                           "entry_spot": t["entry_spot"], "legs": legs}})
+        still_open = t["exit_reason"] == "end_of_backtest" or not t.get("exit_time")
+        if still_open:
+            extra["open"].append({"key": key, "strategy": t["strategy"], "entry_time": t["entry_time"], "units": t["units"], "legs": [{k: l[k] for k in ("right", "strike", "expiration", "ratio", "entry_price")} for l in legs],
+                                  "marked_pnl": t["pnl"], "marked_at": t.get("exit_time"), "note": "marked at the last stored price; the position is still open"})
+            continue
+        xd = str(t["exit_time"])[:10]
+        if xd in win:
+            events.append({"session": xd, "kind": "exit", "key": key, "body": {"exit_time": t["exit_time"], "exit_reason": t["exit_reason"], "units": t["units"], "pnl": t["pnl"], "gross_pnl": t["gross_pnl"], "fees": t["commissions"],
+                                                                               "slippage": t["slippage"], "flags": t["flags"], "stage_exits": t.get("stage_exits") or [],
+                                                                               "legs": [{"right": l["right"], "strike": l["strike"], "expiration": l["expiration"], "exit_price": l["exit_price"], "exit_bid": l["exit_bid"], "exit_ask": l["exit_ask"],
+                                                                                         "exit_print": l["exit_print"], "exit_reason": l["exit_reason"]} for l in t["legs"]]}})
+    for x in (res.diagnostics or {}).get("skipped_signals", []):
+        st = cal.to_et(int(x["signal_t"]) * 1_000_000_000)
+        d = st.date().isoformat()
+        if d in win:
+            kind = "missing_data" if x["kind"] in MISSING_KINDS else "signal"
+            events.append({"session": d, "kind": kind, "key": f"{x.get('strategy', '')}|{x['signal_t']}|{x['kind']}", "body": {"signal_time": st.isoformat(), "filled": False, "why": x["kind"], "reason": x["reason"], "strategy": x.get("strategy", "")}})
+    for reason, dates in ((res.diagnostics or {}).get("excluded_sessions") or {}).items():
+        for d in dates:
+            if d in win:
+                events.append({"session": d, "kind": "missing_data", "key": f"session|{d}|{reason[:60]}", "body": {"filled": False, "why": "session_not_evaluable", "reason": reason}})
+    stored = _stored_days(store, sym)
+    for d in window:
+        if d not in stored:
+            events.append({"session": d.isoformat(), "kind": "missing_data", "key": f"session|{d}|no_bar", "body": {"filled": False, "why": "no_underlying_bar", "reason": f"the exchange was open but no {sym} bar is stored for this session"}})
+    events.sort(key=lambda e: (e["session"], {"fill": 0, "signal": 1, "missing_data": 2, "exit": 3}.get(e["kind"], 9), e["key"]))
+    return events, extra
+
+
+def _study_events(ex: dict, window: list[date], store: MarketStore) -> tuple[list[dict], dict]:
+    """Replay the frozen market study over the forward window. Each session on which the condition held gets a
+    `condition` entry when it is sealed, and an `observation` entry once its outcome is known (the same session
+    for a same-day outcome, later for an outcome measured over several sessions)."""
+    import numpy as np
+
+    from strata.ai import nl_graph as NG
+    from strata.config import ENGINE_VERSION
+    from strata.research import graph as G
+    g = NG.with_analyses(ex["config"]["graph"], ["probability"], [], start=window[0].isoformat(), end=window[-1].isoformat())
+    g["include_holdout"] = True  # these sessions had not begun at activation: nothing is being held back from them
+    extra: dict = {"engine_version": ENGINE_VERSION, "open": [], "sources": {"pricing": "underlying prices only"}}
+    try:
+        res = G.run_graph(g, store, scope=None, reps=400)
+        row = next((n for n in res["nodes"] if n.get("result") and n["result"].get("kind") == "probability"), None)
+        if row is None:
+            raise ValueError(next((n.get("error") for n in res["nodes"] if n["status"] == "error"), None) or "no result")
+        run = G.Run(g, store, None, None, reps=1)
+        o = run.get(row["inputs"]["outcome"])
+        m = run.get(row["inputs"]["condition"]) if row["inputs"].get("condition") else None
+    except (G.GraphError, LookupError, ValueError, KeyError) as e:
+        extra["failed"] = f"The sessions since activation cannot be evaluated yet: {str(e)[:240]}"
+        return [], extra
+    pr = row["result"]
+    e = pr["evidence"]
+    held = (m.true if m is not None else np.ones(len(o.ds.ft.dates), dtype=bool)) & o.ds.pm
+    if o.event is not None:
+        held = held & o.event  # an outcome anchored on an intraday event: the event is part of the condition
+    win = {d.isoformat() for d in window}
+    events = [{"session": str(d), "kind": "condition", "key": str(d), "body": {"date": str(d), "condition": pr.get("condition")}} for d, h in zip(o.ds.ft.dates, held) if h and str(d) in win]
+    events += [{"session": str(x["date"]), "kind": "observation", "key": str(x["date"]), "body": {"date": str(x["date"]), "outcome": x["outcome"], "end_return_pct": x.get("end_return_pct")}}
+               for x in pr["sessions"] if str(x["date"]) in win and x["outcome"] is not None]
+    events.sort(key=lambda v: (v["session"], v["kind"]))  # the condition entry is written before its outcome
+    extra.update(evaluated=e["evaluated"], not_evaluable=pr.get("not_evaluable") or {}, outcome=pr.get("outcome"), condition=pr.get("condition"))
+    return events, extra
+
+
+def _report(ex: dict, rep: dict, window: list[date], extra: dict) -> dict:
+    """The report, read from the ledger (not from the replay)."""
+    led = ledger(ex["id"])
+    sess = [e for e in led if e["kind"] == "session"]
+    revs = [e for e in led if e["kind"] == "revision"]
+    rep.update(status="evaluated", forward_sessions=len(sess), first=sess[0]["session"] if sess else None, last=sess[-1]["session"] if sess else None, sealed=[{"session": e["session"], "sealed_at": e["recorded_at"], **e["body"]["entries"]} for e in sess][-250:],
+               revisions=[{"session": e["session"], "recorded_at": e["recorded_at"], **{k: e["body"].get(k) for k in ("what", "entry", "of", "note")}} for e in revs][-100:], ledger=verify(ex["id"]))
+    if rep.get("engine_version") and rep["engine_version"] != rep["engine_version_now"] and not str(rep["engine_version"]).startswith("unrecorded"):
+        rep["notes"].append(f"Frozen under engine {rep['engine_version']}; the engine is now {rep['engine_version_now']}. Sessions already sealed keep the result computed when they were sealed.")
+    if revs:
+        rep["notes"].append(f"{len(revs)} revision{'s' if len(revs) != 1 else ''} recorded: stored data for a sealed session changed afterwards. The sealed entries were not altered; the revisions are listed below.")
+    if rep["awaiting_data"]:
+        rep["notes"].append(f"{len(rep['awaiting_data'])} later session{'s have' if len(rep['awaiting_data']) != 1 else ' has'} closed but {'have' if len(rep['awaiting_data']) != 1 else 'has'} no stored {ex['symbol']} price yet, so {'they are' if len(rep['awaiting_data']) != 1 else 'it is'} not sealed.")
+    if ex["kind"] == "strategy":
+        fills = {e["key"]: e for e in led if e["kind"] == "fill"}
+        exits = {e["key"]: e for e in led if e["kind"] == "exit"}
+        missed = [e for e in led if e["kind"] in ("signal", "missing_data") and "signal_time" in e["body"]]
+        trades = []
+        for k, x in exits.items():
+            f = fills.get(k)
+            if f is None:
+                continue
+            xl = {(l["right"], l["strike"], l["expiration"]): l for l in x["body"]["legs"]}
+            trades.append({"entry_date": f["session"], "entry_time": f["body"]["entry_time"], "exit_time": x["body"]["exit_time"], "exit_reason": x["body"]["exit_reason"], "pnl": x["body"]["pnl"], "fees": x["body"].get("fees"), "units": f["body"]["units"],
+                           "flags": x["body"].get("flags") or [], "fill_delay_seconds": f["body"].get("fill_delay_seconds"), "sealed_at": x["recorded_at"],
+                           "legs": [{"right": l["right"], "strike": l["strike"], "expiration": l["expiration"], "entry_price": l["entry_price"], "exit_price": (xl.get((l["right"], l["strike"], l["expiration"])) or {}).get("exit_price"), "price_source": l["price_source"]}
+                                    for l in f["body"]["legs"]]})
+        trades.sort(key=lambda t: t["exit_time"])
+        marks = {o["key"]: o for o in extra.get("open") or []}
+        open_ = [{"key": k, "entry_date": f["session"], "entry_time": f["body"]["entry_time"], "units": f["body"]["units"], "legs": [{kk: l[kk] for kk in ("right", "strike", "expiration", "entry_price", "price_source")} for l in f["body"]["legs"]],
+                  "marked_pnl": (marks.get(k) or {}).get("marked_pnl"), "reproduced": k in marks} for k, f in fills.items() if k not in exits]
+        pnl = [float(t["pnl"] or 0) for t in trades]
+        wins, losses = [p for p in pnl if p > 0], [p for p in pnl if p <= 0]
+        peak = run = dd = 0.0
+        for p in pnl:
+            run += p
+            peak = max(peak, run)
+            dd = min(dd, run - peak)
+        by: dict[str, int] = {}
+        for e in missed:
+            by[e["body"]["why"]] = by.get(e["body"]["why"], 0) + 1
+        data = dict(extra.get("data") or {})
+        rep.update(data=data, assumptions=ex.get("assumptions") or {}, signals=len(fills) + len(missed), executed=len(fills), not_executed=len(missed), not_executed_by_reason=by, trades=trades[-500:], open_positions=open_,
+                   missed_signals=[{"signal_time": e["body"]["signal_time"], "kind": e["body"]["why"], "reason": e["body"]["reason"], "missing_data": e["kind"] == "missing_data"} for e in missed][-200:],
+                   missing_data=[{"session": e["session"], "why": e["body"]["why"], "reason": e["body"]["reason"]} for e in led if e["kind"] == "missing_data"][-200:],
+                   metrics={"trades": len(pnl), "net_pnl": sum(pnl), "win_rate": (len(wins) / len(pnl)) if pnl else None, "expectancy": (sum(pnl) / len(pnl)) if pnl else None,
+                            "profit_factor": (sum(wins) / abs(sum(losses))) if losses and sum(losses) != 0 else None, "max_drawdown": dd, "fees": sum(float(t.get("fees") or 0) for t in trades)})
+        rep["comparison"], notes = _compare_strategy(ex.get("benchmark") or {}, rep, len(sess))
+        if open_:
+            notes.insert(0, f"{len(open_)} position{'s are' if len(open_) != 1 else ' is'} still open. {'They are' if len(open_) != 1 else 'It is'} not in the P&L until {'they close' if len(open_) != 1 else 'it closes'}; the entry is already sealed.")
+        rep["notes"] += notes
+        return rep
+    b = ex.get("benchmark") or {}
+    obs = [e for e in led if e["kind"] == "observation"]
+    conds = [e for e in led if e["kind"] == "condition"]
+    known = {e["key"] for e in obs}
+    rep.update(conditions=len(conds), pending_outcomes=[e["session"] for e in conds if e["key"] not in known][-60:])
+    if rep["pending_outcomes"]:
+        rep["notes"].append(f"The condition held on {len(rep['pending_outcomes'])} session{'s' if len(rep['pending_outcomes']) != 1 else ''} whose outcome is not known yet. {'They are' if len(rep['pending_outcomes']) != 1 else 'It is'} counted once it is.")
+    hit_names = _hit_names(obs, extra)
+    n, hits = len(obs), sum(1 for e in obs if e["body"]["outcome"] in hit_names)
+    ci = R.wilson(hits, n) if n else [None, None]
+    evaluated = int(extra.get("evaluated") or 0)
+    rep.update(signals=n, hits=hits, probability=(hits / n) if n else None, evaluated_sessions=evaluated, probability_ci95=ci, sessions=[{"date": e["session"], **e["body"], "sealed_at": e["recorded_at"]} for e in obs][-400:],
+               data={"sessions": len(window), "evaluated": evaluated, "not_evaluable": max(0, len(window) - evaluated)},
+               comparison={"forward_n": n, "backtest_n": b.get("n"), "forward_probability": (hits / n) if n else None, "backtest_probability": b.get("probability"), "enough": n >= MIN_FORWARD, "consistent": None,
+                           "forward_signals_per_100_sessions": n / max(1, evaluated) * 100 if evaluated else None, "backtest_signals_per_100_sessions": b.get("signals_per_100_sessions")})
+    if evaluated < len(window):
+        rep["notes"].append(f"{len(window) - evaluated} of the {len(window)} forward sessions could not be evaluated with the bars stored (usually an intraday decision time for which no intraday bars were collected, or an outcome that is not known yet).")
+    if n < MIN_FORWARD:
+        rep["notes"].append(f"The condition has occurred {n} time{'s' if n != 1 else ''} since activation. Fewer than {MIN_FORWARD} occurrences cannot confirm or contradict the historical frequency; this is a record, not a verdict.")
+    elif b.get("probability") is not None and ci[0] is not None:
+        rep["comparison"]["consistent"] = bool(ci[0] <= b["probability"] <= ci[1])
+        rep["notes"].append(f"Forward frequency {hits / n * 100:.0f}% of {n} (95% interval {ci[0] * 100:.0f}% to {ci[1] * 100:.0f}%); the historical frequency was {b['probability'] * 100:.0f}%, which is "
+                            + ("inside that interval." if rep["comparison"]["consistent"] else "outside that interval: the forward record differs from the history."))
+    return rep
+
+
+def _hit_names(obs: list[dict], extra: dict) -> set[str]:
+    """The outcome label that means the outcome followed (the first of the engine's outcome codes)."""
+    from strata.research.features import CODE_NAMES
+    return {CODE_NAMES[0]}
 
 
 def _compare_strategy(b: dict, f: dict, n_days: int) -> tuple[dict, list[str]]:
@@ -242,7 +628,8 @@ def _compare_strategy(b: dict, f: dict, n_days: int) -> tuple[dict, list[str]]:
             "consistent": None}
     if f["data"]["with_option_data"] < f["data"]["sessions"]:
         notes.append(f"{f['data']['sessions'] - f['data']['with_option_data']} of the {f['data']['sessions']} forward sessions have no stored option prices of the kind this strategy is priced on. Signals on those sessions appear as missed, not as trades. "
-                     "Option prices for a past session can often no longer be collected (free sources keep intraday option bars only for contracts still listed), so run the collector while the experiment is active.")
+                     "Option prices for a past session can often no longer be collected (free sources keep intraday option bars only for contracts still listed), so run the collector while the experiment is active. "
+                     "A session is sealed with the prices stored when it is first evaluated; prices that arrive later do not change it.")
     if (f.get("not_executed") or 0) > 0:
         notes.append(f"{f['not_executed']} forward signal{'s' if f['not_executed'] != 1 else ''} could not be filled: " + ", ".join(f"{v} {k.replace('_', ' ')}" for k, v in sorted(f["not_executed_by_reason"].items(), key=lambda kv: -kv[1])[:3]) + ".")
     if n < MIN_FORWARD:
@@ -260,53 +647,103 @@ def _compare_strategy(b: dict, f: dict, n_days: int) -> tuple[dict, list[str]]:
     return cmp_, notes
 
 
-def _eval_study(ex: dict, days: list[str], store: MarketStore) -> dict:
-    from strata.ai import nl_graph as NG
-    from strata.research import graph as G
-    g = NG.with_analyses(ex["config"]["graph"], ["probability"], [], start=days[0], end=days[-1])
-    g["include_holdout"] = True  # these sessions did not exist at activation: nothing is being held back from them
-    b = ex.get("benchmark") or {}
+# ----------------------------------------------------------------------------- data for the sessions about to be sealed
+def _refresh(ex: dict, days: list[date], store: MarketStore) -> dict:
+    """Fetch what the frozen configuration needs for the sessions since activation, from free sources only: the
+    underlying's bars and, for a strategy, the option observations its signals select. Nothing is fetched in offline
+    mode and nothing from a paid provider. A failure is reported and never stops the evaluation."""
+    from strata.data import planner as P
+    from strata.data.providers import sources as S
+    from strata.research import pipeline as PL
+    out: dict = {"ran": False, "downloads": [], "errors": []}
+    if PL.offline():
+        out["why"] = "offline mode: nothing is downloaded, the evaluation uses what is stored"
+        return out
+    out["ran"] = True
+    a, b = days[0], days[-1]
+
+    def run(action: dict):
+        try:
+            P.execute_action(store, action)
+            out["downloads"].append({"source": action["source"], "dataset": action["dataset"], "symbols": action["symbols"], "why": action.get("why")})
+        except Exception as e:  # noqa: BLE001
+            out["errors"].append(f"{action.get('label') or action['source']} {action['dataset']}: {str(e)[:160]}")
+
     try:
-        res = G.run_graph(g, store, scope=None, reps=400)
-    except (G.GraphError, LookupError, ValueError) as e:
-        return {"status": "no_data", "notes": [f"The forward sessions cannot be evaluated yet: {str(e)[:240]}"]}
-    pr = next((n["result"] for n in res["nodes"] if n.get("result") and n["result"].get("kind") == "probability"), None)
-    if pr is None:
-        err = next((n.get("error") for n in res["nodes"] if n["status"] == "error"), "no result")
-        return {"status": "no_data", "notes": [f"The forward sessions cannot be evaluated yet: {err}"]}
-    e = pr["evidence"]
-    ci = R.wilson(e["hits"], e["n"])
-    out = {"status": "evaluated", "signals": e["n"], "hits": e["hits"], "probability": e["probability"], "evaluated_sessions": e["evaluated"], "sessions": pr["sessions"], "probability_ci95": ci,
-           "data": {"sessions": len(days), "evaluated": e["evaluated"], "not_evaluable": len(days) - e["evaluated"]},
-           "comparison": {"forward_n": e["n"], "backtest_n": b.get("n"), "forward_probability": e["probability"], "backtest_probability": b.get("probability"), "enough": e["n"] >= MIN_FORWARD, "consistent": None,
-                          "forward_signals_per_100_sessions": e["n"] / max(1, e["evaluated"]) * 100 if e["evaluated"] else None, "backtest_signals_per_100_sessions": b.get("signals_per_100_sessions")}}
-    notes = []
-    if e["evaluated"] < len(days):
-        notes.append(f"{len(days) - e['evaluated']} of the {len(days)} forward sessions could not be evaluated with the bars stored (usually an intraday decision time for which no intraday bars were collected).")
-    if e["n"] < MIN_FORWARD:
-        notes.append(f"The condition has occurred {e['n']} time{'s' if e['n'] != 1 else ''} since activation. Fewer than {MIN_FORWARD} occurrences cannot confirm or contradict the historical frequency; this is a record, not a verdict.")
-    elif b.get("probability") is not None and ci[0] is not None:
-        out["comparison"]["consistent"] = bool(ci[0] <= b["probability"] <= ci[1])
-        notes.append(f"Forward frequency {e['probability'] * 100:.0f}% of {e['n']} (95% interval {ci[0] * 100:.0f}% to {ci[1] * 100:.0f}%); the historical frequency was {b['probability'] * 100:.0f}%, which is "
-                     + ("inside that interval." if out["comparison"]["consistent"] else "outside that interval: the forward record differs from the history."))
-    out["notes"] = notes
+        req = None
+        syms = {ex["symbol"]: {}}
+        if ex["kind"] == "strategy":
+            cfg = {**ex["config"], "start": a.isoformat(), "end": b.isoformat()}
+            mode = (cfg.get("pricing") or {}).get("mode", "historical")
+            req = P.requirements("options", cfg, mode if mode in ("historical", "trades", "modeled") else "historical")
+            syms = {**req["underlying"], **req["aux"]}
+        else:
+            import re
+            known = set(store.list_symbols()) if hasattr(store, "list_symbols") else set()
+            for s_ in set(re.findall(r"\b[A-Z][A-Z0-9]{1,5}\b", json.dumps(ex["config"]))) & known:
+                syms.setdefault(s_, {})
+        for sym in syms:
+            if store.is_synthetic(sym):
+                continue
+            d = store.read_daily(sym) if store.has_daily(sym) else None
+            last = d["date"][-1] if d is not None and not d.is_empty() else None
+            if last is not None and last >= b:
+                continue
+            src = S.Cboe(store) if sym in S.Cboe.FILES else S.Yahoo(store)
+            run(P._action(src, "vix_daily" if isinstance(src, S.Cboe) else "daily", [sym], None, None, f"{sym} daily history ends {last}", 0))
+        if req is not None:
+            cov = P.underlying_coverage(store, req, a, b)
+            cov.pop("_usable_days", None)
+            acts, _ = P.underlying_actions(store, req, cov)
+            for act in acts:
+                if act["available"] and not act["large"] and act["dataset"] not in ("daily", "vix_daily"):
+                    run(act)
+            mode = (ex["config"].get("pricing") or {}).get("mode", "historical")
+            provider = (ex["config"].get("data") or {}).get("options_provider")
+            if mode in ("historical", "trades"):
+                from strata.engine.scan import scan_signals
+                signals = scan_signals({**ex["config"], "start": a.isoformat(), "end": b.isoformat(), "pricing": {**(ex["config"].get("pricing") or {}), "mode": "historical"}}, store)["signals"]
+                out["signals_seen"] = len(signals)
+                if signals and mode == "trades":
+                    plan = P.trade_plan(store, req, signals, provider)
+                    info = next((x for x in plan["sources"] if x["source"] == plan.get("chosen")), None)
+                    if info and info["available"] and info["signals_in_window"]:
+                        r = P.acquire_trades(store, req, signals, plan["chosen"], None, None, False)
+                        out["downloads"].append({"source": plan["chosen"], "dataset": "option_trades", "symbols": [req["symbol"]], "why": f"option trade prints for {info['signals_in_window']} signal session(s)",
+                                                 "result": {k: (r.get("result") or {}).get(k) for k in ("pairs_requested", "pairs_ok", "pairs_empty", "pairs_unavailable", "bars")}, "needs_approval": bool(r.get("needs_approval"))})
+                    elif info is not None and not info["available"]:
+                        out["errors"].append(f"{info['label']}: not connected, so the option trade prints for {len(signals)} signal session(s) were not fetched")
+                elif signals and mode == "historical":
+                    qc = P.quote_coverage(store, req, signals, provider)
+                    acts, _ = P.quote_actions(store, req, qc)
+                    for act in acts:
+                        if act["available"] and not act["large"]:
+                            run(act)
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(f"{type(e).__name__}: {e}"[:200])
+    try:
+        from strata.data.catalog import invalidate
+        from strata.research.features import _CACHE
+        invalidate()
+        _CACHE.clear()
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 
 def evaluate_active(store: MarketStore | None = None) -> list[dict]:
-    """Evaluate every active experiment that has forward sessions it has not seen yet
-    (called after a collection cycle). Failures are reported per experiment."""
+    """Seal the new sessions of every active experiment (called after a collection cycle, which has just stored what
+    the free sources still serve). Failures are reported per experiment."""
     store = store or MarketStore()
     out = []
     for ex in listing():
         if ex["status"] != "active":
             continue
-        days = _forward_days(store, ex["symbol"], ex["activation_date"])
-        if not days or (ex.get("latest") or {}).get("last") == days[-1]:
-            continue
         try:
+            if _hash(ex["config"]) == ex["config_hash"] and verify(ex["id"])["ok"] and not pending(ex, store):
+                continue  # intact and nothing new to seal; a tampered configuration or ledger falls through and is reported
             rep = evaluate(ex["id"], store)
-            out.append({"id": ex["id"], "name": ex["name"], "status": rep.get("status"), "forward_sessions": rep.get("forward_sessions"), "last": rep.get("last")})
+            out.append({"id": ex["id"], "name": ex["name"], "status": rep.get("status"), "forward_sessions": rep.get("forward_sessions"), "last": rep.get("last"), "newly_sealed": len(rep.get("newly_sealed") or [])})
         except Exception as e:  # noqa: BLE001
             out.append({"id": ex["id"], "name": ex["name"], "status": "error", "error": f"{type(e).__name__}: {e}"[:200]})
     return out

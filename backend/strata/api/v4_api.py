@@ -7,7 +7,7 @@ import json
 import re
 from typing import Optional
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
 from pydantic import BaseModel
 
 from strata.api import db
@@ -631,10 +631,38 @@ def provider_benchmark(source: str = Body(..., embed=True)):
 
 
 # ----------------------------------------------------------------------------- bulk import
+def import_path_for(request, path: str) -> str:
+    """The path an import request may read. A request from this computer may name any ordinary file or folder: importing
+    your own files is the purpose. A request that arrived from another machine (only possible with the access token) is
+    confined to the import folder inside the data directory, so the endpoint cannot be used to read the server's disk."""
+    import stat as _stat
+    from pathlib import Path
+
+    from strata.config import get_settings
+    raw = (path or "").strip()
+    if not raw or "\x00" in raw:
+        raise HTTPException(422, "a file or folder path is needed")
+    p = Path(raw).expanduser()
+    try:
+        real = p.resolve(strict=True)
+        mode = real.stat().st_mode
+    except (OSError, RuntimeError):
+        raise HTTPException(404, "no file or folder exists at that path") from None
+    if not (_stat.S_ISREG(mode) or _stat.S_ISDIR(mode)):
+        raise HTTPException(422, "that path is not an ordinary file or folder")
+    client = request.client.host if request is not None and request.client else ""
+    if client not in ("127.0.0.1", "::1", "localhost", "testclient"):
+        base = (get_settings().data_dir / "imports").resolve()
+        if base != real and base not in real.parents:
+            raise HTTPException(403, f"over a remote connection only files inside the import folder can be imported ({base}); copy the file there first")
+    return str(real)
+
+
 @router.post("/api/data/import/inspect")
-def import_inspect(path: str = Body(..., embed=True)):
+def import_inspect(request: Request, path: str = Body(..., embed=True)):
     from strata.data import bulk as BK
-    return _guard(lambda: BK.inspect(path))
+    real = import_path_for(request, path)
+    return _guard(lambda: BK.inspect(real))
 
 
 class BulkReq(BaseModel):
@@ -646,9 +674,13 @@ class BulkReq(BaseModel):
 
 
 @router.post("/api/data/import/bulk")
-def import_bulk(req: BulkReq):
+def import_bulk(req: BulkReq, request: Request):
     from strata.data import bulk as BK
-    info = BK.inspect(req.path)
+    req.path = import_path_for(request, req.path)
+    try:
+        info = BK.inspect(req.path)
+    except ValueError as e:  # an archive that expands beyond the limits is refused before anything is extracted
+        raise HTTPException(422, str(e)) from None
     if not info["files"]:
         raise HTTPException(422, "no importable files found at that path")
     rid = db.create_run("bulk_import", f"Import {req.symbol or info.get('symbol') or ''} {info['files'][0]['format'] if info['files'] else ''}"[:90], {"path": req.path, "symbol": req.symbol, "format": req.format})

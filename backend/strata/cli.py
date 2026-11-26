@@ -6,7 +6,7 @@ import json
 import os
 import sys
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 
@@ -77,6 +77,8 @@ def cmd_demo(a):
 def cmd_serve(a):
     import uvicorn
     pkg = str(Path(__file__).resolve().parent)
+    # where this copy can be opened: shown by another copy that finds the data directory in use
+    os.environ.setdefault("STRATA_PUBLIC_URL", f"http://localhost:{a.port}")
     uvicorn.run("strata.api.app:app", host=a.host, port=a.port, reload=a.reload, reload_dirs=[pkg] if a.reload else None, workers=1)
 
 
@@ -146,6 +148,13 @@ def cmd_collect(a):
     from strata.api import db
     from strata.collector import service as CS
     from strata.config import get_settings
+    if a.health:
+        # for a container health check: is the daemon loop alive (collecting, or waiting on standby)? Reads one file's age, nothing else.
+        import time as _t
+        beat = get_settings().data_dir / "collector.heartbeat"
+        ok = beat.exists() and _t.time() - beat.stat().st_mtime < 300
+        print("collector daemon is alive" if ok else "collector daemon has not reported for five minutes (or was never started)")
+        sys.exit(0 if ok else 1)
     db.init_db()
     if a.status:
         st = CS.state()
@@ -155,12 +164,6 @@ def cmd_collect(a):
         print(f"missed sessions: {len(st['coverage']['missed'])}")
         return
     beat = get_settings().data_dir / "collector.heartbeat"
-    if a.health:
-        # for a container health check: is the daemon loop alive?
-        import time as _t
-        ok = beat.exists() and _t.time() - beat.stat().st_mtime < 300
-        print("collector daemon is alive" if ok else "collector daemon has not reported for five minutes (or was never started)")
-        sys.exit(0 if ok else 1)
     if a.daemon:
         import time as _t
         from datetime import datetime as _dt
@@ -210,6 +213,172 @@ def cmd_providers(a):
             print(f"    {'ok ' if s_['ok'] else 'ERR'} {s_['name']:42s} {s_.get('rows', '')!s:>8} rows  {s_.get('first') or ''} .. {s_.get('last') or ''}  {s_.get('error', '')[:90]}")
         for e in r.get("entitlements", []):
             print(f"    entitlement: {e['what']}: {'granted' if e['granted'] else 'NOT granted'} ({str(e['detail'])[:80]})")
+
+
+def cmd_download(a):
+    """Download from a source that needs no payment (the same code the Data page runs), outside the web application:
+    1-minute underlying bars, or the bulk set of option trade bars (every contract within a band of the previous
+    close that expires within a few days). Resumable: what is already stored is skipped."""
+    from datetime import timedelta
+    from strata.core import calendar as cal
+    from strata.data.providers import sources as S
+    from strata.data.store import MarketStore
+    from strata.core import instance
+    instance.ensure()  # the download writes market files: one machine at a time
+    store = MarketStore()
+    try:
+        src = S.get_source(a.source, store)
+    except (KeyError, ValueError) as e:
+        sys.exit(f"unknown source {a.source!r}: {e}")
+    ok, why = src.available()
+    if not ok:
+        print(f"BLOCKED: {src.label}: {why}")
+        sys.exit(2)
+    today = datetime.now(cal.ET).date()
+    end = date.fromisoformat(a.end) if a.end else today
+    t0 = time.time()
+    last = [0.0]
+
+    def prog(prefix=""):
+        def f(frac, msg):
+            if time.time() - last[0] >= a.every:
+                last[0] = time.time()
+                print(f"{time.time() - t0:7.0f}s {prefix}{frac:6.1%} {msg}", flush=True)
+        return f
+
+    failed = 0
+    for sym in [x.upper() for x in a.symbols]:
+        S.ensure_symbol(store, sym)
+        if a.dataset == "option_trades" and isinstance(src, S.OptionBarSource):
+            first, lastday = src.bars_window(today)
+            start = max(date.fromisoformat(a.start) if a.start else first, first)
+            tot = {"pairs_requested": 0, "pairs_cached": 0, "pairs_ok": 0, "pairs_empty": 0, "pairs_unavailable": 0, "pairs_failed": 0, "bars": 0, "requests": 0, "pages": 0}
+            days = cal.trading_days(start, min(end, lastday))
+            months = sorted({(d.year, d.month) for d in days})
+            for mi, (y, m) in enumerate(months):
+                chunk = [d for d in days if (d.year, d.month) == (y, m)]
+                tag = f"[{sym} {y}-{m:02d}, {mi + 1}/{len(months)}] "
+                try:
+                    wanted = src.bulk_wanted(sym, chunk[0], chunk[-1], a.band, a.max_dte)
+                    if a.rights != "both":
+                        wanted = {d: [c for c in cs if c.right == a.rights[0].upper()] for d, cs in wanted.items()}
+                    rep = src.acquire(sym, wanted, prog(tag), None, a.force)
+                except S.SourceError as e:
+                    print(f"{tag}FAILED: {str(e)[:300]}", flush=True)
+                    failed += 1
+                    continue
+                for k in tot:
+                    tot[k] += int(rep.get(k) or 0)
+                failed += int(rep.get("pairs_failed") or 0)
+                print(f"{time.time() - t0:7.0f}s {tag}{len(chunk)} sessions: {rep['pairs_ok']} contract-sessions with trades, {rep['pairs_empty']} without, {rep['pairs_cached']} already stored, "
+                      f"{rep['pairs_failed']} failed, {rep['bars']:,} bars, {rep['requests']} requests" + (f" | rejected {rep['rejected']}" if rep.get("rejected") else "") + (f" | errors {rep['errors'][:2]}" if rep.get("errors") else ""), flush=True)
+            print(f"DONE {sym} {a.dataset}: " + json.dumps(tot) + f" in {time.time() - t0:.0f}s", flush=True)
+        else:
+            start = date.fromisoformat(a.start) if a.start else None
+            if a.dataset == "bars_1m" and hasattr(src, "stock_bars"):
+                rep = src.stock_bars(sym, start or src.STOCKS_FIRST, end, prog(f"[{sym}] "), None, a.force)
+                S._finish(store, sym)
+            else:
+                rep = src.ingest(a.dataset, [sym], start, end, prog(f"[{sym}] "), None, a.force)
+            print(f"DONE {sym} {a.dataset}: " + json.dumps(rep, default=str)[:1200] + f" in {time.time() - t0:.0f}s", flush=True)
+    sys.exit(1 if failed else 0)
+
+
+def cmd_access(a):
+    """What the stored credentials can really retrieve: the expired-contract matrix, or BLOCKED and what to supply."""
+    from strata.data.providers import access as A
+    rep = A.alpaca_matrix(progress=lambda f, m: print(f"\r  {f:5.1%} {m:60s}", end="", flush=True), symbol=a.symbol.upper())
+    print("\r" + " " * 80 + "\r", end="")
+    print(json.dumps(rep, indent=1, default=str) if a.json else A.render(rep))
+    sys.exit(0 if rep["verified"] else 2 if rep["status"] == "blocked" else 1)
+
+
+def cmd_usecase(a):
+    """The original use case on the observations that are stored: qualifying sessions, what is priced, and a second independent computation."""
+    from strata.research import usecase as U
+    if getattr(a, "acquire", False):
+        got = U.acquire(symbol=a.symbol.upper(), source=a.source, progress=lambda f, m: print(f"\r  {f:5.1%} {m[:70]:70s}", end="", flush=True))
+        print("\r" + " " * 84 + "\r", end="")
+        if got["status"] == "blocked":
+            print(got["reason"])
+            sys.exit(2)
+        for v in got["variants"]:
+            print(f"{v['dte']}DTE, sessions after a fall of {got['threshold_pct']:g}% or more inside {got['window'][0]}..{got['window'][1]}: {v['signals_in_window']} sessions, {v['contract_sessions']} contract-sessions "
+                  f"({v['already_stored']} already stored, {v['downloaded_with_trades']} downloaded with trades, {v['downloaded_without_trades']} without, {v['failed']} failed; {v['bars'] or 0:,} bars)"
+                  + (f"; notes: {v['notes'][:2]}" if v["notes"] else ""))
+    rep = U.run(symbol=a.symbol.upper(), progress=lambda f, m: print(f"\r  {f:5.1%} {m:60s}", end="", flush=True))
+    print("\r" + " " * 80 + "\r", end="")
+    print(json.dumps(rep, indent=1, default=str) if a.json else U.render(rep))
+    bad = [r for r in rep["thresholds"] if not r["lists_identical"] or r["counts"]["disagree"]]
+    sys.exit(1 if bad else 0)
+
+
+def cmd_options_audit(a):
+    """Stored option trade bars: what is there session by session, a sample compared with the provider's own trades, and two providers against each other."""
+    from strata.audit import options as AO
+    sym = a.symbol.upper()
+    prog = lambda f, m: print(f"\r  {f:5.1%} {m:60s}", end="", flush=True)
+    aud = AO.audit_option_bars(sym=sym, provider=a.provider, progress=prog)
+    ver = AO.verify_against_trades(sym=sym, sample=a.verify, progress=prog) if a.verify else AO.saved(sym)
+    cross = AO.cross_provider(sym=sym)
+    print("\r" + " " * 80 + "\r", end="")
+    print(json.dumps({"audit": aud, "verification": ver, "cross_provider": cross}, indent=1, default=str) if a.json else AO.render(aud, ver, cross))
+    sys.exit(2 if (ver or {}).get("status") == "blocked" and a.verify else 1 if (a.verify and not (ver or {}).get("verified")) else 0)
+
+
+def cmd_bars_audit(a):
+    """Stored intraday bars checked against the exchange calendar and the daily record."""
+    from strata.audit import bars as AB
+    bad = 0
+    for sym in a.symbols or ["SPY"]:
+        rep = AB.audit(sym=sym.upper())
+        bad += rep["warnings"]
+        print(json.dumps(rep, indent=1, default=str) if a.json else AB.render(rep))
+    sys.exit(1 if bad and a.strict else 0)
+
+
+def cmd_eval_nl(a):
+    """How well requests are understood: 110 development and 40 held-out sentences through the application's own routing."""
+    from strata.ai import evalset as EV
+    from strata.ai.agent import Agent
+    from strata.data.store import MarketStore
+    ag = Agent(None, MarketStore()) if a.llm else Agent(None, MarketStore(), llm_factory=lambda: None)
+    try:
+        rep = EV.report(ag, llm=a.llm)
+    except RuntimeError as e:
+        print(f"NOT RUN: {e}")
+        sys.exit(2)
+    if a.json:
+        print(json.dumps(rep, indent=1, default=str))
+    else:
+        for k, title in (("development", "Development sentences (used to correct the readers)"), ("held_out", "Held-out sentences (now also used)")):
+            r = rep[k]
+            print(f"{title}: {r['correct']} of {r['cases']} correct ({r['accuracy_pct']}%), {r['flagged']} flagged, {r['silent']} silent  [{r['interpreter']}]")
+            for f in r["failures"]:
+                print(f"   [{f['status']}] {f['text'][:100]}\n      " + "; ".join(f["differences"][:3]))
+        fr = rep["held_out_first_run"]
+        print(f"Held-out, first run ({fr['date']}, before any fix): {fr['correct']} of {fr['cases']} correct ({fr['accuracy_pct']}%), {fr['silent']} silent. This is the estimate for an unseen sentence.")
+    sys.exit(0 if rep["development"]["silent"] == 0 else 1)
+
+
+def cmd_backup(a):
+    from strata import backup as BK
+    out = BK.backup(a.dest, market=not a.no_market, progress=lambda f, m: print(f"\r  {f:5.1%} {m:40s}", end="", flush=True))
+    print(f"\rbackup written to {out['path']}: {out['files']:,} files, {out['bytes'] / 2 ** 20:,.1f} MB" + ("" if out["market_data"] else " (market data not included)") + ". Credentials are never part of a backup.")
+
+
+def cmd_restore(a):
+    from strata import backup as BK
+    if a.verify:
+        r = BK.verify(a.src)
+        print(("verified" if r["ok"] else "DAMAGED") + f": {r['files']:,} files, created {r['created']}" + ("" if r["ok"] else "\n  " + "\n  ".join(r["damaged"] + [f"{x}: missing" for x in r["missing"]])))
+        sys.exit(0 if r["ok"] else 1)
+    try:
+        r = BK.restore(a.src, force=a.force)
+    except ValueError as e:
+        print(f"not restored: {e}")
+        sys.exit(1)
+    print(f"restored {r['files']:,} files into {r['restored_to']}" + (f"; the previous database is kept as {r['previous_database_kept_as']}" if r["previous_database_kept_as"] else "") + f". {r['note']}")
 
 
 def cmd_ingest(a):
@@ -309,6 +478,53 @@ def main(argv=None):
     p = sub.add_parser("providers", help="live check of what each data source actually delivers (depth, speed, entitlements)")
     p.add_argument("sources", nargs="*", help="yahoo cboe yahoo_options github_eod dolthub alpaca (default: all)")
     p.set_defaults(fn=cmd_providers)
+    p = sub.add_parser("download", help="download from a free or keyed source outside the web app: 1-minute bars, or the bulk set of option trade bars (resumable; exit 2 = no key)")
+    p.add_argument("source", help="alpaca, yahoo, yahoo_options, ...")
+    p.add_argument("dataset", help="bars_1m, option_trades, ... (the ids the Data page shows for the source)")
+    p.add_argument("symbols", nargs="+")
+    p.add_argument("--start", help="YYYY-MM-DD (default: the first date the source has)")
+    p.add_argument("--end", help="YYYY-MM-DD (default: today)")
+    p.add_argument("--band", type=float, default=2.0, help="option_trades: strikes within this percentage of the PREVIOUS close (default 2)")
+    p.add_argument("--max-dte", type=int, default=7, help="option_trades: expirations up to this many calendar days out (default 7)")
+    p.add_argument("--rights", choices=["both", "call", "put"], default="both")
+    p.add_argument("--force", action="store_true", help="download again what is already stored")
+    p.add_argument("--every", type=float, default=15.0, help="seconds between progress lines")
+    p.set_defaults(fn=cmd_download)
+    p = sub.add_parser("access", help="test what the stored provider key can really retrieve: expired SPY option contracts across 2024-2026 (exit 2 = blocked, no key)")
+    p.add_argument("provider", nargs="?", default="alpaca", choices=["alpaca"])
+    p.add_argument("--symbol", default="SPY")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_access)
+    p = sub.add_parser("usecase", help="the 0DTE-calls-after-a-down-day strategy on stored observations: coverage, engine result and an independent recomputation (exit 1 if the two disagree)")
+    p.add_argument("--symbol", default="SPY")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--acquire", action="store_true", help="first download, from the keyed free source, the contracts this strategy needs on its qualifying sessions (chosen around the price at the signal)")
+    p.add_argument("--source", default="alpaca")
+    p.set_defaults(fn=cmd_usecase)
+    p = sub.add_parser("options-audit", help="check stored option trade bars: sessions missing, empty or thin; --verify N refetches N contract-sessions as individual trades and rebuilds the bars (exit 1 if they differ, 2 = no key)")
+    p.add_argument("symbol", nargs="?", default="SPY")
+    p.add_argument("--provider", help="default: the dataset the engine would use")
+    p.add_argument("--verify", type=int, default=0, metavar="N", help="compare N stored contract-sessions with the provider's own trades (read-only requests)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_options_audit)
+    p = sub.add_parser("bars-audit", help="check stored intraday bars: missing and partial sessions, hours, clock changes, official close, volume, mixed feeds")
+    p.add_argument("symbols", nargs="*", help="default: SPY")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--strict", action="store_true", help="exit 1 if any warning is found")
+    p.set_defaults(fn=cmd_bars_audit)
+    p = sub.add_parser("eval-nl", help="measure how well requests are understood (150 sentences; --llm uses the configured language model)")
+    p.add_argument("--llm", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_eval_nl)
+    p = sub.add_parser("backup", help="copy the database, the stored market data and the reports to a folder, with a checksum manifest (credentials are never included)")
+    p.add_argument("dest", help="a folder OUTSIDE the data directory; a dated sub-folder is created in it")
+    p.add_argument("--no-market", action="store_true", help="leave the market data out (database and reports only)")
+    p.set_defaults(fn=cmd_backup)
+    p = sub.add_parser("restore", help="restore a backup after verifying every file against its manifest")
+    p.add_argument("src", help="the backup folder (the one that contains MANIFEST.json)")
+    p.add_argument("--verify", action="store_true", help="only check the backup; restore nothing")
+    p.add_argument("--force", action="store_true", help="restore into a data directory that already holds data")
+    p.set_defaults(fn=cmd_restore)
     p = sub.add_parser("ingest", help="download from a configured provider")
     p.add_argument("provider", choices=["thetadata", "polygon", "databento", "orats"])
     p.add_argument("symbol")
@@ -321,7 +537,42 @@ def main(argv=None):
     if a.data_dir:
         from strata.config import override_settings
         override_settings(data_dir=a.data_dir)
-    a.fn(a)
+    from strata.core import instance
+    if a.cmd != "serve":
+        # a command waits out a lease whose holder may have gone; the server goes on standby instead
+        instance.DEFAULT_WAIT = float(os.environ.get("STRATA_INSTANCE_WAIT") or 25.0)
+        instance.configure(role="collector" if a.cmd == "collect" else "command")
+    try:
+        health = a.cmd == "collect" and getattr(a, "health", False)
+        if a.cmd == "collect" and getattr(a, "daemon", False):
+            # a daemon has nothing else to do: it waits on standby until the copy that holds the data directory has gone
+            told = False
+            while True:
+                try:
+                    instance.ensure(wait=0.0)
+                    break
+                except instance.Busy as e:
+                    if not told:
+                        print(f"STANDBY. {e}", flush=True)
+                        told = True
+                    hb = __import__("strata.config", fromlist=["get_settings"]).get_settings().data_dir / "collector.heartbeat"
+                    try:  # alive and waiting: the container's health check must not restart it
+                        hb.parent.mkdir(parents=True, exist_ok=True)
+                        hb.write_text("standby")
+                    except OSError:
+                        pass
+                    time.sleep(5.0)
+        elif a.cmd not in ("serve", "validate", "bench") and not health:  # those two work in a directory of their own; the server goes on standby by itself
+            instance.ensure()  # before anything is read or written: one machine at a time on a data directory
+        a.fn(a)
+    except instance.Busy as e:
+        hint = (f"The command can be run inside that copy: docker compose exec strata strata {a.cmd} ..." if "container" in str(e.holder.get("where", ""))
+                else "Run the command where that copy is running (on the computer itself, outside the container).")
+        print(f"\nNOT RUN. {e}\n{hint}", file=sys.stderr)
+        sys.exit(3)
+    finally:
+        if a.cmd != "serve":
+            instance.release()
 
 
 if __name__ == "__main__":

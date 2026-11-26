@@ -21,6 +21,36 @@ from strata.engine.margin import MLeg, max_profit_loss, requirement
 from strata.engine.models import StrategyConfig
 from strata.engine.portfolio import Position
 
+def position_direction(pos: Position) -> tuple[float, bool]:
+    """(net delta at entry, is the position direction-neutral).
+
+    The direction decides which way an underlying move is "in favour". A position is neutral when its bullish and
+    bearish legs offset each other (a straddle, an iron condor): the net delta is small RELATIVE to the gross delta.
+    It is not neutral merely because its delta is small: a far out-of-the-money long call still gains when the
+    underlying rises. (An absolute threshold used to make such positions "neutral", so their target never fired and
+    their stop fired on a move in either direction.) Where a leg's entry delta is unknown, its sign comes from what
+    the leg is: long calls and short puts are bullish."""
+    net = gross = struct = 0.0
+    for l in pos.legs:
+        if l.kind == "option":
+            dl = l.entry_greeks[0]
+            unit = (1.0 if l.is_call else -1.0)
+            if not math.isfinite(dl) or dl == 0.0:
+                dl = 0.5 * unit  # unknown: only the sign is used, at even weight
+            x = l.ratio * dl * l.multiplier
+            struct += l.ratio * unit
+        else:
+            x = float(l.ratio)
+            struct += l.ratio
+        net += x
+        gross += abs(x)
+    if gross < 1e-6:  # every delta is vanishing (far out of the money at entry): the legs themselves say which way it leans
+        return struct, struct == 0
+    if abs(net) < 0.1 * gross:
+        return net, True
+    return net, False
+
+
 LOSS_REASONS = {"stop_loss", "trailing_stop", "underlying_stop", "greek_stop", "strike_breach"}
 PROFIT_REASONS = {"profit_target", "underlying_target"}
 PRIORITY = ["stop_loss", "trailing_stop", "strike_breach", "underlying_stop", "greek_stop", "custom_exit", "roll", "time_exit", "dte_exit", "max_hold", "underlying_target", "profit_target"]
@@ -166,9 +196,8 @@ class RuleStrategy(Strategy):
         ue = ex.underlying
         spot = ctx.price(pos.symbol)
         if ue.enabled and math.isfinite(spot):
-            d0 = sum(l.ratio * (l.entry_greeks[0] if math.isfinite(l.entry_greeks[0]) else 0) * (l.multiplier if l.kind == "option" else 1) for l in pos.legs)
+            d0, neutral = position_direction(pos)
             mv = (spot / pos.entry_spot - 1) * 100
-            neutral = abs(d0) < 5
             directional = mv * (1 if d0 > 0 else -1)
             if ue.move_against_pct is not None:
                 against = abs(mv) if neutral else -directional

@@ -162,10 +162,12 @@ def find_structure(low: str) -> str | None:
     if put and call:
         first = "put" if put.start() < call.start() else "call"
         return {"put": "short_put" if short else "long_put", "call": "short_call" if short else "long_call"}[first]
+    # the words between the verb and the option may be hyphenated or numeric ("sell a 30-delta SPY put"); an exit verb ("sell them at noon") is not a short sale
+    between = r"(?!(?:them|it|at|when|by|after|before|if|on)\b)(?:[\w.%$-]+\s+){0,6}?"
     if put:
-        return "short_put" if short and re.search(r"(sell|selling|short|write)\w*\s+(?:\w+\s+){0,4}puts?", low) else "long_put"
+        return "short_put" if short and re.search(rf"\b(?:sell|selling|short|shorting|write|writing)\s+{between}puts?\b", low) else "long_put"
     if call:
-        return "short_call" if short and re.search(r"(sell|selling|short|write)\w*\s+(?:\w+\s+){0,4}calls?", low) else "long_call"
+        return "short_call" if short and re.search(rf"\b(?:sell|selling|short|shorting|write|writing)\s+{between}calls?\b", low) else "long_call"
     return None
 
 
@@ -213,7 +215,7 @@ def find_conditions(text: str, spans: list | None = None) -> list[tuple[str, Dra
             add(cat, f"{field} <= -{x:g}" if sign < 0 else f"{field} >= {x:g}", f"previous session {'fell' if sign < 0 else 'rose'} {x:g}% or more ({basis})")
             break
     # red / green weekday ("after a red Monday")
-    m = re_.search(r"(red|down|green|up)\s+(monday|tuesday|wednesday|thursday|friday)", low)
+    m = re_.search(r"\b(red|down|green|up)\s+(monday|tuesday|wednesday|thursday|friday)", low)
     if m:
         k = WEEKDAYS.index(DAYNAMES[m.group(2)])
         neg = m.group(1) in ("red", "down")
@@ -275,14 +277,14 @@ def find_conditions(text: str, spans: list | None = None) -> list[tuple[str, Dra
 
 def find_weekdays(low: str) -> list[str] | None:
     days = []
-    for m in re.finditer(r"(?:on|every|each)\s+((?:(?:monday|tuesday|wednesday|thursday|friday)s?(?:\s*(?:,|and|&)\s*)?)+)", low):
+    for m in re.finditer(r"(?:\bon|\bevery|\beach|\bentered|\benter(?:ing)?|\btrade(?:d|s)?(?:\s+only)?(?:\s+on)?|\bonly)\s+((?:(?:monday|tuesday|wednesday|thursday|friday)s?(?:\s*(?:,|and|&|or)\s*)?)+)", low):
         for d in re.findall(r"monday|tuesday|wednesday|thursday|friday", m.group(1)):
             if DAYNAMES[d] not in days:
                 days.append(DAYNAMES[d])
     return days or None
 
 
-STOP_WORDS = r"stop|against|adverse|loss|los(?:e|es|ing)\b|cut\b|falls? another|drops? another|before (?:it )?(?:fall|drop|los|declin)"
+STOP_WORDS = r"\bstops?\b|\bstopp\w+|against|adverse|\bloss(?:es)?\b|\blos(?:e|es|ing)\b|\bcut\b|falls? another|drops? another|before (?:it )?(?:fall|drop|los|declin)"
 GAIN_WORDS = r"target|profit|gain|doubl|take\b|ris(?:e|es|ing)\b|\bup\b|increase|rall"
 
 
@@ -300,6 +302,9 @@ def classify_percents(text: str, is_study: bool, spans: list | None = None) -> d
     for m in re.finditer(rf"{N}\s*%", low):
         x = float(m.group(1))
         pre, post = low[max(0, m.start() - 48):m.start()], low[m.end():m.end() + 44]
+        # a number belongs to its own clause: the words beyond a semicolon or a full stop say nothing about it
+        # ("... 0.5% from the open; exit at 50% profit" made the 50% an underlying move)
+        pre, post = re.split(r"[;.]\s", pre)[-1], re.split(r"[;.](?:\s|$)", post)[0]
         ctxw = pre + " % " + post
         if re.search(rf"{PREV}|down day|red day|gap|decline\b(?! in)|vix|iv rank|rsi|otm|out of the money|of its|of the overnight", pre[-34:] + post[:26]) and not re.search(r"target|stop|exit|profit|move[sd]? (?:up|down)|ris|increase", pre[-22:]):
             continue
@@ -308,6 +313,10 @@ def classify_percents(text: str, is_study: bool, spans: list | None = None) -> d
         # the nearest preceding verb decides: "...doubles or loses 50%" is a stop, "...loses 50% or gains 80%" ends on a target
         ps, pg = _last(STOP_WORDS, pre[-30:]), _last(GAIN_WORDS, pre[-30:])
         stop = (ps > pg) if (ps >= 0 or pg >= 0) else bool(re.search(STOP_WORDS, post[:10]))
+        # the word right after the number wins: "50% profit or 25% loss", "a 60% premium stop"
+        nxt = re.match(r"\s*(?:of\s+)?(?:the\s+)?(?:premium\s+|option\s+|credit\s+|debit\s+|max\s+)?(profits?|gains?|target|loss(?:es)?|stop(?:[- ]loss)?)\b", post)
+        if nxt:
+            stop = nxt.group(1).startswith(("loss", "stop"))
         down = re.search(rf"\b(?:{DOWN})\b", pre[-22:] + " " + post[:18]) and not re.search(rf"\b(?:{UP})\b", pre[-12:])
         if premium:
             out.setdefault("premium_stop" if stop else "premium_target", x)
@@ -320,6 +329,9 @@ def classify_percents(text: str, is_study: bool, spans: list | None = None) -> d
                 out.setdefault("und_target", x)
     if re.search(r"\bdoubles?\b|\bdoubling\b", low):
         out.setdefault("premium_target", 100.0)
+    m = re.search(rf"\bstop(?:[- ]loss)?\s+(?:at|of|is)?\s*{N}\s*(?:x|times)\s+(?:the\s+)?(?:credit|premium|debit)", low)
+    if m:
+        out.setdefault("premium_stop", float(m.group(1)) * 100)  # "stop at 2x the credit": the loss equals twice the premium received
     return out
 
 
@@ -512,9 +524,12 @@ def parse_fresh(text: str, known: list[str], default_symbol: str = "SPY") -> Dra
         m = re.search(r"\b(?:buy|sell|short|long|trade)\s+(one|two|three|four|five|\d+)\s+(?!dte|day|min|consec|%)", low)
         if m and _num(m.group(1)):
             d.quantity = max(1, int(_num(m.group(1))))
-        m = re.search(rf"{N}[- ]?(?:point|pt|\$|dollar)s?[- ]wide|width (?:of )?\$?{N}", low)
+        m = re.search(r"\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:contracts?|lots?)\b|\b(?:size|quantity)\s+(?:of\s+)?(\d+)\b|\bx\s?(\d+)\b(?!\s*(?:credit|the|premium))", low)
+        if m and _num(m.group(1) or m.group(2) or m.group(3)):
+            d.quantity = max(1, int(_num(m.group(1) or m.group(2) or m.group(3))))
+        m = re.search(rf"{N}[- ]?(?:point|pt|\$|dollar)s?[- ](?:wide|wings?)|width (?:of )?\$?{N}|wings? (?:of )?\$?{N}|\$?{N}\s+(?:points?\s+)?wide\b|\$?{N}[- ](?:point|pt|dollar)s?\s+(?:wide|wings?|spread|width)", low)
         if m:
-            d.width = float(m.group(1) or m.group(2))
+            d.width = float(next(g for g in m.groups() if g))
         d.underlying_target_pct = pc.get("und_target")
         d.underlying_stop_pct = pc.get("und_stop")
         dc = classify_dollars(text, spans)
@@ -724,12 +739,15 @@ def parse_followup(text: str, cur: Draft, known: list[str], last_field: str | No
     if re.search(r"how sensitive|sensitivity", low) and field is None:
         field = last_field or ("target" if (cur.underlying_target_pct or (cur.study and cur.study.target)) else "prev_ret")
     dtes = re.findall(r"\b(\d+)\s*-?\s*dte\b", low)
-    if len(dtes) >= 2:
+    replace_dte = len(dtes) == 2 and bool(re.search(r"\binstead of\b|\brather than\b|\bnot\b", low)) and cur.dte is not None and int(dtes[1]) == int(cur.dte) and not wants_compare
+    if len(dtes) >= 2 and not replace_dte:
         vals = sorted({int(x) for x in dtes})
         if re.search(r"through|thru|to\b", low) and len(vals) == 2:
             vals = [v for v in (0, 1, 2, 3, 5, 7, 10, 14, 21, 30, 45) if vals[0] <= v <= vals[1]]
         return {"action": "sweep", "field": "dte", "values": vals[:12]}
-    if field == "entry_time" or re.search(r"entry times?", low):
+    # "enter at 6:30 and exit at 12:45" names one entry time and one exit time: it is an edit, not two entry times to compare
+    one_of_each = bool(EXIT_CUE.search(text)) and not re.search(r"entry times?|\bversus\b|\bvs\.?\b|\bcompare\b", low)
+    if (field == "entry_time" or re.search(r"entry times?", low)) and not one_of_each:
         msg_tz = next((TZ_OFFSET[k] for k in ("pacific", "eastern", "central", "mountain") if k in low), None)
         ts = [t for t in find_times(text, msg_tz) if t["et"] not in ("open", "close", "12:00") or True]
         mins = [t["minutes"] for t in ts]
@@ -752,7 +770,9 @@ def parse_followup(text: str, cur: Draft, known: list[str], last_field: str | No
         if rv:
             return {"action": "sweep", "field": field, "values": rv}
     nums = [float(x) for x in re.findall(rf"{N}\s*%", low)]
-    if len(nums) >= 2 and (wants_compare or re.search(r"\btest\b|\btry\b|\bsweep\b", low)):
+    # "run the same strategy after 1% and 2% declines": the same rules at each of the sizes named
+    several = len(nums) >= 2 and re.search(rf"{N}\s*%\s*(?:,|and|or|&)\s*(?:(?:a|an)\s+)?{N}\s*%", low) and re.search(r"\bsame\b|\brun\b|\brerun\b|\brepeat\b|\bagain\b|\balso\b", low) and not one_of_each
+    if len(nums) >= 2 and (wants_compare or re.search(r"\btest\b|\btry\b|\bsweep\b", low) or several):
         return {"action": "sweep", "field": field or last_field or "prev_ret", "values": sorted(set(nums))[:12]}
     if re.search(r"how sensitive|sensitivity", low) and field:
         base = {"target": cur.underlying_target_pct or (abs(cur.study.target.value) if cur.study and cur.study.target and cur.study.target.kind == "pct" else 1.0), "stop": cur.underlying_stop_pct or 0.5}.get(field, 2.0)
@@ -814,16 +834,51 @@ def parse_followup(text: str, cur: Draft, known: list[str], last_field: str | No
             changed.append("prev_ret")
     msg_tz = next((TZ_OFFSET[k] for k in ("pacific", "eastern", "central", "mountain") if k in low), None)
     times = find_times(text, msg_tz)
-    if times and re.search(r"enter|entry|buy at|open (?:the trade|at)|at the open|start", low) and "entry_time" not in changed and not re.search(r"exit|sell|close out", low[:max(1, times[0]["pos"])]):
-        n.entry_time, n.entry_time_stated = ("open" if times[0]["et"] == "09:30" else times[0]["et"]), times[0]["stated"]
+    cue = EXIT_CUE.search(text)
+    cut = cue.start() if cue else len(text) + 1
+    t_in, t_out = [t for t in times if t["pos"] < cut], [t for t in times if t["pos"] >= cut]
+    hold_until = bool(re.search(r"\b(?:hold|holding)\s+(?:it\s+|them\s+)?(?:until|till|to|through)\b|\bget out\b|\bbe out\b|\bflat by\b", low))
+    if hold_until and t_in and not t_out:
+        t_out, t_in = t_in, []
+    if t_in and re.search(r"enter|entry|buy at|open (?:the trade|at)|at the open|start", low) and "entry_time" not in changed:
+        n.entry_time, n.entry_time_stated = ("open" if t_in[0]["et"] == "09:30" else t_in[0]["et"]), t_in[0]["stated"]
         changed.append("entry_time")
-    elif times and re.search(r"exit|sell|close (?:out|by|at)|out by", low):
-        n.exit_time, n.exit_time_stated = times[-1]["et"], times[-1]["stated"]
+    # both can be stated in one sentence ("enter at 6:30 AM Pacific and exit at 12:45 PM Pacific"): the exit used to be dropped when an entry was read
+    if not t_out and len(times) == 1 and re.search(r"\b(?:hold|holding)\s+(?:it\s+|them\s+)?(?:until|till|to|through)\b|\bget out\b|\bbe out\b|\bflat by\b", low):
+        t_out, t_in = times, []  # "hold until 3 PM", "get out at 1 PM": the one time named is when the position ends
+    if t_out and re.search(r"exit|sell|close (?:out|by|at)|out by|get out|be out|flat by|\bhold", low):
+        n.exit_time, n.exit_time_stated = t_out[-1]["et"], t_out[-1]["stated"]
+        changed.append("exit_time")
+    elif re.search(r"(?:exit|sell|close(?: out)?|get out)\s+(?:it\s+|them\s+)?(?:at|on|by)\s+the\s+close\b", low) and n.kind == "options":
+        n.exit_time, n.exit_time_stated = "close", "the close"
         changed.append("exit_time")
     m = re.findall(r"\b(\d+)\s*-?\s*dte\b", low)
-    if n.kind == "options" and len(m) <= 1 and find_dte(low) is not None and (m or re.search(r"expir|\bout\b|weekl|monthl|-(?:day|week|month)\b", low)):
+    if n.kind == "options" and replace_dte:
+        n.dte = int(m[0])
+        changed.append("dte")
+    elif n.kind == "options" and len(m) <= 1 and find_dte(low) is not None and (m or re.search(r"expir|\bout\b|weekl|monthl|-(?:day|week|month)\b", low)):
         n.dte = find_dte(low)
         changed.append("dte")
+    wd = find_weekdays(low)
+    if wd and re.search(r"\bonly\b|\bjust\b|\brestrict\w*\b|\blimit\w*\b|\btrade(?:s|d)?\s+on\b", low) and not re.search(r"differ|perform|better|worse|break ?down", low):
+        n.weekdays = wd
+        changed.append("weekdays")
+    # "require the VIX to be above 20 as well": one more entry condition, read by the research reader when the static parser has no rule for it
+    if not changed and re.search(r"\b(?:require|requiring|also|as well|too\b|in addition|add (?:a |the )?(?:condition|filter|rule|requirement)|make sure|only (?:if|when))\b", low):
+        phrase = re.sub(r"^\s*(?:and\s+|also\s+|please\s+)*(?:require(?:\s+that)?|add (?:a |the )?(?:condition|filter|rule|requirement)(?:\s+(?:that|requiring|of))?|make sure(?:\s+that)?|only (?:if|when)|also)\s+", "", text.strip(" .!?"), flags=re.I)
+        phrase = re.sub(r"\s*(?:,\s*)?(?:as well|too|also|in addition)\s*$", "", phrase, flags=re.I)
+        phrase = re.sub(r"\bto be\b", "is", phrase)
+        try:
+            from strata.ai import nl_graph as NG
+            got, rest = NG.entry_conditions("when " + phrase, n.symbol, known, None, n.entry_time, partial=True)
+        except Exception:  # noqa: BLE001
+            got, rest = [], [phrase]
+        have = {c.expr.replace(" ", "") for c in n.conditions}
+        if got and not [x for x in rest if re.search(r"[a-z]{3,}", x.lower())]:
+            for g in got:
+                if g["expr"].replace(" ", "") not in have:
+                    n.conditions.append(DraftCondition(expr=g["expr"], text=g["text"]))
+            changed.append("conditions")
     pc = classify_percents(text, n.kind == "study")
     for key, fld in (("und_target", "target"), ("und_stop", "stop"), ("premium_target", "premium_target"), ("premium_stop", "premium_stop")):
         if key in pc and fld not in changed and "prev_ret" not in changed and re.search(r"target|stop|profit|exit|take", low):

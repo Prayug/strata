@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CircleAlert, Database, Download, ExternalLink, FlaskConical, FolderInput, Loader2, PlugZap, Radio, RefreshCw, ShieldCheck, ShieldQuestion, Table2, Trash2, Upload } from "lucide-react";
+import { CircleAlert, Database, Download, Gauge, ExternalLink, FlaskConical, FolderInput, Loader2, PlugZap, Radio, RefreshCw, ShieldCheck, ShieldQuestion, Table2, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ import { bytes, cn, compact, etTime, num, pct } from "@/lib/format";
 import { useUi } from "@/lib/store";
 import { BulkImportPanel, CollectorPanel } from "./data/Collection";
 import { Marketplace } from "./data/Marketplace";
+import { Readiness } from "./data/Readiness";
 
 const refreshData = () => {
   for (const k of ["catalog", "coverage", "storage", "meta", "symbol", "sources", "collector", "marketplace", "alpaca-validation", "onboarding"]) queryClient.invalidateQueries({ queryKey: [k] });
@@ -23,12 +24,14 @@ export default function DataPage() {
   const [sel, setSel] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [params] = useSearchParams();
-  const [tab, setTab] = useState(params.get("tab") || "coverage");
+  const [tab, setTab] = useState(params.get("tab") || "readiness");
+  useEffect(() => { const t = params.get("tab"); if (t) setTab(t); }, [params]);
   const advanced = useUi((u) => u.mode) === "advanced";
   const job = useJob(jobId, (s) => {
     if (s.status === "done") toast.success("Data job finished");
     if (s.status === "error") toast.error(`Data job failed: ${s.message}`);
     refreshData();
+    for (const k of ["readiness", "alpaca-access", "usecase", "bars-audit"]) queryClient.invalidateQueries({ queryKey: [k] });
   });
   const rows = cov.data || [];
   const real = rows.filter((r) => !r.synthetic);
@@ -44,6 +47,7 @@ export default function DataPage() {
       </PageHeader>
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
         <TabsList>
+          <TabsTrigger value="readiness" data-testid="tab-readiness"><Gauge className="size-3" /> Readiness</TabsTrigger>
           <TabsTrigger value="coverage"><Database className="size-3" /> Coverage</TabsTrigger>
           <TabsTrigger value="sources" data-testid="tab-sources"><ShieldQuestion className="size-3" /> Sources</TabsTrigger>
           <TabsTrigger value="free"><Download className="size-3" /> Get free data</TabsTrigger>
@@ -70,6 +74,7 @@ export default function DataPage() {
               {cur && <SymbolDetail sym={cur} />}
             </>}
           </TabsContent>
+          <TabsContent value="readiness"><Readiness onJob={setJobId} /></TabsContent>
           <TabsContent value="datasets"><Datasets /></TabsContent>
           <TabsContent value="collector"><CollectorPanel onJob={setJobId} /></TabsContent>
           <TabsContent value="sources"><Marketplace onJob={setJobId} /></TabsContent>

@@ -28,6 +28,7 @@ import gzip
 import re
 import shutil
 import tempfile
+import os
 import zipfile
 from datetime import date, datetime, time, timezone
 from pathlib import Path
@@ -41,10 +42,50 @@ from strata.data.store import MarketStore
 BATCH = 400_000
 ET = ZoneInfo("America/New_York")
 SUFFIXES = (".csv", ".txt", ".csv.gz", ".txt.gz", ".parquet", ".pq")
+# An imported archive is untrusted input. Members are extracted one at a time under their base name only (a member called
+# "../../x" cannot leave the work directory), and decompression is bounded: a few megabytes that expand to a full disk are refused.
+MAX_MEMBER_BYTES = int(float(os.environ.get("STRATA_IMPORT_MAX_GB", "32")) * 2 ** 30)  # one decompressed file
+MAX_RATIO = 500  # market-data text compresses 5 to 40 times; a ratio in the hundreds on a large member is a decompression bomb
+MAX_MEMBERS = 20000
+
+
+class UnsafeArchive(ValueError):
+    """An archive (or compressed file) that will not be opened: it expands beyond the limits above."""
+
+
+def _check_member(name: str, size: int, packed: int) -> None:
+    if size > MAX_MEMBER_BYTES:
+        raise UnsafeArchive(f"{name} would decompress to {size / 2 ** 30:.1f} GB, above the {MAX_MEMBER_BYTES / 2 ** 30:.0f} GB limit for one file (STRATA_IMPORT_MAX_GB)")
+    if packed > 0 and size > 64 * 2 ** 20 and size / packed > MAX_RATIO:
+        raise UnsafeArchive(f"{name} claims a compression ratio of {size / packed:,.0f} to 1: refused as a decompression bomb")
+
+
+def _bounded_copy(src, dst, limit: int, name: str) -> int:
+    """Copy at most `limit` bytes. A member that turns out larger than its own header says is an attack, not a file."""
+    n = 0
+    while True:
+        chunk = src.read(4 << 20)
+        if not chunk:
+            return n
+        n += len(chunk)
+        if n > limit:
+            raise UnsafeArchive(f"{name} is larger than its header declares ({limit:,} bytes): refused")
+        dst.write(chunk)
+
+
+def _gunzip_to(path: Path, out: Path) -> None:
+    packed = path.stat().st_size
+    with gzip.open(path, "rb") as f, open(out, "wb") as o:
+        try:
+            _bounded_copy(f, o, min(MAX_MEMBER_BYTES, max(64 * 2 ** 20, packed * MAX_RATIO)), path.name)
+        except UnsafeArchive:
+            o.close()
+            out.unlink(missing_ok=True)
+            raise
 
 # id -> (kind, label, required lower-case columns, a description of the vendor layout)
 FORMATS: dict[str, dict] = {
-    "optionsdx": {"kind": "option_quotes", "label": "OptionsDX (wide: one row per strike, calls and puts side by side)", "need": {"[quote_unixtime]", "[expire_date]", "[strike]", "[c_bid]", "[p_bid]"}},
+    "optionsdx": {"kind": "option_quotes", "label": "OptionsDX (wide: one row per strike, calls and puts side by side)", "need": {"quote_unixtime", "expire_date", "strike", "c_bid", "p_bid"}},
     "cboe_eod": {"kind": "option_quotes", "label": "Cboe DataShop end-of-day option quotes", "need": {"underlying_symbol", "quote_date", "expiration", "strike", "option_type", "bid_eod", "ask_eod"}},
     "cboe_interval": {"kind": "option_quotes", "label": "Cboe DataShop interval option quotes", "need": {"underlying_symbol", "quote_datetime", "expiration", "strike", "option_type", "bid", "ask"}},
     "historicaloptiondata": {"kind": "option_quotes", "label": "historicaloptiondata.com option quotes", "need": {"underlying", "optionroot", "type", "expiration", "quotedate", "strike", "bid", "ask"}},
@@ -71,7 +112,10 @@ OCC_RE = r"^(?:O:)?\s*([A-Z][A-Z0-9.]{0,5})\s*(\d{6})([CP])(\d{8})$"
 def detect(columns: list[str], sample: pl.DataFrame | None = None) -> str | None:
     """Layout id for a header (and, to tell option tickers from stock tickers, a few rows)."""
     cols = {c.strip().lower() for c in columns}
-    for fid in ("optionsdx", "cboe_eod", "cboe_interval", "historicaloptiondata", "wrds_optionmetrics", "dolthub", "thetadata_eod", "stooq", "yahoo"):
+    # OptionsDX writes its column names both ways: "[QUOTE_UNIXTIME]" in the store's downloads, "QUOTE_UNIXTIME" in its public sample
+    if FORMATS["optionsdx"]["need"] <= {c.strip(" []") for c in cols}:
+        return "optionsdx"
+    for fid in ("cboe_eod", "cboe_interval", "historicaloptiondata", "wrds_optionmetrics", "dolthub", "thetadata_eod", "stooq", "yahoo"):
         if FORMATS[fid]["need"] <= cols:
             return fid
     if FORMATS["polygon_options"]["need"] <= cols:
@@ -151,6 +195,10 @@ def inspect(path: str) -> dict:
         if fp.suffix.lower() == ".zip":
             with zipfile.ZipFile(fp) as z:
                 infos = [i for i in z.infolist() if not i.is_dir() and i.filename.lower().endswith(SUFFIXES)]
+                if len(infos) > MAX_MEMBERS:
+                    raise UnsafeArchive(f"{fp.name} holds {len(infos):,} files, above the limit of {MAX_MEMBERS:,}")
+                for i in infos:  # refused here, before the import is even offered
+                    _check_member(f"{fp.name}:{i.filename}", i.file_size, i.compress_size)
                 shown = None
                 for i in infos[:1]:
                     with tempfile.TemporaryDirectory() as td:
@@ -217,13 +265,21 @@ def normalise(df: pl.DataFrame, fmt: str, tz: str = "America/New_York", symbol: 
         return next((c for c in names if c in df.columns), None)
 
     if fmt == "optionsdx":
-        ts = pl.from_epoch(pl.col("[quote_unixtime]").cast(pl.Int64, strict=False), time_unit="s").dt.replace_time_zone("UTC")
-        exp = _date(pl.col("[expire_date]"), t["[expire_date]"])
-        und = num("[underlying_last]") if "[underlying_last]" in df.columns else pl.lit(None, dtype=f)
+        df = df.rename({c: c.strip(" []") for c in df.columns})
+        t = df.schema
+        ts = pl.from_epoch(pl.col("quote_unixtime").cast(pl.Int64, strict=False), time_unit="s").dt.replace_time_zone("UTC")
+        exp = _date(pl.col("expire_date"), t["expire_date"])
+        und = num("underlying_last") if "underlying_last" in df.columns else pl.lit(None, dtype=f)
         parts = []
         for r, p in (("C", "c"), ("P", "p")):
-            opt = lambda n: num(f"[{p}_{n}]") if f"[{p}_{n}]" in df.columns else pl.lit(None, dtype=f)  # noqa: E731
-            parts.append(df.select(ts.alias("ts"), exp.alias("expiration"), num("[strike]").alias("strike"), pl.lit(r).alias("right"), opt("bid").alias("bid"), opt("ask").alias("ask"), opt("volume").alias("volume"),
+            opt = lambda n: num(f"{p}_{n}") if f"{p}_{n}" in df.columns else pl.lit(None, dtype=f)  # noqa: E731
+            if f"{p}_size" in df.columns:  # "10 x 250": contracts bid x contracts offered
+                sz = pl.col(f"{p}_size").cast(pl.String, strict=False).str.extract_groups(r"^\s*(\d+)\s*[xX]\s*(\d+)\s*$")
+                bsz, asz = sz.struct.field("1").cast(pl.Int32, strict=False), sz.struct.field("2").cast(pl.Int32, strict=False)
+            else:
+                bsz = asz = pl.lit(None, dtype=pl.Int32)
+            parts.append(df.select(ts.alias("ts"), exp.alias("expiration"), num("strike").alias("strike"), pl.lit(r).alias("right"), opt("bid").alias("bid"), opt("ask").alias("ask"),
+                                   bsz.alias("bid_size"), asz.alias("ask_size"), opt("last").alias("last"), opt("volume").alias("volume"),
                                    opt("iv").alias("iv"), opt("delta").alias("delta"), opt("gamma").alias("gamma"), opt("theta").alias("theta"), opt("vega").alias("vega"), und.alias("underlying_price")))
         out = pl.concat(parts)
     elif fmt in ("cboe_eod", "cboe_interval"):
@@ -328,8 +384,7 @@ def _batches(path: Path, fmt: str):
     src, tmp = path, None
     if name.endswith(".gz"):
         tmp = Path(tempfile.mkstemp(suffix=".csv")[1])
-        with gzip.open(path, "rb") as f, open(tmp, "wb") as o:
-            shutil.copyfileobj(f, o, 4 << 20)
+        _gunzip_to(path, tmp)
         src = tmp
     try:
         kw = {"infer_schema_length": 5000, "truncate_ragged_lines": True, "ignore_errors": True}
@@ -353,13 +408,17 @@ def _plain_files(path: Path, workdir: Path):
         fp = Path(name)
         if fp.suffix.lower() == ".zip":
             with zipfile.ZipFile(fp) as z:
-                for i in z.infolist():
-                    if i.is_dir() or not i.filename.lower().endswith(SUFFIXES):
-                        continue
-                    out = workdir / Path(i.filename).name
-                    with z.open(i) as src, open(out, "wb") as dst:
-                        shutil.copyfileobj(src, dst, 4 << 20)
+                infos = [i for i in z.infolist() if not i.is_dir() and i.filename.lower().endswith(SUFFIXES)]
+                if len(infos) > MAX_MEMBERS:
+                    raise UnsafeArchive(f"{fp.name} holds {len(infos):,} files, above the limit of {MAX_MEMBERS:,}")
+                for i in infos:
+                    _check_member(f"{fp.name}:{i.filename}", i.file_size, i.compress_size)
+                    if shutil.disk_usage(workdir).free < i.file_size * 1.2 + 2 ** 28:
+                        raise UnsafeArchive(f"not enough free disk space to extract {i.filename} ({i.file_size / 2 ** 20:,.0f} MB)")
+                    out = workdir / Path(i.filename.replace("\\", "/")).name  # the base name only: no member path is honoured
                     try:
+                        with z.open(i) as src, open(out, "wb") as dst:
+                            _bounded_copy(src, dst, i.file_size + (1 << 20), i.filename)
                         yield out, f"{fp.name}:{i.filename}"
                     finally:
                         out.unlink(missing_ok=True)
@@ -367,14 +426,40 @@ def _plain_files(path: Path, workdir: Path):
             yield fp, fp.name
 
 
+def session_window(part: pl.DataFrame, d: date) -> tuple[str, dict]:
+    """Which part of the session a day of quote snapshots covers. A file of intraday snapshots that stops at noon is
+    a PARTIAL session however many rows it has: an exit priced after its last snapshot has no observation behind it.
+    One snapshot a day (end-of-day data) is complete by its own definition."""
+    from strata.core import calendar as cal
+    ts = part["ts"].unique().sort()
+    if ts.len() <= 1:
+        return "complete", {}
+    et = ts.dt.convert_time_zone("America/New_York")
+    mins = (et.dt.hour().cast(pl.Int32) * 60 + et.dt.minute().cast(pl.Int32)).to_list()
+    step = max(1, int(ts.diff().drop_nulls().dt.total_seconds().median() // 60))
+    try:
+        o, c = cal.session_bounds(d)
+        o_m, c_m = o.hour * 60 + o.minute, c.hour * 60 + c.minute
+    except Exception:  # noqa: BLE001 - not a trading day in the calendar: reported by the coverage audit, not here
+        o_m, c_m = 570, 960
+    first, last = mins[0], mins[-1]
+    expected = max(1, (c_m - o_m) // step + 1)
+    info = {"first_snapshot": f"{first // 60:02d}:{first % 60:02d}", "last_snapshot": f"{last // 60:02d}:{last % 60:02d}", "interval_minutes": step, "expected_snapshots": expected}
+    partial = first > o_m + 2 * step or last < c_m - 2 * step or len(mins) < expected * 0.8
+    return ("partial" if partial else "complete"), info
+
+
 class _DayWriter:
     """Writes option rows per session, carrying the trailing (possibly incomplete) session
     across batches and merging a session that shows up again later in the input."""
 
-    def __init__(self, store: MarketStore, sym: str, provider: str, kind: str, source: str):
+    def __init__(self, store: MarketStore, sym: str, provider: str, kind: str, source: str, describe: dict | None = None):
         self.store, self.sym, self.provider, self.kind, self.source = store, sym, provider, kind, source
+        self.describe = describe or {}
+        self.underlying: list[pl.DataFrame] = []  # (ts, price) the quote file itself reports for the underlying at each snapshot
         self.carry: pl.DataFrame | None = None
         self.written: dict[date, int] = {}
+        self.partial: dict[date, dict] = {}
         self.rows = 0
         self.peak_buffer = 0
 
@@ -399,7 +484,12 @@ class _DayWriter:
                 old = self.store.read_option_day(self.sym, d, "quote", self.provider)
                 if old is not None:
                     part = pl.concat([old, part], how="diagonal_relaxed").unique(subset=["ts", "expiration", "strike", "right"], keep="last")
-            self.store.write_option_day(self.sym, d, part, provider=self.provider, source=self.source, status="complete")
+            status, info = session_window(part, d)
+            self.store.write_option_day(self.sym, d, part, provider=self.provider, source=self.source, status=status, session_info=info, **self.describe)
+            if info and "underlying_price" in part.columns:
+                self.underlying.append(part.select("ts", "underlying_price").drop_nulls().unique(subset=["ts"], keep="first"))
+            if status == "partial":
+                self.partial[d] = info
         else:
             idx = part.group_by("occ").agg(pl.col("expiration").first(), pl.col("strike").first(), pl.col("right").first(), pl.len().alias("bars"), pl.col("volume").sum().alias("volume"))
             rows = [{"date": d, "occ": r["occ"], "expiration": r["expiration"], "strike": r["strike"], "right": r["right"], "status": "ok", "bars": r["bars"], "volume": r["volume"]} for r in idx.to_dicts()]
@@ -410,7 +500,43 @@ class _DayWriter:
         self.rows += part.height
 
 
-def import_path(path: str, symbol: str | None = None, fmt: str | None = None, tz: str = "America/New_York", provider: str = "import", store: MarketStore | None = None, progress=None, should_cancel=None) -> dict:
+def underlying_from_snapshots(snaps: pl.DataFrame) -> tuple[pl.DataFrame, str] | None:
+    """Bars for the underlying from the last price an option-quote file reports at each snapshot.
+
+    A snapshot at 09:35 is the price at 09:35, so it CLOSES the bar that started at 09:30 and the previous snapshot
+    opens it. Nothing is known about the price between two snapshots: high and low are set to the larger and smaller
+    of the two, which understates the true range. The dataset says so, and a target can only be seen at a snapshot."""
+    from strata.core import calendar as cal
+    s = snaps.unique(subset=["ts"], keep="first").sort("ts")
+    if s.height < 3:
+        return None
+    step = int(s["ts"].diff().drop_nulls().dt.total_seconds().median() or 0)
+    res = next((k for k, v in INTRADAY_SECONDS.items() if abs(v - step) <= max(15, v * 0.1)), None)
+    if res is None:
+        return None
+    secs = INTRADAY_SECONDS[res]
+    s = s.with_columns(pl.col("ts").dt.convert_time_zone("America/New_York").dt.date().alias("_d"), pl.col("ts").dt.truncate(f"{secs}s").alias("_t"))
+    rows = []
+    for (d,), part in s.partition_by("_d", as_dict=True, maintain_order=True).items():
+        try:
+            o = cal.session_bounds(d)[0]
+        except Exception:  # noqa: BLE001
+            continue
+        t, px = part["_t"].to_list(), part["underlying_price"].to_list()
+        for i in range(1, len(t)):
+            if (t[i] - t[i - 1]).total_seconds() > secs * 1.5 or t[i - 1] < o:
+                continue  # a gap in the snapshots is a gap in the bars, not a long bar
+            rows.append((t[i - 1], px[i - 1], max(px[i - 1], px[i]), min(px[i - 1], px[i]), px[i], None))
+    if not rows:
+        return None
+    return pl.DataFrame(rows, schema=["ts", "open", "high", "low", "close", "volume"], orient="row").with_columns(pl.col("ts").cast(pl.Datetime("us", "UTC")), pl.col("volume").cast(pl.Float64)), res
+
+
+INTRADAY_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "60m": 3600}
+
+
+def import_path(path: str, symbol: str | None = None, fmt: str | None = None, tz: str = "America/New_York", provider: str = "import", store: MarketStore | None = None, progress=None, should_cancel=None,
+                describe: dict | None = None, source_label: str | None = None) -> dict:
     """Stream every recognised file at `path` into the store. Returns a report of what was
     written, what was rejected and why, and the peak number of rows held in memory."""
     store = store or MarketStore()
@@ -457,7 +583,7 @@ def import_path(path: str, symbol: str | None = None, fmt: str | None = None, tz
                     out = out.filter(ok.fill_null(False))
                     if "iv" in out.columns and out.height and (out["iv"].drop_nulls().max() or 0) > 5:
                         out = out.with_columns(pl.col("iv") / 100)
-                    w = writers.setdefault((sym, kind), _DayWriter(store, sym, provider, kind, str(p)))
+                    w = writers.setdefault((sym, kind), _DayWriter(store, sym, provider, kind, source_label or str(p), describe))
                     w.add(out)
                 elif kind == "option_trades":
                     from strata.data.providers.sources import validate_trade_bars
@@ -465,7 +591,7 @@ def import_path(path: str, symbol: str | None = None, fmt: str | None = None, tz
                     clean, st = validate_trade_bars(out)
                     for k in ("outside_session", "invalid_price", "duplicates"):
                         reject({"outside_session": "bars outside the regular session", "invalid_price": "bars with inconsistent or non-positive prices", "duplicates": "duplicate bars"}[k], st[k])
-                    w = writers.setdefault((sym, kind), _DayWriter(store, sym, provider, kind, str(p)))
+                    w = writers.setdefault((sym, kind), _DayWriter(store, sym, provider, kind, source_label or str(p), describe))
                     w.add(clean)
                     out = clean
                 else:
@@ -485,6 +611,8 @@ def import_path(path: str, symbol: str | None = None, fmt: str | None = None, tz
         w.add(pl.DataFrame(), final=True)
         rep["rows_written"] += w.rows
         rep["sessions"] += len(w.written)
+        if w.partial:  # intraday snapshot files that do not span the session are reported, never passed off as whole days
+            rep.setdefault("partial_sessions", {}).update({d.isoformat(): {"symbol": sym, **info} for d, info in w.partial.items()})
         rep["peak_rows_in_memory"] = max(rep["peak_rows_in_memory"], w.peak_buffer)
         if kind == "option_quotes" and w.written:
             from strata.data.derived import derive_iv_history
@@ -493,6 +621,17 @@ def import_path(path: str, symbol: str | None = None, fmt: str | None = None, tz
             except Exception as e:  # noqa: BLE001
                 rep.setdefault("warnings", []).append(f"implied-volatility history could not be derived for {sym}: {str(e)[:100]}")
         rep.setdefault("ranges", {})[f"{sym} {kind}"] = [min(w.written).isoformat(), max(w.written).isoformat()] if w.written else None
+        if kind == "option_quotes" and w.underlying:
+            # the file reports the underlying's last price at each snapshot: keep it as its own, clearly described dataset
+            der = underlying_from_snapshots(pl.concat(w.underlying))
+            if der is not None:
+                ub, res = der
+                store.write_bars(sym, res, ub, provider=provider, source=source_label or str(p), label=f"{sym} price at each option snapshot ({provider})",
+                                 limitations=["Not trade bars: the underlying's last price as reported in an option-quote file at each snapshot. Open and close are consecutive snapshots; "
+                                              "the high and low between them were not observed and are understated, so a level can only be seen at a snapshot.",
+                                              "Feed and exchange coverage are not stated by the file."])
+                rep["rows_written"] += ub.height
+                rep["underlying_from_snapshots"] = {"symbol": sym, "resolution": res, "bars": ub.height, "note": "high and low between snapshots are not observed"}
     for sym, parts in daily.items():
         d = pl.concat(parts).drop_nulls(["date", "close"]).unique(subset=["date"], keep="last").sort("date")
         store.write_daily(sym, d, provider=provider, source=str(p))

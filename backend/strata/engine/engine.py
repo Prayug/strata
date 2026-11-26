@@ -326,6 +326,38 @@ class Context:
         self.bt.log(self.t, kind, msg, pos, data)
 
 
+class _DayChains(dict):
+    """The day's option chains by symbol.
+
+    A chain built from per-contract trade bars costs tens of thousands of rows to expand, and a strategy that fires on a few
+    sessions a year needs it on those sessions only: such a chain is registered with `defer` and built the first time
+    something asks for it (a rule that fired, an open position being marked). Its snapshot times are the engine's own
+    ticks, so the day's clock, which is taken from the chains already built, does not depend on it."""
+
+    def __init__(self):
+        super().__init__()
+        self._pending: dict = {}
+
+    def defer(self, sym: str, loader) -> None:
+        self._pending[sym] = loader
+
+    def _load(self, sym) -> None:
+        f = self._pending.pop(sym, None)
+        if f is not None:
+            super().__setitem__(sym, f())
+
+    def get(self, sym, default=None):
+        self._load(sym)
+        return super().get(sym, default)
+
+    def __getitem__(self, sym):
+        self._load(sym)
+        return super().__getitem__(sym)
+
+    def __contains__(self, sym) -> bool:
+        return sym in self._pending or super().__contains__(sym)
+
+
 class Backtester:
     def __init__(self, cfg: BacktestConfig, store: MarketStore | None = None, strategies: list[Strategy] | None = None,
                  progress=None, should_cancel=None, record_paths: bool = True, signals_only: bool = False, extra_symbols: set[str] | None = None):
@@ -350,7 +382,7 @@ class Backtester:
         self.record_paths = record_paths
         self.diag = Diagnostics()
         self.events_log: list[dict] = []
-        self.chains: dict[str, DayChain | None] = {}
+        self.chains: dict[str, DayChain | None] = _DayChains()
         self.series: dict[str, UnderlyingSeries] = {}
         self.iv_hist: dict[str, IvHistory] = {}
         self.iv_cache: dict = {}
@@ -442,7 +474,12 @@ class Backtester:
                     self._mults = getattr(self, "_mults", {})
                     if not defs.is_empty():
                         from strata.engine.market import contract_key
-                        dd = defs.filter(pl.col("multiplier").is_not_null())
+                        # a multiplier that is not positive is not a multiplier (one provider lists 0 on old contracts): such a
+                        # definition says nothing, and the symbol's own contract size applies as for any contract without one
+                        bad_m = defs.filter(pl.col("multiplier").is_not_null() & (pl.col("multiplier") <= 0)).height
+                        if bad_m:
+                            self.datasets_used[sym]["definitions_without_a_usable_multiplier"] = bad_m
+                        dd = defs.filter(pl.col("multiplier").is_not_null() & (pl.col("multiplier") > 0))
                         keys = contract_key(dd["expiration"].cast(pl.Int32).to_numpy(), (dd["right"] == "C").to_numpy(), dd["strike"].to_numpy())
                         self._mults[sym] = dict(zip(keys.tolist(), dd["multiplier"].to_list()))
             self.iv_hist[sym] = IvHistory.load(self.store, sym, None if self.trades else ds)
@@ -698,6 +735,14 @@ class Backtester:
             flow = q * l.multiplier * px
             comm = X.option_commission(q, self.ex)
             slip = abs(px - l.mid) * abs(q) * l.multiplier
+        if l.leg_id == "_hedge":
+            # the closing trade of the hedge is a hedge trade like the others: without it the position's hedge record showed the
+            # opening proceeds as its whole result and a share count that never returned to zero
+            h = pos.meta.setdefault("hedge", {"trades": 0, "shares_traded": 0, "cash": 0.0})
+            h["trades"] += 1
+            h["shares_traded"] += n
+            h["cash"] += flow
+            h["shares"] = int(l.qty - q)
         prev_closed = l.closed_qty
         l.exit_price = px if prev_closed == 0 else (l.exit_price * prev_closed + px * n) / (prev_closed + n)
         l.exit_bid, l.exit_ask, l.exit_mid, l.exit_greeks = l.bid, l.ask, l.mid, l.greeks
@@ -799,6 +844,19 @@ class Backtester:
         self.log(t, "scale_out", f"{reason}: closed {units} unit{'s' if units != 1 else ''}, {pos.units} left open", pos, {"explain": explain} if explain else None)
         return True
 
+    def _close_orphan_hedge(self, pos: Position, t: int, px: float) -> None:
+        """Hedge shares are held AGAINST options. Once no option leg of the position is open (they expired or were
+        settled), the hedge is closed at `px` instead of living on as a stock position that the strategy never chose."""
+        if any(l.is_open and l.kind == "option" for l in pos.legs) or not math.isfinite(px):
+            return
+        for l in pos.legs:
+            if l.is_open and l.leg_id == "_hedge":
+                l.bid = l.ask = l.mid = px
+                l.stale = False
+                n = int(abs(l.qty))
+                self._close_leg(pos, l, n, t, "hedge_closed")
+                self.log(t, "hedge", f"closed the hedge ({n} shares at {l.exit_price:.2f}): the options it was held against have expired", pos)
+
     def hedge_trade(self, pos: Position, d_shares: float, ctx: Context) -> None:
         """Buy (+) or sell (-) shares of the underlying inside a position, as its delta hedge."""
         d = int(round(d_shares))
@@ -866,6 +924,12 @@ class Backtester:
                 l.exit_cash += sgn * n * price
                 l.qty -= sgn * n
                 shares += sgn * n
+                if l.leg_id == "_hedge":  # delivered shares that close hedge shares are the hedge's closing trade, at the strike
+                    h = pos.meta.setdefault("hedge", {"trades": 0, "shares_traded": 0, "cash": 0.0})
+                    h["trades"] += 1
+                    h["shares_traded"] += int(n)
+                    h["cash"] += sgn * n * price
+                    h["shares"] = int(l.qty)
         pos.shares += shares
 
     def _settles_am(self, sym: str, exp: date) -> bool:
@@ -875,6 +939,34 @@ class Backtester:
         if st == "AM_MONTHLY":
             return exp.weekday() == 4 and 15 <= exp.day <= 21
         return False
+
+    def _trade_days(self, sym: str, ds) -> set:
+        """Sessions on which at least one stored contract of this trade-bar dataset traded (from its index, read once)."""
+        cache = self.__dict__.setdefault("_trade_days_cache", {})
+        if sym not in cache:
+            idx = self.store.option_bar_index(sym, dataset=ds)
+            cache[sym] = set(idx.filter(pl.col("status") == "ok")["date"].unique().to_list()) if not idx.is_empty() else set()
+        return cache[sym]
+
+    def _trade_chain(self, sym: str, d, ds, ticks: list[int]):
+        """The session's chain as it could be observed at each tick, from the stored trade bars (see expand_trade_bars)."""
+        bars = self.store.read_option_bars(sym, d, dataset=ds)
+        df, cstats = expand_trade_bars(bars, ticks, self.series.get(sym), d) if bars is not None else (pl.DataFrame(), {})
+        if df.is_empty():
+            lst = self.diag.no_option_data.setdefault(sym, [])
+            if d.isoformat() not in lst:
+                lst.append(d.isoformat())
+            return None
+        ch = DayChain(df, self.cfg.capital.risk_free_rate)
+        ch.kind, ch.contract_stats, ch.multipliers = "trades", cstats, getattr(self, "_mults", {}).get(sym, {})
+        return ch
+
+    def _partial_trade_sessions(self, sym: str, ds) -> dict:
+        """{iso date: reason} for the sessions of an option trade dataset that the provider holds only in part."""
+        cache = self.__dict__.setdefault("_partial_cache", {})
+        if sym not in cache:
+            cache[sym] = {k: (v.get("reason") or "the stored option trade history for this session is incomplete") for k, v in self.store.session_states(ds).items() if v.get("status") == "partial"}
+        return cache[sym]
 
     def settle_expiring(self, d: date, am: bool):
         dn = day_num(d)
@@ -894,23 +986,28 @@ class Backtester:
                 q = l.qty
                 l.exit_bid = l.exit_ask = l.exit_mid = intr
                 l.exit_ts = close_t
+                prev = l.closed_qty
                 l.closed_qty += abs(q)
                 l.qty = 0
+
+                def settled_at(px: float, _l=l, _prev=prev, _n=abs(q)) -> float:
+                    # contracts already sold earlier (a staged exit) keep the price they were sold at: the leg's exit price is the average over all of them
+                    return px if _prev == 0 else (_l.exit_price * _prev + px * _n) / (_prev + _n)
                 if intr < 0.01:
-                    l.exit_price, l.exit_reason = 0.0, "expired_worthless"
+                    l.exit_price, l.exit_reason = settled_at(0.0), "expired_worthless"
                     continue
                 if meta.settlement == "cash" or self.ex.physical_settlement == "intrinsic":
                     flow = q * l.multiplier * intr
                     self.account.cash += flow
                     pos.exit_cash += flow
-                    l.exit_price, l.exit_reason = intr, "cash_settled"
+                    l.exit_price, l.exit_reason = settled_at(intr), "cash_settled"
                     l.exit_cash += flow
                     if meta.settlement != "cash":
                         pos.flags.add("settled_at_intrinsic")
                 else:
                     shares = q * l.multiplier * (1 if l.is_call else -1)
                     self._deliver(pos, shares, l.strike)
-                    l.exit_price, l.exit_reason = intr, ("exercised" if q > 0 else "assigned")
+                    l.exit_price, l.exit_reason = settled_at(intr), ("exercised" if q > 0 else "assigned")
                     fee = self.ex.exercise_fee * abs(q)
                     pos.commissions += fee
                     self.account.cash -= fee
@@ -924,8 +1021,13 @@ class Backtester:
             if abs(pos.shares) > 1e-9:
                 pos.pending_stock_close = True
             self.ctx.t = close_t
+            self._close_orphan_hedge(pos, close_t, S)
             self._update_position_values(pos)
             if not pos.is_open:
+                if pos.pending_exit:
+                    # a rule had decided to exit but no fresh price ever came to close at: the position ended by settlement, not by a fill.
+                    # The reason stays the rule that decided it; the flag (and each leg's own exit reason) says how it actually ended.
+                    pos.flags.add("settled_after_deferred_exit")
                 self._finalize(pos, close_t, pos.pending_exit or "expiration")
 
     def early_assignment(self, d: date):
@@ -1111,7 +1213,7 @@ class Backtester:
             self.apply_splits(d)
             t_close = int(close_dt.timestamp())
             sig_ticks = self._signal_ticks(d, t_open, t_close)
-            self.chains = {}
+            self.chains = _DayChains()
             for sym in self.opt_syms:
                 if self.signals_only:
                     self.chains[sym] = None
@@ -1123,17 +1225,19 @@ class Backtester:
                     continue
                 ds = self.opt_ds[sym]
                 if self.trades and self._bars_fmt.get(sym):
-                    bars = self.store.read_option_bars(sym, d, dataset=ds)
-                    ser = self.series.get(sym)
-                    df, cstats = expand_trade_bars(bars, sorted(sig_ticks), ser, d) if bars is not None and ser is not None else (pl.DataFrame(), {})
-                    if df.is_empty():
+                    part = self._partial_trade_sessions(sym, ds).get(d.isoformat())
+                    if part is not None:
+                        # the provider holds this session only in part: an entry would slide to whatever print it happens to have
+                        self.chains[sym] = None
+                        self.diag.exclude(d, f"{sym}: {part}")
+                        continue
+                    if d not in self._trade_days(sym, ds) or self.series.get(sym) is None:
                         # no trade data stored for this session: recorded separately from "no signal"
                         self.chains[sym] = None
                         self.diag.no_option_data.setdefault(sym, []).append(d.isoformat())
-                    else:
-                        ch = DayChain(df, self.cfg.capital.risk_free_rate)
-                        ch.kind, ch.contract_stats, ch.multipliers = "trades", cstats, getattr(self, "_mults", {}).get(sym, {})
-                        self.chains[sym] = ch
+                        continue
+                    # built on first use: only a session on which a rule fires or a position is open pays for its option data
+                    self.chains.defer(sym, lambda sym=sym, d=d, ds=ds, ticks=sorted(sig_ticks): self._trade_chain(sym, d, ds, ticks))
                     continue
                 df = self.store.read_option_day(sym, d, "trade" if self.trades else "quote", dataset=ds)
                 if df is None or df.is_empty():
@@ -1199,7 +1303,17 @@ class Backtester:
         if self.daily:
             self.daily[-1]["equity"] = self.account.equity()
             self.daily[-1]["cash"] = self.account.cash
+            self.daily[-1]["open_positions"] = len(self.account.positions)  # everything was just closed: the last row must not still count it as open
+            self.daily[-1]["commissions"] = self.account.commissions
         return self._result(_time.time() - t0)
+
+    def _close_gaps(self) -> list[dict]:
+        rows = _close_gap_rows(self.series, self.cfg.start, self.cfg.end)
+        if rows:
+            w = rows[0]
+            self.diag.warnings.append(f"{len(rows)} session(s) have intraday bars that end away from the official close (largest: {w['symbol']} {w['date']}, last bar {w['last_intraday_bar']:.2f} against an official close of "
+                                      f"{w['official_close']:.2f}). Day-level rules and expiration settlement use the official close.")
+        return rows
 
     def _record_day(self, d: date):
         acct = self.account
@@ -1343,6 +1457,8 @@ class Backtester:
             "execution": self.cfg.execution.model_dump(),
             "capital": self.cfg.capital.model_dump(),
             "data_quality": {
+                "official_close_gaps": self._close_gaps(),
+                "volume_artefacts": {sym: int(ser.volume_artefacts) for sym, ser in self.series.items() if getattr(ser, "volume_artefacts", 0)},
                 "missing_sessions": sum(len(v) for v in self.diag.missing_sessions.values()),
                 "stale_marks": self.diag.stale_marks,
                 "missing_marks": self.diag.missing_marks,
@@ -1350,6 +1466,18 @@ class Backtester:
             },
         }
         return BacktestResult(self.cfg, meta, trades, daily, paths, leg_paths, intraday, self.diag.to_dict(), self.events_log)
+
+
+def _close_gap_rows(series: dict, start: date, end: date) -> list[dict]:
+    """Sessions inside the window whose last intraday bar ends away from the official close (the official close is the one used)."""
+    from strata.engine.market import from_day_num
+    out = []
+    for sym, ser in series.items():
+        for dn, intraday, official in getattr(ser, "close_gaps", []):
+            d = from_day_num(dn)
+            if start <= d <= end:
+                out.append({"symbol": sym, "date": d.isoformat(), "last_intraday_bar": round(intraday, 4), "official_close": round(official, 4), "difference_pct": round((intraday / official - 1) * 100, 3)})
+    return sorted(out, key=lambda r: -abs(r["difference_pct"]))[:50]
 
 
 def _res_label(sec: int) -> str:
@@ -1387,7 +1515,8 @@ def trade_record(p: Position, bt: Backtester) -> dict:
             "exit_ask": None if getattr(l, "entry_trade_based", False) else _num(l.exit_ask), "exit_mid": _num(l.exit_mid),
             "exit_delta": _num(l.exit_greeks[0]), "exit_gamma": _num(l.exit_greeks[1]), "exit_theta": _num(l.exit_greeks[2]), "exit_vega": _num(l.exit_greeks[3]),
             "exit_ts": l.exit_ts or None, "exit_reason": l.exit_reason,
-            "pnl": _num(np.sign(l.ratio) * l.closed_qty * l.multiplier * (l.exit_price - l.entry_price)) if l.closed_qty else None,
+            # hedge shares are traded many times inside one position: their result is the net cash of all of those trades, not one entry and one exit price
+            "pnl": _num((p.meta.get("hedge") or {}).get("cash")) if l.leg_id == "_hedge" else (_num(np.sign(l.ratio) * l.closed_qty * l.multiplier * (l.exit_price - l.entry_price)) if l.closed_qty else None),
         })
     opt_legs = [l for l in p.legs if l.kind == "option"]
     entry_dte = min((l.exp for l in opt_legs), default=p.entry_day) - p.entry_day

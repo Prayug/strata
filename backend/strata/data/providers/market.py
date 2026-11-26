@@ -49,20 +49,22 @@ ENTRIES = [
        symbols={"SPY": "-", "QQQ": "-", "IWM": "-", "SPX": "delayed chain snapshot on the website only; no history"}, pricing={"model": "free", "summary": "Free index history files."},
        limits=["No historical option prices: the delayed chain is a current snapshot.", "Strata reads the index history files only."], integration="built-in", tested="live: VIX history download"),
     _e("alpaca", "Alpaca Market Data", "broker API", source="alpaca", url="https://docs.alpaca.markets/docs/historical-option-data", account="free signup (paper account is enough)", credentials=["ALPACA_API_KEY", "ALPACA_API_SECRET"],
-       data="1-minute option TRADE bars, trades and (with a subscription) OPRA quotes; expired contracts included; 1-minute stock bars since 2016", resolution="1 minute", history="options since February 2024",
-       symbols={"SPY": "Feb 2024 onward", "QQQ": "Feb 2024 onward", "IWM": "Feb 2024 onward", "SPX": "index options are not offered"},
+       data="1-minute option TRADE bars, trades and (with a subscription) OPRA quotes; expired contracts included; 1-minute stock bars since 2016", resolution="1 minute", history="options since 2024-01-18 (measured with a paper key; 2024-02-02 is missing at the provider)",
+       symbols={"SPY": "2024-01-18 onward (measured)", "QQQ": "2024-01 onward (not measured here)", "IWM": "2024-01 onward (not measured here)", "SPX": "index options are not offered"},
        pricing={"model": "free key", "summary": "Basic plan free: historical bars are built from OPRA but the latest 15 minutes are withheld, 200 requests a minute. Algo Trader Plus $99 a month: OPRA feed and quotes, 10,000 requests a minute.",
-                "tiers": [{"name": "Basic", "price": 0, "history": "Feb 2024 onward", "what": "option trade bars (not the latest 15 minutes); indicative feed for live data"}, {"name": "Algo Trader Plus", "price": 99, "history": "Feb 2024 onward", "what": "OPRA quotes and trades"}],
+                "tiers": [{"name": "Basic", "price": 0, "history": "2024-01-18 onward (measured)", "what": "option trade bars (not the latest 15 minutes); indicative feed for live data"}, {"name": "Algo Trader Plus", "price": 99, "history": "the same history", "what": "OPRA quotes and trades"}],
                 "source_url": "https://docs.alpaca.markets/docs/about-market-data-api"},
-       limits=["History starts in February 2024.", "Free plan: no historical bid/ask quotes (trade bars only).", "An OPRA agreement must be signed in the account for the paid feed."],
-       integration="built-in", tested="adapter and pagination tested on recorded response shapes; live access is checked by the guided connection below"),
+       limits=["History starts on 2024-01-18 (measured); 2024-02-02 returns nothing.", "Free plan: no historical bid/ask quotes (trade bars only).", "An OPRA agreement must be signed in the account for the paid feed."],
+       integration="built-in", tested="adapter and pagination tested on recorded response shapes. On 2026-11-25 every endpoint Strata uses answered 401 without a key (they exist; only authentication is missing). "
+                                      "What a key really returns is established by the access check: an expired-contract matrix across 2024-2026"),
     _e("massive", "Massive (formerly Polygon.io)", "data API", source="massive", url="https://massive.com/options", account="free signup", credentials=["POLYGON_API_KEY"],
        data="Per-contract minute aggregates (TRADE bars), contract reference data including expired contracts; trades on Developer; quotes on Advanced; flat files on paid plans", resolution="1 minute (aggregates)",
        history="Basic and Starter: 2 years. Developer: 4 years. Advanced: all history (the site advertises 7+ years).", symbols={"SPY": "per plan", "QQQ": "per plan", "IWM": "per plan", "SPX": "index options (I:SPX underlying) on the Indices/Options plans; not confirmed"},
        pricing={"model": "free key", "summary": "Options Basic $0: all US option tickers, 5 API calls a minute, 2 years, end-of-day delay, minute aggregates. Starter $29, Developer $79, Advanced $199 a month (about 20% less billed annually).",
                 "tiers": [{"name": "Basic", "price": 0, "history": "2 years", "what": "minute aggregates, 5 calls a minute"}, {"name": "Starter", "price": 29, "history": "2 years", "what": "unlimited calls, flat files, 15-minute delayed"},
                           {"name": "Developer", "price": 79, "history": "4 years", "what": "adds trades"}, {"name": "Advanced", "price": 199, "history": "all", "what": "adds quotes, real time"}], "source_url": "https://massive.com/options"},
-       limits=["5 requests a minute on the free plan: a selective download of a few hundred contracts takes about an hour.", "Trade aggregates carry no bid/ask; quotes need the Advanced plan.",
+       limits=["5 requests a minute on the free plan: a selective download of a few hundred contracts takes about an hour.", "Trade aggregates carry no bid/ask; quotes need the Advanced plan, and its quote history starts 2022-03-07.",
+               "Individual trades need the Developer plan. Expired contracts are listed on every plan (expired=true).",
                "Third-party summaries disagree on the history depth of the paid tiers; the provider's own page was used."], integration="adapter", tested="adapter tested on documented response shapes only; never run against the live service (no key)"),
     _e("alphavantage", "Alpha Vantage historical options", "data API", source="alphavantage", url="https://www.alphavantage.co/documentation/#historical-options", account="paid key (the demo key serves IBM only)", credentials=["ALPHAVANTAGE_API_KEY"],
        data="End-of-day chains by date: bid/ask, sizes, volume, open interest, implied volatility and greeks", resolution="end of day", history="any session since 2008-01-01 (15+ years advertised)",
@@ -74,8 +76,10 @@ ENTRIES = [
     _e("databento", "Databento OPRA", "data API (usage-based)", source="databento", url="https://databento.com/datasets/OPRA.PILLAR", account="signup; $125 of free historical credit for new accounts (expires after 6 months)", credentials=["DATABENTO_API_KEY"],
        data="The full OPRA feed: trades, 1-minute OHLCV, consolidated bid/ask sampled each minute (CBBO-1m), instrument definitions and statistics; NBBO at each trade (TCBBO) from March 2023", resolution="tick to 1 minute",
        history="Trades, OHLCV, definitions and CBBO-1m from 2013-04-01; TCBBO from 2023-03-28", symbols={"SPY": "2013-04 onward", "QQQ": "2013-04 onward", "IWM": "2013-04 onward", "SPX": "2013-04 onward (SPX and SPXW are in OPRA)"},
-       pricing={"model": "usage", "summary": "Pay per byte of historical data, quoted before download; the site lists OPRA historical data \"from $0.04/GB\" and the per-schema rate is shown in its catalogue. Metadata and cost quotes are free.",
-                "source_url": "https://databento.com/docs/api-historical/basics/metered-pricing"},
+       pricing={"model": "usage", "summary": "Pay per byte of historical data. The documented example rates for OPRA are $2 per GB for 1-minute bid/ask (cbbo-1m) and $280 per GB for trades and 1-minute OHLCV. "
+                                             "A new account gets $125 of credit (one per team, expires after 6 months). The exact price of a request is returned free of charge before any download (metadata.get_cost).",
+                "tiers": [{"name": "Free credit", "price": 0, "history": "2013-04 onward", "what": "$125 of usage: at $2 per GB, about two million contract-sessions of 1-minute bid/ask"}, {"name": "Usage", "price": None, "history": "2013-04 onward", "what": "$2 per GB (cbbo-1m), quoted per request"}],
+                "source_url": "https://databento.com/docs/api-reference-historical/metadata/metadata-list-unit-prices"},
        limits=["The only source found with intraday bid/ask history back to 2013 at retail prices.", "Many older OPRA days are marked degraded (minor packet loss) by the provider.", "Cost depends on how much is requested: a selective request is cheap, a whole chain is not."],
        integration="adapter", tested="adapter written against the documented API; never run against the live service (no key)"),
     _e("thetadata", "ThetaData", "data API (local terminal)", source="thetadata", url="https://docs.thetadata.us/Articles/Getting-Started/Subscriptions.html", account="signup; their terminal application must be running", credentials=[],
@@ -101,9 +105,19 @@ ENTRIES = [
        resolution="end of day (1 minute sold separately)", history="2002 onward (SPX from 1990)", symbols={"SPY": "from 2005", "QQQ": "yes", "IWM": "yes", "SPX": "from 1990"},
        pricing={"model": "one-time", "summary": "One-time purchases; the SPY option history from 2005 is listed at $425.", "source_url": "https://historicaloptiondata.com/"}, limits=["Delivered as ZIP archives of CSV files."],
        integration="import", import_format="historicaloptiondata", tested="import layout tested on a synthetic file with the documented columns; not tested on a purchased file"),
-    _e("optionsdx", "OptionsDX", "bulk files", source=None, url="https://www.optionsdx.com/", account="free signup", credentials=[], data="End-of-day and intraday option chains as monthly CSV files", resolution="end of day and intraday snapshots",
-       history="varies by symbol", symbols={"SPY": "listed", "QQQ": "listed", "IWM": "not confirmed", "SPX": "listed"}, pricing={"model": "free / low cost", "summary": "Older years are offered as free downloads, others at low per-file prices; terms were not confirmed for this report."},
-       limits=["Manual downloads. Check the site's terms for your use; they were not verified here."], integration="import", import_format="optionsdx", tested="import layout tested on a synthetic file with the vendor's column names; not tested on a downloaded file"),
+    _e("optionsdx", "OptionsDX", "bulk files", source=None, url="https://www.optionsdx.com/product/spy-option-chains/", account="free signup (needed at checkout, also for the free files)", credentials=[],
+       data="Whole option chains as monthly CSV files: bid, ask, last, sizes, volume, greeks and implied volatility for every strike and expiration, with the underlying price at each snapshot",
+       resolution="end of day, 30, 15, 5 or 1 minute snapshots", history="SPY 2010-2023; QQQ 2012-2023; VIX 2010-2023. Nothing after 2023 was listed.",
+       symbols={"SPY": "2010-2023 (5-minute from 2016, 1-minute 2020-2023 on the storefront)", "QQQ": "2012-2023 (no 1-minute files listed)", "IWM": "no product", "SPX": "not listed on the pages checked"},
+       pricing={"model": "per year, one-time", "summary": "Per symbol-year, read from the storefront: end of day $0, 30-minute $3, 15-minute $5, 5-minute $20, 1-minute $50. No refunds.",
+                "tiers": [{"name": "End of day", "price": 0, "history": "2010-2023", "what": "one snapshot a day"}, {"name": "30 minutes", "price": 3, "history": "2010-2023", "what": "per year: bid/ask every 30 minutes"},
+                          {"name": "15 minutes", "price": 5, "history": "2011-2023", "what": "per year"}, {"name": "5 minutes", "price": 20, "history": "2016-2023", "what": "per year"}, {"name": "1 minute", "price": 50, "history": "2020-2023", "what": "per year"}],
+                "source_url": "https://www.optionsdx.com/product/spy-option-chains/"},
+       limits=["Snapshots, not every quote: between two snapshots nothing is known, so an exit is only seen at the next one.", "Manual purchase and download; Strata never buys anything.",
+               "The vendor does not say which feed the prices come from. For personal research; do not redistribute the files.", "Nothing after 2023, and no IWM."],
+       integration="import", import_format="optionsdx",
+       tested="verified on real data: the vendor's public sample file (SPY, 2020-03-06, 5-minute snapshots 09:30-12:00 ET, 38 expirations including the 0DTE) was imported and cross-checked. "
+              "All 9,716 contracts appear in the independent end-of-day archive for that date, no quote is crossed, and the underlying matches the stored daily bar. A purchased full-session file was not tested"),
     _e("algoseek_aws", "Algoseek free samples on AWS Data Exchange", "sample files", source=None, url="https://aws.amazon.com/marketplace/pp/prodview-sk2vtzeo5noje", account="AWS account (free subscription to the listing)", credentials=[],
        data="US equity options trade+quote 1-minute bars built from the full OPRA feed (bid/ask and trades per minute)", resolution="1 minute", history="one month of 2020 (sample)",
        symbols={"SPY": "sample month only", "QQQ": "sample month only", "IWM": "sample month only", "SPX": "index options are a separate listing"},
@@ -113,8 +127,23 @@ ENTRIES = [
     _e("wrds_optionmetrics", "OptionMetrics IvyDB via WRDS", "academic", source=None, url="https://wrds-www.wharton.upenn.edu/pages/about/data-vendors/optionmetrics/", account="university subscription", credentials=[],
        data="End-of-day best bid/offer, volume, open interest, implied volatility and greeks for all US listed equity and index options", resolution="end of day", history="January 1996 onward (the academic copy usually lags by about a year)",
        symbols={"SPY": "1996 onward", "QQQ": "1999 onward", "IWM": "2000 onward", "SPX": "1996 onward"}, pricing={"model": "institutional", "summary": "No individual price: access comes with a university's WRDS subscription, for research and teaching only."},
-       limits=["Available only to students and staff of subscribing institutions; non-commercial use.", "End of day only."], integration="import", import_format="wrds_optionmetrics",
+       limits=["Available only to students and staff of subscribing institutions; non-commercial use.", "End of day only: it cannot price an intraday entry or a 0DTE trade.",
+               "University of Washington: OptionMetrics is NOT in the list of WRDS datasets the Foster School publishes (checked 2026-11-25), so UW access to WRDS does not include it."], integration="import", import_format="wrds_optionmetrics",
        tested="import layout tested on a synthetic file with the documented WRDS column names; not tested on a real export"),
+    _e("uw_wrds", "WRDS through the UW Foster School", "academic (University of Washington)", source=None, url="https://guides.lib.uw.edu/research/business/datasets", account="UW affiliation; accounts are managed by the Foster School, not the library", credentials=[],
+       data="The Foster School's WRDS subscription lists TAQ (intraday trades and quotes for NYSE, AMEX and NASDAQ securities), CRSP, Compustat, IBES and others. No option-price dataset is listed: Cboe appears for VIX indexes only",
+       resolution="tick (TAQ, stocks only)", history="per dataset", symbols={"SPY": "underlying only (TAQ)", "QQQ": "underlying only (TAQ)", "IWM": "underlying only (TAQ)", "SPX": "no option data"},
+       pricing={"model": "institutional", "summary": "No individual price. Faculty and PhD students ask the Foster data research consultant for an account; undergraduate and master's students are told to ask their instructor.",
+                "source_url": "https://ask.lib.uw.edu/business/faq/439846"},
+       limits=["Could supply SPY/QQQ/IWM minute bars (from TAQ), not option prices.", "Licensed for academic use. UW's guidelines allow saving data for a single assignment or project and do not allow systematic downloading, automated searching or use with AI tools: "
+               "export a file yourself for one project and import it; Strata must not log in or scrape.", "Whether an undergraduate gets an account is the instructor's and the school's decision."],
+       integration="import", import_format="generic bars (column mapping)", tested="not tested: no account. Listed from UW's published pages (dataset list updated 2026-11-23)"),
+    _e("uw_bloomberg", "Bloomberg terminals at UW", "academic (University of Washington)", source=None, url="https://ask.lib.uw.edu/business/faq/432118", account="UW affiliation; create a Bloomberg login at a terminal", credentials=[],
+       data="Historical prices and option data on screen and through the Excel add-in, on the terminal only", resolution="depends on the function; intraday history on a terminal is limited to recent months",
+       history="per function", symbols={"SPY": "on the terminal", "QQQ": "on the terminal", "IWM": "on the terminal", "SPX": "on the terminal"},
+       pricing={"model": "institutional", "summary": "Free to use in the Foster Business Library (also Bothell and Tacoma), two-hour seat reservations. Not available off campus."},
+       limits=["Terminal use only: there is no API or bulk download for students, and Bloomberg limits how much can be exported.", "Not a route to a multi-year intraday option history."],
+       integration="none", tested="no integration (terminal only)"),
     _e("firstrate", "FirstRate Data", "bulk files", source=None, url="https://firstratedata.com/options-data", account="paid, one-time", credentials=[], data="End-of-day option chains; intraday stock and ETF bars", resolution="end of day (options)", history="options from January 2010",
        symbols={"SPY": "from 2010", "QQQ": "from 2010", "IWM": "from 2010", "SPX": "listed among indices"}, pricing={"model": "one-time", "summary": "Perpetual licence per bundle; prices are shown at checkout."}, limits=["Purchased files."],
        integration="import", import_format="generic option quotes (column mapping)", tested="not tested on a purchased file"),
@@ -145,7 +174,7 @@ COST = {
     "alphavantage": {"per_minute": 75, "batch": None, "price": 49.99, "window": lambda today: (date(2008, 1, 2), today - timedelta(days=1)), "what": "end-of-day chains", "per_session": True},
     "github_eod": {"per_minute": None, "batch": None, "price": 0.0, "window": lambda today: (date(2008, 1, 2), date(2025, 12, 12)), "what": "end-of-day chains", "per_year_mb": 180},
     "thetadata": {"per_minute": None, "batch": None, "price": 40.0, "window": lambda today: (date(2020, 1, 1), today), "what": "1-minute quotes"},
-    "databento": {"per_minute": None, "batch": None, "price": None, "window": lambda today: (date(2013, 4, 1), today - timedelta(days=1)), "what": "1-minute bid/ask (CBBO-1m)", "record_bytes": 80, "floor_per_gb": 0.04},
+    "databento": {"per_minute": None, "batch": None, "price": None, "window": lambda today: (date(2013, 4, 1), today - timedelta(days=1)), "what": "1-minute bid/ask (CBBO-1m)", "record_bytes": 80, "per_gb": 2.0, "credit": 125.0},
 }
 
 
@@ -218,9 +247,33 @@ def needs_of(config: dict, store=None, max_signals: int = 4000) -> dict:
         have_t = {str(x)[:10] for x in idx["date"].to_list()} if not idx.is_empty() and "date" in idx.columns else set()
     except Exception:  # noqa: BLE001
         have_t = set()
-    return {"symbol": strat.symbol, "signals": len(signals), "signal_sessions": len(days), "first": days[0] if days else None, "last": days[-1] if days else None, "hold_sessions": hold, "option_legs": len(legs),
+    # did a contract the legs could use exist on the signal session? Only the stored end-of-day chains can establish that; where none is stored it is unknown
+    absent, known, intraday_q = [], 0, 0
+    try:
+        eod = next((k for k in store.datasets(strat.symbol) if k.dtype == "options" and k.obs == "quote" and k.res == "EOD"), None)
+        if eod is not None:
+            exps = PL.expiration_index(store, eod)
+            leg_specs = [l.model_dump() for l in legs]
+            for d in days:
+                if d in exps:
+                    known += 1
+                    if not all(PL._dte_ok(exps[d], l) for l in leg_specs):
+                        absent.append(d)
+        for k in store.datasets(strat.symbol):
+            if k.dtype == "options" and k.obs == "quote" and k.res != "EOD":
+                iq = {str(x) for x in store.option_days(strat.symbol, "quote", dataset=k)}
+                intraday_q = max(intraday_q, sum(1 for d in days if d in iq))
+    except Exception:  # noqa: BLE001
+        pass
+    existence = {"known_sessions": known, "unknown_sessions": len(days) - known, "no_contract": len(absent),
+                 "note": (f"A contract with the required expiration is known to have existed (or not) on {known} of the {len(days)} signal sessions, from the stored end-of-day chains. "
+                          + (f"On {len(absent)} of them no such expiration was listed: those sessions cannot be tested with any data. " if absent else "")
+                          + (f"For the other {len(days) - known} it is not established here." if len(days) > known else ""))}
+    return {"no_contract_days": absent, "contract_existence": existence, "sessions_with_intraday_quotes": intraday_q,
+            "symbol": strat.symbol, "signals": len(signals), "signal_sessions": len(days), "first": days[0] if days else None, "last": days[-1] if days else None, "hold_sessions": hold, "option_legs": len(legs),
             "contracts_per_signal": contracts, "sessions_per_signal": hold + 1, "days": days, "pricing": mode, "sessions_with_quotes": sum(1 for d in days if d in have_q), "sessions_with_trades": sum(1 for d in days if d in have_t),
-            "excluded_sessions": len({d for v in (sigs.get("excluded") or {}).values() for d in v}), "sessions_scanned": sigs.get("sessions"), "intraday": any(s.get("minute", 570) not in (570, 960) for s in signals)}
+            "excluded_sessions": len({d for v in (sigs.get("excluded") or {}).values() for d in v}), "sessions_scanned": sigs.get("sessions"), # an end-of-day chain is one snapshot at the close: any entry before it (the open included) needs intraday option prices
+            "intraday": any(int(s.get("minute", 570)) < 955 for s in signals) or any(l.dte == 0 for l in legs)}
 
 
 def estimate(need: dict, today: date | None = None) -> dict:
@@ -255,8 +308,10 @@ def estimate(need: dict, today: date | None = None) -> dict:
         elif sid == "databento":
             recs = pairs * 390
             gb = recs * c["record_bytes"] / 1e9
-            row.update(records=recs, gigabytes=round(gb, 4), dollars=None, dollars_floor=round(gb * c["floor_per_gb"], 2), contract_sessions=pairs,
-                       dollars_note="Not estimated: the per-schema rate is only shown in the provider's catalogue. The lowest published OPRA rate would make this at least the floor shown; the provider returns the exact price, free of charge, before any download.")
+            usd = gb * c["per_gb"]
+            row.update(records=recs, gigabytes=round(gb, 4), dollars=round(usd, 2), dollars_floor=round(usd, 2), contract_sessions=pairs, credit=c["credit"], within_credit=usd <= c["credit"],
+                       dollars_note=f"Estimate: {recs:,} one-minute records of about {c['record_bytes']} bytes at the documented ${c['per_gb']:g} per GB. " + ("It fits inside the $125 credit a new account receives. " if usd <= c["credit"] else "")
+                       + "The provider returns the exact price, free of charge, before any download; nothing is requested without your approval of that figure.")
         elif sid == "thetadata":
             row.update(dollars=c["price"], dollars_note="one month of the Value tier (1-minute quotes from 2020); earlier dates need Standard ($80) or Pro ($160)", contract_sessions=pairs)
             if inside and min(inside) < date(2020, 1, 1):
@@ -265,10 +320,192 @@ def estimate(need: dict, today: date | None = None) -> dict:
             row["notes"].append("None of the signal sessions fall inside this source's history.")
         rows.append(row)
     rows.sort(key=lambda r: (-(r["coverage_pct"] or 0), r["dollars"] if r["dollars"] is not None else 1e9))
-    return {"need": {k: v for k, v in need.items() if k != "days"}, "sources": rows,
+    return {"need": {k: v for k, v in need.items() if k not in ("days", "no_contract_days")}, "sources": rows,
             "notes": ["Signals are found by scanning the underlying only, so no option data is needed to produce this estimate.",
                       "Nothing here is started automatically. A free source is downloaded when you run the backtest (large downloads ask first); a paid one is never called without your approval of its quoted cost.",
                       "Dollar figures are the providers' published subscription prices on " + CHECKED + ", not charges Strata can see or control."]}
+
+
+# ----------------------------------------------------------------------------- what a budget buys
+BUDGETS = (0, 25, 50, 100, 200)
+
+
+def _alpaca_first() -> date:
+    from strata.data.providers.sources import ALPACA_OPTIONS_FIRST
+    return ALPACA_OPTIONS_FIRST
+
+
+def measured(provider: str = "alpaca") -> dict | None:
+    """What the access test established with the key stored on this installation, or None when it has not returned an observation."""
+    try:
+        from strata.data.providers import access as A
+        rep = A.saved(provider)
+    except Exception:  # noqa: BLE001
+        return None
+    if not rep or not rep.get("verified"):
+        return None
+    cells = [c for row in rep.get("matrix") or [] for c in row.get("contracts") or []]
+    dates = sorted({row["date"] for row in rep.get("matrix") or [] if any(c.get("has_observations") for c in row.get("contracts") or [])})
+    return {"run_at": rep.get("run_at"), "contract_sessions": len(cells), "with_observations": sum(1 for c in cells if c.get("has_observations")), "first": dates[0] if dates else None, "last": dates[-1] if dates else None,
+            "earliest": (rep.get("findings") or {}).get("earliest_option_bars")}
+
+
+def _o(id_, entry, name, price, unit, obs, minutes, **kw):
+    return {"id": id_, "entry": entry, "name": name, "price": price, "unit": unit, "observation": obs, "resolution_minutes": minutes, **kw}
+
+
+# Every way found to obtain intraday option prices, as something that can be bought (or had free). Prices and coverage were read from each
+# provider's own pages on CHECKED. `window` is the history it reaches; `years` are the calendar years a per-year product is sold for.
+OFFERS = [
+    _o("alpaca_free", "alpaca", "Alpaca free account", 0.0, "free account", "trade prints", 1, window=lambda t: (_alpaca_first(), t), symbols=None, route="built-in: connect the key in Settings",
+       needs="a free Alpaca account (paper is enough)", caveat="Trade prints only: no bid/ask. Never run with a real key on this installation."),
+    _o("massive_basic", "massive", "Massive (Polygon) free plan", 0.0, "free account", "trade prints", 1, window=lambda t: (t - timedelta(days=730), t - timedelta(days=1)), symbols=None, route="built-in adapter: add the key in Settings",
+       needs="a free Massive account", caveat="Trade prints only; 5 requests a minute. Never run with a real key on this installation."),
+    _o("databento_credit", "databento", "Databento free credit", 0.0, "usage inside a $125 credit", "bid/ask quotes", 1, window=lambda t: (date(2013, 4, 1), t - timedelta(days=1)), symbols=None, usage=True,
+       route="quote first, then download only the contracts the strategy needs", needs="a Databento account (new accounts receive $125 of credit)",
+       caveat="The credit is spent by the byte and expires after 6 months. The exact price is quoted by the provider before anything is downloaded. Never run with a real key on this installation."),
+    _o("optionsdx_30m", "optionsdx", "OptionsDX 30-minute chains", 3.0, "per symbol-year", "bid/ask quotes", 30, years=(2010, 2023), symbols={"SPY": (2010, 2023), "QQQ": (2012, 2023)}, route="buy and download the files, then import them (Data, Import)",
+       needs="an OptionsDX account and a manual purchase", caveat="A snapshot every 30 minutes: an exit is only seen at the next snapshot."),
+    _o("optionsdx_15m", "optionsdx", "OptionsDX 15-minute chains", 5.0, "per symbol-year", "bid/ask quotes", 15, years=(2011, 2023), symbols={"SPY": (2011, 2023), "QQQ": (2012, 2023)}, route="buy and download the files, then import them (Data, Import)",
+       needs="an OptionsDX account and a manual purchase", caveat="A snapshot every 15 minutes."),
+    _o("optionsdx_5m", "optionsdx", "OptionsDX 5-minute chains", 20.0, "per symbol-year", "bid/ask quotes", 5, years=(2016, 2023), symbols={"SPY": (2016, 2023), "QQQ": (2016, 2023)}, route="buy and download the files, then import them (Data, Import)",
+       needs="an OptionsDX account and a manual purchase", caveat="A snapshot every 5 minutes. The importer was verified on the vendor's public 5-minute sample."),
+    _o("optionsdx_1m", "optionsdx", "OptionsDX 1-minute chains", 50.0, "per symbol-year", "bid/ask quotes", 1, years=(2020, 2023), symbols={"SPY": (2020, 2023)}, route="buy and download the files, then import them (Data, Import)",
+       needs="an OptionsDX account and a manual purchase", caveat="About 20 GB of CSV per year."),
+    _o("thetadata_value", "thetadata", "ThetaData Value, one month", 40.0, "per month", "bid/ask quotes", 1, window=lambda t: (date(2020, 1, 1), t), symbols=None, route="adapter exists; never run against the live service",
+       needs="a ThetaData subscription and their terminal program", caveat="A subscription month: download what you need while it is active."),
+    _o("thetadata_standard", "thetadata", "ThetaData Standard, one month", 80.0, "per month", "bid/ask quotes", 1, window=lambda t: (date(2016, 1, 1), t), symbols=None, route="adapter exists; never run against the live service",
+       needs="a ThetaData subscription and their terminal program", caveat="Adds trades and tick data; history from 2016."),
+    _o("thetadata_pro", "thetadata", "ThetaData Pro, one month", 160.0, "per month", "bid/ask quotes", 1, window=lambda t: (date(2012, 6, 1), t), symbols=None, route="adapter exists; never run against the live service",
+       needs="a ThetaData subscription and their terminal program", caveat="History from June 2012."),
+    _o("massive_developer", "massive", "Massive Developer, one month", 79.0, "per month", "trade prints", 1, window=lambda t: (t - timedelta(days=1461), t), symbols=None, route="built-in adapter: add the key in Settings",
+       needs="a Massive subscription", caveat="Trades and trade bars for 4 years; still no bid/ask."),
+    _o("massive_advanced", "massive", "Massive Advanced, one month", 199.0, "per month", "bid/ask quotes", 1, window=lambda t: (date(2022, 3, 7), t), symbols=None, route="adapter reads trade bars only; quotes are not integrated",
+       needs="a Massive subscription", caveat="Quote history starts 2022-03-07 (trade bars from 2014)."),
+]
+NOT_OFFERS = ["Alpaca Algo Trader Plus ($99 a month) adds the live OPRA feed, not history: Alpaca has no historical option quotes on any plan and its option history still starts in January 2024.",
+              "End-of-day archives (the free ones Strata already downloads, OptionMetrics through a university, Alpha Vantage, EODHD, MarketData.app) cannot price an intraday entry or a 0DTE trade, whatever they cost.",
+              "Cboe DataShop and ORATS sell complete interval histories; neither publishes a price that fits these budgets (ORATS lists $1,500 for its 1-minute history)."]
+
+
+def _window(o: dict, sym: str, today: date) -> tuple[date, date] | None:
+    if o.get("symbols") is not None:
+        y = o["symbols"].get(sym)
+        return (date(y[0], 1, 1), date(y[1], 12, 31)) if y else None
+    return o["window"](today)
+
+
+def budget_table(need: dict, today: date | None = None, budgets=BUDGETS) -> dict:
+    """What each budget would make testable, for the sessions THIS strategy needs.
+
+    `need` comes from `needs_of`: the sessions on which the entry rule fires, found from the underlying alone. For
+    every offer the sessions inside its history are counted; for every budget the purchase that covers the most of
+    them is listed, bid/ask before trade prints. A session a contract did not exist on stays untestable whatever is
+    bought, and is kept apart where the stored end-of-day chains establish it."""
+    today = today or date.today()
+    sym = need.get("symbol") or "SPY"
+    days = [date.fromisoformat(d) for d in need.get("days", [])]
+    absent = {date.fromisoformat(d) for d in need.get("no_contract_days", [])}
+    testable = [d for d in days if d not in absent]
+    pairs_per = max(1, int(need.get("contracts_per_signal") or 1)) * max(1, int(need.get("sessions_per_signal") or 1))
+    rate = COST["databento"]
+    offers = []
+    got_alpaca = measured("alpaca")
+    for o in OFFERS:
+        w = _window(o, sym, today)
+        inside = [d for d in testable if w and w[0] <= d <= w[1]]
+        row = {k: v for k, v in o.items() if k not in ("window", "symbols", "years")}
+        row.update(window=[w[0].isoformat(), w[1].isoformat()] if w else None, sessions=len(inside), of=len(testable), pct=round(len(inside) / len(testable) * 100, 1) if testable else None, _days=inside)
+        if o.get("years"):
+            by_year: dict[int, int] = {}
+            for d in inside:
+                by_year[d.year] = by_year.get(d.year, 0) + 1
+            row["by_year"] = dict(sorted(by_year.items()))
+        if o.get("usage"):
+            gb = len(inside) * pairs_per * 390 * rate["record_bytes"] / 1e9
+            row.update(estimated_cost=round(gb * rate["per_gb"], 2), estimated_gb=round(gb, 3), credit=rate["credit"], contract_sessions=len(inside) * pairs_per,
+                       cost_note=f"about ${gb * rate['per_gb']:,.2f} of the ${rate['credit']:g} credit for {len(inside) * pairs_per:,} contract-sessions (estimate; the provider quotes the exact figure)")
+        if not w:
+            row["caveat"] = f"No {sym} product. " + row.get("caveat", "")
+        if o["entry"] == "alpaca" and o["price"] == 0 and got_alpaca:
+            row.update(verified=True, route="built-in: the key is connected, and a run downloads the contracts it needs by itself",
+                       caveat=f"Trade prints only: no bid/ask. Measured with the key stored here on {str(got_alpaca['run_at'])[:10]}: {got_alpaca['with_observations']} of {got_alpaca['contract_sessions']} expired contract-sessions asked for "
+                              f"returned 1-minute trade bars ({got_alpaca['first']} to {got_alpaca['last']}); the first session with any is {_alpaca_first()}.")
+        offers.append(row)
+    rows = []
+    for b in budgets:
+        plans = []
+        free = [o for o in offers if o["price"] == 0 and o["sessions"]]
+        free_q = {d for o in free if o["observation"] == "bid/ask quotes" for d in o["_days"]}
+        free_t = {d for o in free for d in o["_days"]}
+        if free:
+            plans.append({"label": " + ".join(o["name"] for o in free), "cost": 0.0, "items": [{"offer": o["id"], "name": o["name"], "cost": 0.0, "sessions": o["sessions"], "note": o.get("cost_note")} for o in free],
+                          "quote_days": free_q, "any_days": free_t, "minutes": min(o["resolution_minutes"] for o in free), "needs": sorted({o["needs"] for o in free})})
+        for o in offers:
+            if o["price"] <= 0 or o["price"] > b or not o["sessions"]:
+                continue
+            if "by_year" in o:  # buy the years with the most signal sessions first
+                picked, cost = [], 0.0
+                for y, n in sorted(o["by_year"].items(), key=lambda kv: (-kv[1], -kv[0])):
+                    if cost + o["price"] <= b + 1e-9:
+                        picked.append(y)
+                        cost += o["price"]
+                got = {d for d in o["_days"] if d.year in set(picked)}
+                if got:
+                    plans.append({"label": f"{o['name']}: {_years(sorted(picked))}", "cost": cost, "items": [{"offer": o["id"], "name": o["name"], "years": sorted(picked), "cost": cost, "sessions": len(got)}],
+                                  "quote_days": got, "any_days": got, "minutes": o["resolution_minutes"], "needs": [o["needs"]]})
+            else:
+                got = set(o["_days"])
+                plans.append({"label": o["name"], "cost": o["price"], "items": [{"offer": o["id"], "name": o["name"], "cost": o["price"], "sessions": len(got)}],
+                              "quote_days": got if o["observation"] == "bid/ask quotes" else set(), "any_days": got, "minutes": o["resolution_minutes"], "needs": [o["needs"]]})
+        out = []
+        for pl_ in plans:
+            q_all = pl_["quote_days"] | (free_q if pl_["cost"] else set())
+            a_all = pl_["any_days"] | (free_t if pl_["cost"] else set())
+            out.append({"label": pl_["label"] + (" (plus the free sources)" if pl_["cost"] and free else ""), "cost": round(pl_["cost"], 2), "items": pl_["items"], "needs": pl_["needs"], "resolution_minutes": pl_["minutes"],
+                        "sessions_with_bid_ask": len(q_all), "sessions_trade_prints_only": len(a_all - q_all), "sessions": len(a_all), "of": len(testable), "pct": round(len(a_all) / len(testable) * 100, 1) if testable else None,
+                        "first": min(a_all).isoformat() if a_all else None, "last": max(a_all).isoformat() if a_all else None})
+        out.sort(key=lambda r: (-r["sessions_with_bid_ask"], -r["sessions"], r["resolution_minutes"], r["cost"]))
+        # the same budget at each granularity: a 30-minute snapshot reaches further back, a 1-minute one sees an intraday exit when it happens
+        by_res = []
+        for cap, label in ((1, "1-minute"), (5, "5-minute or finer"), (30, "30-minute or finer")):
+            fit = [r for r in out if r["resolution_minutes"] <= cap]
+            if fit:
+                by_res.append({"granularity": label, "max_minutes": cap, **{k: fit[0][k] for k in ("label", "cost", "sessions_with_bid_ask", "sessions_trade_prints_only", "sessions", "of", "pct", "first", "last", "needs", "items")}})
+        rows.append({"budget": b, "best": out[0] if out else None, "by_granularity": by_res, "alternatives": out[1:4], "nothing": not out})
+    # the earliest day ANY compared source reaches: sessions before it are outside all of them, and saying "N of M" without
+    # saying so would make every source look worse than it is while hiding that the early years cannot be bought at all
+    starts = [date.fromisoformat(o["window"][0]) for o in offers if o.get("window")]
+    earliest = min(starts) if starts else None
+    before = [d for d in testable if earliest and d < earliest]
+    for o in offers:
+        o.pop("_days", None)
+    have_q, have_t = int(need.get("sessions_with_quotes") or 0), int(need.get("sessions_with_trades") or 0)
+    known = (need.get("contract_existence") or {}).get("known_sessions")
+    return {"checked": CHECKED, "symbol": sym, "signal_sessions": len(days), "testable_sessions": len(testable), "no_contract_sessions": len(absent), "contract_existence": need.get("contract_existence"),
+            "earliest_source_date": earliest.isoformat() if earliest else None, "before_any_source": len(before), "reachable_sessions": len(testable) - len(before),
+            "denominator_note": (f"{len(before):,} of the {len(testable):,} sessions fall before {earliest.isoformat()}, the earliest day any source compared here reaches: no budget buys them. " if before else "")
+            + (f"Whether a contract with the required expiration was listed is established for {known:,} of the {len(days):,} sessions only (from stored end-of-day chains), so every count is an upper bound." if known is not None else
+               "Whether a contract with the required expiration was listed on each session is not established here, so every count is an upper bound."),
+            "stored_now": {"sessions_with_intraday_quotes": int(need.get("sessions_with_intraday_quotes") or 0), "sessions_with_trade_prints": have_t, "sessions_with_end_of_day_quotes": have_q},
+            "contract_sessions_per_signal": pairs_per, "budgets": rows, "offers": offers, "not_offers": NOT_OFFERS,
+            "notes": ["Counts are this strategy's qualifying sessions inside each source's history, not a promise that every contract traded or was quoted on them.",
+                      (f"Alpaca's coverage was measured with the key stored here ({str(got_alpaca['run_at'])[:10]}). The other paid or key-gated routes have not been run from this installation: their coverage is what the provider publishes. "
+                       if got_alpaca else "None of the paid or key-gated routes has been run from this installation: their coverage is what the provider publishes. ")
+                      + "The OptionsDX importer was verified on the vendor's own sample file.",
+                      "Strata never buys anything and never starts a paid request. A purchase is yours to make; a metered download asks for approval of the provider's own quote first.",
+                      f"Prices were read from the providers' pages on {CHECKED}."]}
+
+
+def _years(ys: list[int]) -> str:
+    out, i = [], 0
+    while i < len(ys):
+        j = i
+        while j + 1 < len(ys) and ys[j + 1] == ys[j] + 1:
+            j += 1
+        out.append(str(ys[i]) if i == j else f"{ys[i]}-{ys[j]}")
+        i = j + 1
+    return ", ".join(out)
 
 
 # ----------------------------------------------------------------------------- guided Alpaca connection

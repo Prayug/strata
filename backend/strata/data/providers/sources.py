@@ -13,7 +13,7 @@ keyless (work out of the box):
   yahoo_options  1-minute option TRADE bars for the last ~30 days, only for contracts that are
                  still listed (or expired within about a day). No bid/ask.
 free account key:
-  alpaca         1-minute stock bars since 2016 and 1-minute option TRADE bars since Feb 2024
+  alpaca         1-minute stock bars since 2016-01-04 and 1-minute option TRADE bars since 2024-01-18 (measured)
                  (no historical option quotes on the free plan - trade prints only)
 
 Guarantees shared by every source
@@ -48,7 +48,9 @@ UA = {"User-Agent": "Mozilla/5.0 (compatible; strata-research/3.0)"}
 YAHOO_ALIAS = {"VIX": "^VIX", "SPX": "^GSPC", "NDX": "^NDX", "RUT": "^RUT", "VXN": "^VXN", "RVX": "^RVX", "DJI": "^DJI", "VIX9D": "^VIX9D", "VVIX": "^VVIX"}
 INDEX_SPECS = {"VIX": "volatility_index", "VIX9D": "volatility_index", "VVIX": "volatility_index", "VXN": "volatility_index", "RVX": "volatility_index",
                "SPX": "index", "NDX": "index", "RUT": "index", "DJI": "index"}
-ALPACA_OPTIONS_FIRST = date(2024, 2, 1)
+# Measured with a paper key on 2026-11-25: no option bar is returned for any session before 2024-01-18
+# (every session from 2024-01-02 was asked), and 2024-02-02 returns nothing at all.
+ALPACA_OPTIONS_FIRST = date(2024, 1, 18)
 # listed strike spacing near the money for short-dated contracts (used only when a provider
 # has no contract-definition endpoint; every constructed symbol is verified by the fetch)
 STRIKE_STEP = {"SPY": 1.0, "QQQ": 1.0, "IWM": 1.0}
@@ -86,7 +88,10 @@ def http_get(client: httpx.Client, url: str, params: dict | None = None, headers
             r = client.get(url, params=params, headers=headers)
             if r.status_code in (429, 500, 502, 503, 504):
                 wait = float(r.headers.get("retry-after") or 0) or 1.5 * (2 ** attempt)
-                time.sleep(min(wait, 30))
+                reset = r.headers.get("x-ratelimit-reset")
+                if r.status_code == 429 and reset and reset.isdigit():
+                    wait = max(wait, int(reset) - time.time() + 0.5)  # the provider says when its window reopens
+                time.sleep(max(0.5, min(wait, 65)))
                 last = SourceError(f"HTTP {r.status_code} from {httpx.URL(url).host}")
                 continue
             if r.status_code >= 400:
@@ -858,6 +863,12 @@ class OptionBarSource(Source):
                 self.store.write_option_bars(sym, self.name, bars, rows, defs, source=f"{self.label} 1-minute option bars", **self.desc(limitations=TRADE_LIMITS + self.extra_limits()))
                 rep["bars"] += bars.height
         if batches:
+            # a provider can hold a session only in part: such sessions are recorded as partial and are not simulated
+            from strata.data.quality import assess_trade_sessions
+            key = self.store.option_dataset(sym, "trade", self.name)
+            if key is not None:
+                bad = assess_trade_sessions(self.store, key, sorted(todo))
+                rep["partial_sessions"] = {d: v["reason"] for d, v in bad.items()}
             _finish(self.store, sym)
         if progress:
             progress(1.0, "done")
@@ -888,8 +899,8 @@ class YahooOptions(OptionBarSource):
     name, label, tier = "yahoo_options", "Yahoo Finance option trades", "free"
     url = "https://finance.yahoo.com"
     license = "Yahoo terms of service (personal research use)"
-    description = ("1-minute option trade bars for the last ~30 days, without an account. Only contracts that are still listed, or expired within about a day, can be "
-                   "retrieved - run it regularly to keep 0DTE history. No bid/ask.")
+    description = ("1-minute option price bars for the last ~30 days, without an account. Only contracts that are still listed, or expired within about a day, can be "
+                   "retrieved - run it regularly to keep 0DTE history. No bid/ask, and coarser than true trade bars: see the limitations.")
     datasets = [{"id": "option_trades", "label": "Option 1-minute trade bars (recent)", "resolution": "1m", "coverage": "last ~30 days; listed contracts only", "quote_type": "trades"}]
     BASE = "https://query1.finance.yahoo.com/v8/finance/chart/"
     WINDOW_DAYS = 29
@@ -908,7 +919,10 @@ class YahooOptions(OptionBarSource):
 
     def extra_limits(self):
         return ["Yahoo serves a contract's minute bars only while it is listed and for about a day after it expires; only the last ~30 days are available.",
-                "Bars reported with zero volume are discarded as unconfirmed prints. Contract definitions are constructed from the OCC symbol (standard 100 multiplier assumed)."]
+                "Bars reported with zero volume are discarded as unconfirmed prints. Contract definitions are constructed from the OCC symbol (standard 100 multiplier assumed).",
+                # measured on 2026-11-25 against Alpaca's bars (which reproduce from Alpaca's individual trades) on the 481 SPY contract-sessions both hold
+                "A Yahoo bar is closer to a sample of the last price than to the range of the minute's trades: 66% of its bars hold a single price (26% of the trade bars for the same minutes do), "
+                "the minute's close equals the trade bar's on 55% of minutes, and the 09:30 bar is usually absent. Daily volume agrees within 3%. Where trade bars from a provider that publishes its trades are stored, they are used first."]
 
     def list_contracts(self, client, sym, as_of, exp_from, exp_to, strike_lo, strike_hi, rights=("C", "P")):
         step = STRIKE_STEP.get(sym)
@@ -1012,21 +1026,24 @@ class Alpaca(OptionBarSource):
     name, label, tier = "alpaca", "Alpaca Market Data", "free_key"
     url = "https://docs.alpaca.markets/docs/about-market-data-api"
     license = "Alpaca market data agreement"
-    description = ("Free account: 1-minute stock bars since 2016 and 1-minute option TRADE bars since February 2024. Historical option quotes are not offered on the free plan, "
-                   "so option data from Alpaca is trade-print based.")
+    description = ("Free account: 1-minute stock bars from the consolidated tape since 2016-01-04 and 1-minute option TRADE bars since 2024-01-18 (both measured with a paper key). "
+                   "Alpaca has no historical option quotes, so its option data is trade prints.")
     datasets = [
         {"id": "bars_1m", "label": "1-minute stock bars", "resolution": "1m", "coverage": "2016 to 15 minutes ago"},
-        {"id": "option_trades", "label": "Option 1-minute trade bars", "resolution": "1m", "coverage": "2024-02 onward", "quote_type": "trades"},
+        {"id": "option_trades", "label": "Option 1-minute trade bars", "resolution": "1m", "coverage": "2024-01-18 onward", "quote_type": "trades"},
     ]
     DATA = "https://data.alpaca.markets"
     TRADING = "https://paper-api.alpaca.markets"
+    LIVE = "https://api.alpaca.markets"
     STOCKS_FIRST = date(2016, 1, 4)
     rate = 3.0  # the free plan allows 200 historical calls a minute
+    _host: str | None = None
+    _throttle: "Throttle | None" = None
 
     def capabilities(self, today=None):
         today = today or datetime.now(cal.ET).date()
         return [_cap("underlying", "trade", "1m", self.STOCKS_FIRST, today, note="15-minute delay on the free plan"),
-                _cap("options", "trade", "1m", ALPACA_OPTIONS_FIRST, today, note="trade bars for any listed or expired contract since February 2024; no historical quotes on the free plan")]
+                _cap("options", "trade", "1m", ALPACA_OPTIONS_FIRST, today, note="trade bars for any listed or expired contract since 2024-01-18; no historical quotes on any plan")]
 
     def bars_window(self, today=None):
         return ALPACA_OPTIONS_FIRST, (today or datetime.now(cal.ET).date())
@@ -1037,13 +1054,49 @@ class Alpaca(OptionBarSource):
 
     def available(self):
         k, s = self._keys()
-        return (bool(k and s), "key configured" if k and s else "connect a free Alpaca account (Settings -> Data connections)")
+        return (bool(k and s), "key configured" if k and s else "connect a free Alpaca account (Settings, Data provider keys)")
 
     def _h(self) -> dict:
         k, s = self._keys()
         if not (k and s):
-            raise SourceError("Alpaca API key/secret not configured (Settings -> Data connections)")
+            raise SourceError("Alpaca API key/secret not configured (Settings, Data provider keys)")
         return {"APCA-API-KEY-ID": k, "APCA-API-SECRET-KEY": s}
+
+    def contracts_host(self, client) -> str:
+        """The host that serves contract definitions for THIS key. A paper key is only accepted by the paper
+        host and a live key only by the live one, and the key does not say which it is: ask each once.
+        Only the read-only contract listing is ever requested from either host."""
+        if self._host:
+            return self._host
+        seen = []
+        for h in (self.TRADING, self.LIVE):
+            try:
+                http_get(client, f"{h}/v2/options/contracts", params={"underlying_symbols": "SPY", "limit": 1}, headers=self._h(), retries=2)
+            except SourceError as e:
+                seen.append(str(e)[:160])
+                continue
+            self._host = h
+            return h
+        raise SourceError("Alpaca's contract listing refused this key on both the paper and the live host (" + "; ".join(seen) + ")")
+
+    def contract_pages(self, client, params: dict):
+        """Every page of the contract listing, from whichever host accepts this key (paper first, then live).
+        No extra request is made when the first host answers."""
+        hosts = [self._host] if self._host else [self.TRADING, self.LIVE]
+        for h in hosts:
+            gen = self.pages(client, f"{h}/v2/options/contracts", params, "option_contracts")
+            try:
+                first = next(gen)
+            except StopIteration:
+                return
+            except SourceError as e:
+                if re.search(r"HTTP 40[13]\b", str(e)) and h != hosts[-1]:
+                    continue  # a live key on the paper host (or the reverse): try the other one
+                raise
+            self._host = h
+            yield first
+            yield from gen
+            return
 
     def check(self) -> dict:
         """Connection test used by the guided setup: one cheap authenticated request per API."""
@@ -1056,9 +1109,10 @@ class Alpaca(OptionBarSource):
                 end = datetime.now(timezone.utc) - timedelta(days=4)
                 http_get(client, f"{self.DATA}/v2/stocks/bars", params={"symbols": "SPY", "timeframe": "1Day", "start": (end - timedelta(days=5)).date().isoformat(), "end": end.date().isoformat(), "limit": 5}, headers=self._h(), retries=2)
                 out["stocks"] = True
-                http_get(client, f"{self.TRADING}/v2/options/contracts", params={"underlying_symbols": "SPY", "limit": 1}, headers=self._h(), retries=2)
+                host = self.contracts_host(client)
                 out["options"] = True
-                out["message"] = "Connected: stock bars and option contract data are accessible."
+                out["environment"] = "paper" if host == self.TRADING else "live"
+                out["message"] = f"Connected with a {out['environment']} key: stock bars and option contract data are accessible."
             except SourceError as e:
                 out["ok"] = out["stocks"]
                 out["message"] = ("Stock bars work, but the options endpoints were refused: " if out["stocks"] else "Alpaca rejected the request: ") + str(e)[:200]
@@ -1076,11 +1130,14 @@ class Alpaca(OptionBarSource):
         """Yield every page of a paginated Alpaca endpoint. The caller only treats the
         request as complete when this generator is exhausted (next_page_token is null)."""
         token, n = None, 0
+        if self._throttle is None:
+            self._throttle = Throttle(self.rate)
         while True:
             p = dict(params)
             if token:
                 p["page_token"] = token
-            d = http_get(client, url, params=p, headers=self._h()).json()
+            self._throttle.wait()  # one page is one request against the plan's limit (200 a minute on the free plan)
+            d = http_get(client, url, params=p, headers=self._h(), retries=6).json()
             n += 1
             yield d.get(key) or ({} if key == "bars" else [])
             token = d.get("next_page_token")
@@ -1096,8 +1153,25 @@ class Alpaca(OptionBarSource):
         deliv = c.get("deliverables") or []
         nonstd = bool(re.search(r"\d$", root)) or any(str(x.get("type")) != "equity" or float(x.get("amount") or 100) != 100 for x in deliv)
         return Contract(c["symbol"], root, date.fromisoformat(c["expiration_date"]), float(c["strike_price"]), "C" if c["type"] == "call" else "P",
-                        multiplier=float(c.get("multiplier") or 100), style=c.get("style") or "american", adjusted=nonstd, provider_id=c.get("id"),
+                        multiplier=Alpaca.multiplier_of(c), style=c.get("style") or "american", adjusted=nonstd, provider_id=c.get("id"),
                         status=c.get("status"), source="Alpaca /v2/options/contracts")
+
+    @staticmethod
+    def multiplier_of(c: dict) -> float:
+        """Shares one contract controls, from the provider's own record.
+
+        The listing's `multiplier` field is "0" for every contract that expired on or before 2024-04-26 (measured: 5,584 of the
+        76,080 SPY definitions downloaded on 2026-11-25), while the same record gives `size` 100 and a deliverable of 100 shares.
+        A zero is therefore not taken at its word: the contract size, then the single equity deliverable, say what it is. Only
+        when the record gives nothing positive anywhere is the standard 100 used (non-standard contracts are excluded elsewhere)."""
+        def pos(x):
+            try:
+                v = float(x)
+            except (TypeError, ValueError):
+                return None
+            return v if v > 0 else None
+        eq = [x for x in (c.get("deliverables") or []) if str(x.get("type")) == "equity"]
+        return pos(c.get("multiplier")) or pos(c.get("size")) or (pos(eq[0].get("amount")) if len(eq) == 1 else None) or 100.0
 
     def list_contracts(self, client, sym, as_of, exp_from, exp_to, strike_lo, strike_hi, rights=("C", "P")):
         """Contract definitions that were valid on session `as_of`.
@@ -1113,10 +1187,12 @@ class Alpaca(OptionBarSource):
             raw = json.loads(ck.read_text())
         else:
             raw = {}
-            for status in ("active", "inactive"):
+            # an expiration in the past is always `inactive`, one in the future always `active`: ask only for what can exist
+            statuses = ("inactive",) if exp_to < today - timedelta(days=1) else ("active",) if exp_from > today + timedelta(days=1) else ("active", "inactive")
+            for status in statuses:
                 params = {"underlying_symbols": sym, "status": status, "expiration_date_gte": exp_from.isoformat(), "expiration_date_lte": exp_to.isoformat(),
                           "strike_price_gte": strike_lo, "strike_price_lte": strike_hi, "limit": 10000, "show_deliverables": "true"}
-                for page in self.pages(client, f"{self.TRADING}/v2/options/contracts", params, "option_contracts"):
+                for page in self.contract_pages(client, params):
                     for c in page:
                         raw[c["symbol"]] = c
             ck.parent.mkdir(parents=True, exist_ok=True)
@@ -1133,6 +1209,31 @@ class Alpaca(OptionBarSource):
                     out += [contract_from_occ(occ_symbol(sym, e, r, round(k, 3)), source="constructed from the OCC symbol (definition no longer listed)") for r in rights]
                 k += step
         return sorted(out, key=lambda c: (c.expiration, c.right, c.strike))
+
+    def repair_definitions(self, sym: str) -> dict:
+        """Re-read the cached listing responses and rewrite the stored contract definitions from them (no request is made).
+        Needed once for definitions stored before a provider quirk was understood: a multiplier of 0 on old contracts."""
+        key = self.store.option_dataset(sym, "trade", self.name)
+        if key is None:
+            return {"contracts": 0, "repaired": 0}
+        defs = self.store.read_contracts(key)
+        bad = set(defs.filter(pl.col("multiplier").is_null() | (pl.col("multiplier") <= 0))["occ"].to_list()) if not defs.is_empty() else set()
+        if not bad:
+            return {"contracts": defs.height, "repaired": 0}
+        fixed: dict[str, Contract] = {}
+        for f in sorted((self.cache / "contracts").glob("*.json")):
+            try:
+                raw = json.loads(f.read_text())
+            except (OSError, ValueError):
+                continue
+            for occ, c in raw.items():
+                if occ in bad and occ not in fixed:
+                    fixed[occ] = self.parse_contract(c)
+        if fixed:
+            self.store.write_contracts(key, pl.DataFrame([c.row(sym) for c in fixed.values()], infer_schema_length=None))
+            self.store._dirty(key)
+            _finish(self.store, sym)
+        return {"contracts": defs.height, "non_positive_multiplier": len(bad), "repaired": len(fixed), "not_in_cache": len(bad) - len(fixed)}
 
     def fetch_batch(self, client, sym, contracts, sessions):
         d = sessions[0]
@@ -1162,7 +1263,7 @@ class Alpaca(OptionBarSource):
         return df, {(d, occ): "ok" for occ in by}, pages
 
     def extra_limits(self):
-        return ["Free plan: derived from the OPRA feed with a 15-minute delay; history starts in February 2024."]
+        return ["Free plan: trades reported to OPRA, served with a 15-minute delay; history starts on 2024-01-18 and 2024-02-02 is missing at the provider."]
 
     # ---- data-page entry points
     def plan(self, dataset, symbols, start, end):
@@ -1265,7 +1366,7 @@ class AlphaVantage(Source):
         return get_secret("ALPHAVANTAGE_API_KEY") or ""
 
     def available(self):
-        return (bool(self._key()), "key configured" if self._key() else "needs a premium Alpha Vantage key (Settings -> Data connections)")
+        return (bool(self._key()), "key configured" if self._key() else "needs a premium Alpha Vantage key (Settings, Data provider keys)")
 
     def capabilities(self, today=None):
         today = today or datetime.now(cal.ET).date()
@@ -1369,11 +1470,11 @@ class Massive(OptionBarSource):
         return get_secret("POLYGON_API_KEY") or ""
 
     def available(self):
-        return (bool(self._key()), "key configured" if self._key() else "needs a free Massive (Polygon) key (Settings -> Data connections)")
+        return (bool(self._key()), "key configured" if self._key() else "needs a free Massive (Polygon) key (Settings, Data provider keys)")
 
     def _h(self) -> dict:
         if not self._key():
-            raise SourceError("Massive API key not configured (Settings -> Data connections)")
+            raise SourceError("Massive API key not configured (Settings, Data provider keys)")
         return {"Authorization": f"Bearer {self._key()}"}  # the key travels in a header, never in the URL
 
     def bars_window(self, today=None):

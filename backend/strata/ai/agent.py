@@ -91,7 +91,7 @@ def registry_reference() -> str:
     return "\n".join(f"  {cat}: " + ", ".join(sigs) for cat, sigs in by.items())
 
 
-from strata.ai.agent_v5 import ResearchV5, richer  # noqa: E402
+from strata.ai.agent_v5 import ResearchV5, prefer_graph, richer  # noqa: E402
 from strata.research import graph as GRAPH  # noqa: E402
 
 class _Strict(BaseModel):
@@ -401,6 +401,17 @@ def is_complex(text: str) -> bool:
 
 
 # ----------------------------------------------------------------------------- the agent
+
+def _measured_note(budget: dict | None = None) -> str:
+    """Which of the compared routes has actually been run from this installation: said from the saved access report."""
+    from strata.data.providers import market as MK
+    m = MK.measured("alpaca")
+    if m:
+        return (f"Alpaca's free account was measured with the key stored here on {str(m['run_at'])[:10]} ({m['with_observations']} of {m['contract_sessions']} expired contract-sessions returned trade bars). "
+                "None of the other key-gated or paid routes has been run from this installation: their coverage is what the provider publishes.")
+    return "None of the key-gated routes has been run from this installation: their coverage is what the provider publishes."
+
+
 class Agent(ResearchV5):
     def __init__(self, jobs, store: MarketStore | None = None, llm_factory=None):
         self.jobs = jobs
@@ -529,6 +540,12 @@ class Agent(ResearchV5):
             r = RS.detect_followup(text, current, tick)
             if r:
                 return r
+            # "run the same strategy after 1% and 2% declines" is about the current version: it is read as a follow-up before
+            # the question reader gets a chance to take "after 1% and 2% declines" for a new market question
+            if re.search(r"\b(?:the\s+)?same\s+(?:strategy|trade|setup|rules?|thing|test|backtest)\b|\b(?:re)?run\s+(?:it|this|that)\b|\bthis strategy\b|\bthat strategy\b|^\s*what if\b|\binstead\b\W*$|^\s*(?:hold|switch|change|raise|lower|make|use)\b", low):
+                fu = NL.interpret(text, current, known, last_field, default_symbol)
+                if fu.get("action") in ("sweep", "modify"):
+                    return fu
         # a question the composable planner can represent and the single-question paths cannot (several conditions, other
         # symbols, clock times, controls, comparisons, a date range) becomes a research graph; the older paths stay as shortcuts
         graph = self.v5_graph(text, known, default_symbol)
@@ -547,6 +564,8 @@ class Agent(ResearchV5):
                     return {"action": "hypothesis", "plan": plan}
         fresh = RS.detect_fresh(text, tick, default_symbol)
         if fresh:
+            if graph is not None and prefer_graph(text, graph, fresh):
+                return {"action": "graph", "graph": graph}
             return fresh
         if current is not None and not re.search(r"sensitiv|sweep|range of|from \$?\d.*to \$?\d", text.lower()):
             # "include commissions and conservative slippage", "use option trade prices": a change of assumptions, compared with before
@@ -556,6 +575,8 @@ class Agent(ResearchV5):
         r = NL.interpret(text, current, known, last_field, default_symbol)
         if r["action"] == "new":
             d = enrich(text, tick, default_symbol)
+            if graph is not None and prefer_graph(text, graph, {"action": "new", "draft": d}):
+                return {"action": "graph", "graph": graph}
             return {"action": "new", "draft": d, "sweep": r.get("sweep")}
         if current is not None and r["action"] in ("modify", "unknown"):
             base = r["draft"] if r["action"] == "modify" else current
@@ -646,10 +667,39 @@ class Agent(ResearchV5):
         if note:
             lines.append(note)
         head = ("Updated the strategy" if d.kind == "options" else "Updated the study") if parent else ("Here is how I read that strategy" if d.kind == "options" else "Here is how I read that question")
+        # data first: before any plan is described, which of the sessions this strategy trades can be priced on what is stored
+        check = self._data_check(d, compiled, mode) if d.kind == "options" and not compiled["errors"] else None
+        if check is not None:
+            lines.insert(0, check["text"])
         content = self._plan_content(d, compiled, v, parent, interp, diff, changed, runs, compare_with, state, head + ". " + " ".join(lines), mode)
+        if check is not None:
+            content["data_check"] = check
         if note:
             content["note"] = note  # shown on the card itself: how this run relates to what came before it
         return [db.add_message(sid, "assistant", "plan", content)]
+
+    def _data_check(self, d: Draft, compiled: dict, mode: str | None) -> dict | None:
+        """Which of the sessions this strategy would trade have stored option prices (see data.readiness.precheck). Theoretical
+        premiums need none, so an opted-in modeled run is not checked. A failure to check is not a reason to block: None."""
+        if (mode or d.mode) == "modeled" or not compiled.get("strategy"):
+            return None
+        try:
+            from strata.data.readiness import precheck
+            spec = build_spec(d, compiled, None, {}, d.title, "")
+            tab = self.store.read_daily(d.symbol) if self.store.has_daily(d.symbol) else None
+            if tab is None or tab.is_empty():
+                return None
+            req = spec.get("requested") or {}
+            cfg = {**spec["backtest"], "start": req.get("start") or str(tab["date"][0]), "end": req.get("end") or str(tab["date"][-1])}
+            pc = precheck(cfg, self.store, max_rows=120)
+        except Exception:  # noqa: BLE001
+            return None
+        b = pc.pop("budget", None)
+        if b:
+            pc["budget"] = {"checked": b["checked"], "testable_sessions": b["testable_sessions"], "no_contract_sessions": b["no_contract_sessions"], "earliest_source_date": b.get("earliest_source_date"), "before_any_source": b.get("before_any_source"),
+                            "reachable_sessions": b.get("reachable_sessions"), "denominator_note": b.get("denominator_note"),
+                            "budgets": [{"budget": r["budget"], "best": r["best"] and {k: r["best"][k] for k in ("label", "cost", "sessions", "sessions_with_bid_ask", "sessions_trade_prints_only", "of", "needs")}} for r in b["budgets"]]}
+        return pc
 
     def _plan_content(self, d: Draft, compiled: dict, v: dict, parent: dict | None, interp: str, diff: list, changed: list | None, runs: list, compare_with: list, state: str, text: str, mode: str | None) -> dict:
         return {"text": text.strip(), "version_id": v["id"], "parent_id": parent["id"] if parent else None, "interpreter": interp, "kind": d.kind, "title": d.title, "state": state,
@@ -1158,6 +1208,96 @@ class Agent(ResearchV5):
         return [db.add_message(sid, "assistant", "result", {"view": "skipped", "run_id": r["run_id"], "version_id": version["id"], "label": r["label"], "text": txt, "explanation_source": "deterministic",
                                                             "skipped": {**sk, "names": names, "excluded": [{"reason": k, "count": len(v), "dates": v[-12:]} for k, v in ex.items()]}})]
 
+    # ---- what a result has to be able to say about itself
+    def _fills(self, sid: str, version: dict) -> list[dict]:
+        """Every option fill of the latest backtest, with the observation it was priced from."""
+        r, res, err = self._need_result(sid, version)
+        if err:
+            return err
+        if r["run"]["kind"] != "backtest":
+            return [self._say(sid, "A market study prices no options, so it has no fills. Test an option position on those sessions to get some.")]
+        from strata.api.results import load_trades
+        trades = load_trades(r["run_id"])
+        meta = res.get("meta") or {}
+        used = meta.get("datasets_used") or {}
+        pricing = (res.get("config") or {}).get("pricing", {}).get("mode") or (meta.get("pricing") or {}).get("mode")
+        what = {"quote": "an observed bid/ask quote", "trade_print": "an observed trade print (no bid/ask exists for it)", "model": "a theoretical price, not an observation", "stock": "the underlying's price"}
+        rows = []
+        for t in trades:
+            for l in t["legs"]:
+                if l.get("kind", "option") != "option":
+                    continue
+                src = l.get("price_source")
+                rows.append({"date": t["entry_date"], "contract": f"{l['strike']:g}{l['right']} {l['expiration']}", "side": l["side"], "contracts": l["contracts"], "entry_time": str(t["entry_time"])[11:19], "entry_price": l["entry_price"],
+                             "entry_bid": l.get("entry_bid"), "entry_ask": l.get("entry_ask"), "entry_print": l.get("entry_print"), "exit_time": str(l.get("exit_ts") and t["exit_time"] or t["exit_time"])[11:19], "exit_price": l["exit_price"],
+                             "exit_bid": l.get("exit_bid"), "exit_ask": l.get("exit_ask"), "exit_print": l.get("exit_print"), "exit_reason": l.get("exit_reason") or t["exit_reason"], "source": src, "source_text": what.get(src, str(src)),
+                             "pnl": l.get("pnl"), "trade_pnl": t["pnl"], "fees": t["commissions"], "flags": t.get("flags") or []})
+        kinds = sorted({x["source"] for x in rows})
+        def _ds(v) -> str:
+            if not isinstance(v, dict):
+                return str(v)
+            return f"{v.get('dataset') or v.get('provider')} ({v.get('observation') or 'observations'}" + (f", {v['resolution']}" if v.get("resolution") else "") + ")"
+        ds = "; ".join(f"{k}: {_ds(v)}" for k, v in used.items()) if isinstance(used, dict) else str(used)
+        if not rows:
+            txt = "This backtest made no fills: no qualifying session had stored option prices that could be used. Ask which sessions could not be tested."
+        else:
+            txt = (f"{len(rows)} option fill{'s' if len(rows) != 1 else ''} in {len(trades)} trade{'s' if len(trades) != 1 else ''}. Each price is " + " or ".join(what.get(k, str(k)) for k in kinds) + "."
+                   + (f" Stored datasets read: {ds}." if ds else "") + (" Nothing here is modelled." if "model" not in kinds else " THEORETICAL prices are marked as such.")
+                   + (" Trade prints carry no bid or ask: the spread at those moments is unknown." if "trade_print" in kinds else ""))
+        return [db.add_message(sid, "assistant", "result", {"view": "fills", "run_id": r["run_id"], "version_id": version["id"], "label": r["label"], "text": txt, "explanation_source": "deterministic",
+                                                            "fills": {"rows": rows[:500], "count": len(rows), "trades": len(trades), "sources": kinds, "datasets": used, "pricing": pricing}})]
+
+    def _check_for(self, cur: Draft | None) -> dict | None:
+        if cur is None or cur.kind != "options":
+            return None
+        compiled = compile_draft(cur, self.store, self._spot(cur.symbol))
+        if compiled["errors"]:
+            return None
+        return self._data_check(cur, compiled, "trades" if cur.mode == "modeled" else None)
+
+    def _untested(self, sid: str, version: dict, cur: Draft | None) -> list[dict]:
+        """Exactly which qualifying sessions could not be priced, and why each one could not."""
+        pc = self._check_for(cur)
+        if pc is None:
+            return [self._say(sid, "That needs an option strategy in this conversation: a market study uses no option prices, so none of its sessions is untested for that reason.")]
+        why = {"missing": "no intraday option prices are stored for the session", "no_contract": "no contract with the required expiration was listed that day", "partial": "option prices are stored for part of the session only"}
+        rows = [{"date": s_["date"], "reason": why[s_["status"]], "status": s_["status"], "stored": s_["stored"]} for s_ in pc["sessions"] if s_["status"] in why]
+        n, c = pc["signal_sessions"], pc["counts"]
+        un = c["missing"] + c["no_contract"] + c["partial"]
+        txt = (f"{un:,} of the {n:,} qualifying sessions could not be tested ({pc['priced']:,} could). " + "; ".join(f"{c[k]:,}: {why[k]}" for k in ("missing", "no_contract", "partial") if c[k]) + ". "
+               + ("Sessions with no listed contract cannot be tested with any data. " if c["no_contract"] else "") + "None of them is counted as a win, a loss or 'no signal'."
+               + (f" The list shows the most recent {len(rows)}." if un > len(rows) else ""))
+        return [db.add_message(sid, "assistant", "result", {"view": "untested", "version_id": version["id"], "text": txt, "explanation_source": "deterministic",
+                                                            "untested": {"rows": rows, "count": un, "of": n, "priced": pc["priced"], "counts": c, "contract_existence": pc.get("contract_existence"), "first": pc.get("first"), "last": pc.get("last")}})]
+
+    def _cost(self, sid: str, version: dict, cur: Draft | None) -> list[dict]:
+        """What the missing observations would cost, per budget, for this strategy's own sessions."""
+        pc = self._check_for(cur)
+        if pc is None or not pc.get("budget"):
+            return [self._say(sid, "That needs an option strategy in this conversation whose entry rule fires on at least one session.")]
+        b = pc["budget"]
+        lines, prev = [], None
+        for i, row in enumerate(b["budgets"]):
+            best = row["best"]
+            key = None if best is None else (best["label"], best["cost"])
+            if i and key == prev:
+                continue  # a larger budget that buys nothing more is said once, below
+            prev = key
+            same = [f"${r2['budget']}" for r2 in b["budgets"][i + 1:] if (None if r2["best"] is None else (r2["best"]["label"], r2["best"]["cost"])) == key]
+            if best is None:
+                lines.append(f"${row['budget']}: nothing reaches these sessions.")
+                continue
+            lines.append(f"${row['budget']}: {best['label']} - up to {best['sessions']:,} sessions ({best['sessions_with_bid_ask']:,} with bid/ask), cost ${best['cost']:g}."
+                         + (f" A budget of {', '.join(same[:-1]) + ' or ' + same[-1] if len(same) > 1 else same[0]} reaches nothing more." if same else ""))
+        reach = b.get("reachable_sessions")
+        scope = (f"Of the {pc['signal_sessions']:,} qualifying sessions, {b['no_contract_sessions']:,} had no contract with the required expiration listed and " if b.get("no_contract_sessions") else f"Of the {pc['signal_sessions']:,} qualifying sessions, ") \
+            + (f"{b['before_any_source']:,} fall before {b['earliest_source_date']}, the earliest day any compared source reaches: {reach:,} remain that data could reach at all. " if b.get("before_any_source") else f"{b['testable_sessions']:,} are inside at least one source's history. ")
+        txt = (f"{pc['priced']:,} of the {pc['signal_sessions']:,} qualifying sessions {'is' if pc['priced'] == 1 else 'are'} priced by what is stored now. " + scope + "What each budget would reach: " + " ".join(lines)
+               + " These are upper bounds: a session inside a source's history is counted, whether or not the contract was listed or traded that day."
+               + f" Prices were read from the providers' own pages on {b['checked']}. " + _measured_note(b) + " Strata never buys anything or starts a paid request by itself.")
+        return [db.add_message(sid, "assistant", "result", {"view": "cost", "version_id": version["id"], "text": txt, "explanation_source": "deterministic", "cost": {**b, "priced_now": pc["priced"], "signal_sessions": pc["signal_sessions"]},
+                                                            "alternatives": pc["alternatives"]})]
+
     def _export(self, sid: str, version: dict | None) -> list[dict]:
         r, _res, err = self._need_result(sid, version)
         if err:
@@ -1173,6 +1313,37 @@ class Agent(ResearchV5):
         return [db.add_message(sid, "assistant", "result", {"view": "export", "run_id": rid, "version_id": version["id"], "label": r["label"], "links": links, "explanation_source": "deterministic",
                                                             "text": "The report for the current result is ready to download. It contains the question, the interpretation and assumptions, data sources and coverage, every statistic with its observations, the limitations and the configuration needed to reproduce it."})]
 
+    def _attach_intent(self, out: list[dict], r: dict, text: str, cur: Draft | None) -> None:
+        """The one research intent of this turn and the stages it has been through, stored on the reply. Every kind of request
+        (a question, a strategy, an edit, a follow-up) passes the same stages: understand, validate, check the data, plan, execute,
+        explain, follow up. A stage that did not happen is not listed as done."""
+        try:
+            from strata.ai import intent as I
+            first = next((m for m in out if m.get("role") == "assistant"), None)
+            if first is None or not isinstance(first.get("content"), dict):
+                return
+            c = first["content"]
+            it = I.from_route(r, text, self.store, (cur.symbol if cur is not None else None) or "SPY")
+            dc = c.get("data_check")
+            if dc:
+                I.stage(it, "data", "attention" if dc.get("priced", 0) < dc.get("signal_sessions", 0) else "done", dc.get("text", "")[:240], priced=dc.get("priced"), of=dc.get("signal_sessions"))
+            elif it["kind"] == "study":
+                I.stage(it, "data", "done", "underlying prices only: no option data is involved")
+            # a run was started by THIS reply only when it lists runs; an answer that reads a finished run (its fills, say) started none
+            runs = [] if c.get("view") else (c.get("runs") or [])
+            if c.get("draft") or c.get("graph") or c.get("plan"):
+                I.stage(it, "plan", "done", "the interpretation is shown and can be edited before or after it runs")
+            if runs:
+                I.stage(it, "execute", "running", f"{len(runs)} run(s) started")
+            elif c.get("state") == "blocked":
+                I.stage(it, "execute", "blocked", "something has to be decided or supplied before this can run")
+            if c.get("view") or first.get("kind") == "text":
+                I.stage(it, "explain", "done", "answered from stored results by the deterministic engine")
+            c["intent"] = {k: it[k] for k in ("kind", "reader", "symbol", "conditions", "unsupported", "checks", "stages") if k in it} | {k: it[k] for k in ("outcome", "structure", "dte", "entry", "exits", "action") if it.get(k) is not None}
+            db.update_message(first["id"], c)
+        except Exception:  # noqa: BLE001  (the record of the stages must never be the reason a reply fails)
+            return
+
     # ---- public API
     def post(self, sid: str, text: str) -> list[dict]:
         text = (text or "").strip()
@@ -1182,7 +1353,7 @@ class Agent(ResearchV5):
         out = [db.add_message(sid, "user", "text", {"text": text})]
         r, interp, note = self.interpret(sid, text, cur, version, s["state"].get("last_field"))
         act = r["action"]
-        needs_cur = act in ("sweep", "show_trades", "oos", "robustness", "breakdown", "timing", "skipped", "export", "derive")
+        needs_cur = act in ("sweep", "show_trades", "oos", "robustness", "breakdown", "timing", "skipped", "export", "derive", "fills", "untested", "cost")
         if act == "failed":
             out.append(self._say(sid, r["text"], "error", interpreter=interp))
         elif act == "new":
@@ -1246,6 +1417,12 @@ class Agent(ResearchV5):
             out += self._breakdown(sid, version, r.get("by", "weekday"), r.get("focus"))
         elif act == "timing":
             out += self._timing(sid, version)
+        elif act == "fills":
+            out += self._fills(sid, version)
+        elif act == "untested":
+            out += self._untested(sid, version, cur)
+        elif act == "cost":
+            out += self._cost(sid, version, cur)
         elif act == "skipped":
             out += self._skipped(sid, version)
         elif act == "export":
@@ -1269,6 +1446,7 @@ class Agent(ResearchV5):
                 out.append(self._say(sid, r["text"], interpreter=interp))
         else:
             out.append(self._say(sid, HELP + (f"\n\n{note}" if note else "")))
+        self._attach_intent(out, r, text, cur)
         return out
 
     def set_mode(self, sid: str, exec_mode: str) -> dict:
