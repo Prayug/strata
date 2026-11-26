@@ -11,7 +11,7 @@ import { Callout, Section, StatTile } from "../lab/bits";
 
 const STATE: Record<string, { glyph: string; word: string; cls: string }> = {
   collected: { glyph: "●", word: "collected", cls: "bg-up/30 border-up/50 text-up" }, pending: { glyph: "…", word: "not due yet", cls: "bg-bg-3 border-line-2 text-muted" },
-  missed: { glyph: "✕", word: "missed", cls: "bg-down/15 border-down/50 text-down" }, "not applicable": { glyph: "–", word: "no option grid", cls: "bg-transparent border-dashed border-line text-faint" },
+  missed: { glyph: "✕", word: "missed", cls: "bg-down/15 border-down/50 text-down" }, waiting: { glyph: "↻", word: "not collected yet, still obtainable", cls: "bg-warn/10 border-warn/50 text-warn" }, "not applicable": { glyph: "–", word: "no option grid", cls: "bg-transparent border-dashed border-line text-faint" },
 };
 
 /* ----------------------------------------------------------------------------- collector */
@@ -29,22 +29,39 @@ export function CollectorPanel({ onJob }: { onJob: (id: string) => void }) {
   const upo = (patch: any) => { setCfg((c: any) => ({ ...c, options: { ...c.options, ...patch } })); setDirty(true); };
   const last = d.last;
   const sessions: string[] = d.coverage.sessions;
+  const lists = !!(d.sources || []).find((x: any) => x.name === cfg.options.provider)?.keeps_expired; // the chosen source lists contracts, expired ones included
+  const waiting: any[] = d.coverage.waiting || [];
+  const cont = d.continue;
+  const adopt = () => { setCfg((c: any) => ({ ...c, enabled: true, symbols: Array.from(new Set([...cont.symbols, ...c.symbols])), options: { ...c.options, ...cont.options } })); setDirty(true); };
   const used = d.storage.total_bytes / d.storage.limit_bytes;
   return (
     <div className="lab mx-auto flex max-w-[1180px] flex-col gap-4 p-1" data-testid="collector">
       <div className="flex items-start gap-4">
         <div className="min-w-0 flex-1">
           <h2 className="flex items-center gap-2"><Radio className={cn("size-[18px]", cfg.enabled ? "text-up" : "text-faint")} />Market data collector</h2>
-          <p className="mt-1 max-w-[760px] text-[13.5px] soft">Free sources drop intraday history after a few weeks, and an option contract's minute bars about a day after it expires. The collector saves them while they exist, so your own archive grows session by session.</p>
+          <p className="mt-1 max-w-[760px] text-[13.5px] soft">Adds each new session to the archive on this machine. What a missed day costs depends on the source: one that keeps expired contracts serves the session to the next cycle; one that does not loses it about a day after the contracts expire.</p>
         </div>
         <label className="flex items-center gap-2.5 rounded-lg border border-line-2 bg-bg-2 px-3 py-2 text-[13px]"><input type="checkbox" className="size-4 accent-[#e8a33d]" checked={!!cfg.enabled} onChange={(e) => up({ enabled: e.target.checked })} data-testid="collector-enabled" />Collect automatically after each close</label>
         <button className="btn" disabled={run.isPending || d.running} onClick={() => run.mutate()} data-testid="collector-run">{d.running ? <Loader2 className="animate-spin" /> : <Play />}{d.running ? "Collecting…" : "Collect now"}</button>
       </div>
-      <Callout tone="info" title="It only reads market data">{d.safety} {d.license[0]}</Callout>
+      <Callout tone="info" title="It only reads market data">{d.safety} {(d.license || []).slice(lists ? 1 : 0).join(" ")}</Callout>
+      {cont && !cont.in_effect && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-accent/40 bg-accent/[0.06] px-3.5 py-3" data-testid="collector-continue">
+          <div className="min-w-0 flex-1 text-[13px]">
+            <div className="font-medium">The stored archive is not being continued</div>
+            <div className="mt-0.5 soft">{Object.entries(cont.measured.symbols as Record<string, any>).map(([s2, v]) => `${s2} ${v.sessions} sessions to ${v.last}`).join(" · ")}. It holds every listed contract within {cont.options.strike_pct}% of the previous close expiring within {Math.max(...cont.options.dte)} days.
+              The collector is {cfg.enabled ? "set to collect something else" : "off"}, so sessions after the last stored one are not being added.</div>
+          </div>
+          <button className="btn primary sm" onClick={adopt} data-testid="collector-adopt">Continue this archive</button>
+        </div>
+      )}
+      {cont?.in_effect && cfg.enabled && <div className="text-xs text-up" data-testid="collector-continuing">● Continuing the stored archive: {cont.symbols.join(", ")} from {cfg.options.provider}, the same strike range and expirations it already holds.</div>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatTile label="Status" value={cfg.enabled ? "On" : "Off"} tone={cfg.enabled ? "text-up" : undefined} sub={d.next_due ? `next cycle ${new Date(d.next_due).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}` : "runs only when you press Collect now"} />
         <StatTile label="Last cycle" value={last ? ago(last.started_at) : "never"} sub={last ? `${last.status} · ${(last.report.bars || 0).toLocaleString()} option bars · ${last.report.requests || 0} requests` : "nothing collected yet"} tone={last?.status === "error" ? "text-down" : undefined} />
-        <StatTile label="Missed sessions" value={d.coverage.missed.length} tone={d.coverage.missed.length ? "text-warn" : undefined} sub="in the last 45 sessions, gone from the source" hint="A session the collector did not reach while its option data was still being served. It cannot be filled in afterwards." />
+        {d.coverage.recoverable
+          ? <StatTile label="Sessions to collect" value={waiting.length} tone={waiting.length ? "text-warn" : "text-up"} sub={waiting.length ? "still obtainable: the next cycle fetches them" : "the archive is up to date"} hint="This source keeps expired contracts, so a session that was not collected on its day is collected by the next cycle. Nothing is lost by a missed day." />
+          : <StatTile label="Missed sessions" value={d.coverage.missed.length} tone={d.coverage.missed.length ? "text-warn" : undefined} sub="in the last 45 sessions, gone from the source" hint="A session the collector did not reach while its option data was still being served. It cannot be filled in afterwards." />}
         <StatTile label="Storage" value={bytes(d.storage.total_bytes)} sub={`${(used * 100).toFixed(0)}% of the ${cfg.storage_limit_gb} GB limit`} tone={used > 0.9 ? "text-warn" : undefined} />
       </div>
       <Section title="Coverage calendar" sub="option trade bars collected per session and symbol">
@@ -67,15 +84,28 @@ export function CollectorPanel({ onJob }: { onJob: (id: string) => void }) {
         {d.coverage.missed.length > 0 && <div className="mt-2 text-xs text-warn">Missed: {d.coverage.missed.slice(-6).map((m: any) => `${m.symbol} ${m.date}`).join(", ")}{d.coverage.missed.length > 6 ? ` and ${d.coverage.missed.length - 6} more` : ""}. {d.coverage.missed[0].reason}.</div>}
       </Section>
       <Section title="What to collect" right={dirty ? <button className="btn primary sm" disabled={save.isPending} onClick={() => save.mutate(cfg)} data-testid="collector-save">Save settings</button> : <span className="text-xs dim">saved</span>}>
+        <div className="mb-3" data-testid="collector-sources">
+          <div className="text-xs dim">Option source</div>
+          <div className="mt-1 grid gap-2 md:grid-cols-3">
+            {(d.sources || []).map((x: any) => (
+              <button type="button" key={x.name} disabled={!x.available} onClick={() => upo({ provider: x.name })} data-testid={`collector-source-${x.name}`}
+                className={cn("rounded-lg border px-3 py-2 text-left text-[12.5px]", cfg.options.provider === x.name ? "border-accent/60 bg-accent/[0.07]" : "border-line-2 bg-bg-2 hover:border-line-3", !x.available && "opacity-50")}>
+                <div className="flex items-center gap-1.5 font-medium"><span className={x.available ? "text-up" : "text-faint"}>{x.available ? "●" : "○"}</span>{x.label}{cfg.options.provider === x.name && <span className="ml-auto text-[10.5px] uppercase tracking-wide text-accent">in use</span>}</div>
+                <div className="mt-0.5 text-[11.5px] dim">{x.available ? x.after_a_miss : x.detail}</div>
+              </button>
+            ))}
+          </div>
+          <div className="mt-1.5 text-xs soft">{d.universe}</div>
+        </div>
         <div className="grid gap-x-6 gap-y-3 md:grid-cols-3">
           <label className="text-xs dim">Watch-list symbols<input className="field mt-1" value={cfg.symbols.join(", ")} onChange={(e) => up({ symbols: e.target.value.split(/[\s,]+/).filter(Boolean) })} aria-label="Watch-list symbols" /></label>
           <label className="text-xs dim">Underlying bar resolutions
             <div className="mt-1 flex gap-1.5">{["1m", "5m", "60m"].map((r) => <button type="button" key={r} className={cn("chip", cfg.bar_resolutions.includes(r) && "on")} onClick={() => up({ bar_resolutions: cfg.bar_resolutions.includes(r) ? cfg.bar_resolutions.filter((x: string) => x !== r) : [...cfg.bar_resolutions, r] })}>{r}</button>)}</div></label>
           <label className="text-xs dim">Collect after (New York time)<input className="field mt-1" value={cfg.run_after} onChange={(e) => up({ run_after: e.target.value })} aria-label="Collect after" /></label>
-          <label className="text-xs dim">Option expirations (days out)
+          <label className="text-xs dim">{lists ? "Expirations collected (every listed one up to the furthest)" : "Option expirations (days out)"}
             <div className="mt-1 flex flex-wrap gap-1.5">{[0, 1, 3, 7, 14, 30].map((b) => <button type="button" key={b} className={cn("chip", cfg.options.dte.includes(b) && "on")} onClick={() => upo({ dte: cfg.options.dte.includes(b) ? cfg.options.dte.filter((x: number) => x !== b) : [...cfg.options.dte, b].sort((x, y) => x - y) })}>{b}DTE</button>)}</div></label>
           <label className="text-xs dim">Strike range around the previous close (%)<input type="number" step={0.25} min={0.25} max={10} className="field mt-1" value={cfg.options.strike_pct} onChange={(e) => upo({ strike_pct: Number(e.target.value) })} aria-label="Strike range" /></label>
-          <label className="text-xs dim">Strikes on each side, at most<input type="number" min={1} max={40} className="field mt-1" value={cfg.options.max_strikes_each_side} onChange={(e) => upo({ max_strikes_each_side: Number(e.target.value) })} aria-label="Strikes each side" /></label>
+          {!lists && <label className="text-xs dim">Strikes on each side, at most<input type="number" min={1} max={40} className="field mt-1" value={cfg.options.max_strikes_each_side} onChange={(e) => upo({ max_strikes_each_side: Number(e.target.value) })} aria-label="Strikes each side" /></label>}
           <label className="text-xs dim">Calls and puts
             <div className="mt-1 flex gap-1.5">{[["C", "Calls"], ["P", "Puts"]].map(([r, l]) => <button type="button" key={r} className={cn("chip", cfg.options.rights.includes(r) && "on")} onClick={() => upo({ rights: cfg.options.rights.includes(r) ? cfg.options.rights.filter((x: string) => x !== r) : [...cfg.options.rights, r] })}>{l}</button>)}
               <button type="button" className={cn("chip", !cfg.options.enabled && "on")} onClick={() => upo({ enabled: !cfg.options.enabled })}>{cfg.options.enabled ? "options on" : "options off"}</button></div></label>
@@ -87,7 +117,9 @@ export function CollectorPanel({ onJob }: { onJob: (id: string) => void }) {
             <div className="mt-1 flex items-center gap-2"><button type="button" className={cn("chip", cfg.cleanup.enabled && "on")} onClick={() => up({ cleanup: { ...cfg.cleanup, enabled: !cfg.cleanup.enabled } })}>{cfg.cleanup.enabled ? "on" : "off"}</button>
               <input type="number" min={0} className="field !w-20" value={cfg.cleanup.keep_option_trade_days} onChange={(e) => up({ cleanup: { ...cfg.cleanup, keep_option_trade_days: Number(e.target.value) } })} aria-label="Keep option days" /><span>days of option bars kept (0 = keep all)</span></div></label>
         </div>
-        <div className="mt-3 text-xs dim">Strikes are chosen around the close BEFORE each session and trimmed nearest-the-money first when the request budget is reached. Nothing is deleted unless clean-up is switched on. {d.how_to_schedule}</div>
+        <div className="mt-3 text-xs dim">{lists
+          ? "The strike range is set by the close BEFORE each session and widened to the session's opening price after a gap, never by where the session went later. When the request budget is reached, whole sessions wait for the next cycle, oldest first; a session is never stored in part."
+          : "Strikes are chosen around the close BEFORE each session and trimmed nearest-the-money first when the request budget is reached."} Nothing is deleted unless clean-up is switched on. {d.how_to_schedule}</div>
       </Section>
       <Section title="If a session is missed" sub="what can still be fetched later, and what cannot"
         right={<button className="btn sm" onClick={() => hq.refetch()} disabled={hq.isFetching} data-testid="collector-health">{hq.isFetching ? <Loader2 className="animate-spin" /> : <Play />}Check the sources now</button>}>

@@ -125,6 +125,24 @@ def execute(rid: str, kind: str, payload: dict, progress, should_cancel) -> dict
         from strata.data.catalog import invalidate
         invalidate()
         return out
+    if kind == "baseline":
+        from strata.research import performance as PF
+        return PF.run_baseline(payload["run"], progress=progress, should_cancel=should_cancel)
+    if kind == "experiment":
+        from strata.research import experiment as EXP
+        return EXP.save(rid, EXP.run_experiment(payload["payload"], progress=progress, should_cancel=should_cancel))
+    if kind == "databento_access":
+        from strata.data.catalog import invalidate
+        from strata.data.providers import databento as DBN
+        rep = DBN.access(symbol=payload.get("symbol") or "SPY", sessions=int(payload.get("sessions") or 20), budget_usd=float(payload.get("budget_usd") or 0.0), progress=progress)
+        invalidate()
+        return {"status": rep["status"], "verified": rep["verified"], "reason": rep.get("reason"), "spent_usd": rep.get("spent_usd"), "quoted_usd": (rep.get("sample") or {}).get("quoted_usd"), "summary": rep.get("summary")}
+    if kind == "hires":
+        from strata.engine import hires as H
+        rep = H.run_for(payload["target"], settings=payload.get("settings") or {}, progress=progress, should_cancel=should_cancel)
+        sm = rep.get("summary") or {}
+        return {"target": payload["target"], "status": rep["status"], "reason": rep.get("reason"), "policy": rep["settings"]["exit_policy"], "text": sm.get("text"),
+                **{k: sm.get(k) for k in ("positions", "repriced", "entries_not_filled", "not_established", "bar_pnl_repriced", "tick_pnl_repriced", "difference", "exit_reason_changed")}}
     if kind == "alpaca_access":
         from strata.data.providers.access import alpaca_matrix
         out = alpaca_matrix(progress=progress, should_cancel=should_cancel, symbol=payload.get("symbol") or "SPY")

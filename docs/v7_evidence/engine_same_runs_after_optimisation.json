@@ -1,0 +1,55 @@
+{
+ "spy_3pct": {
+  "trades": 5,
+  "pnl": -892.5,
+  "hash": "c0057e01ac4abd62",
+  "not_executed": {},
+  "signals": 5,
+  "seconds": 2.7
+ },
+ "spy_1pct": {
+  "trades": 75,
+  "pnl": 2384.5,
+  "hash": "c07be9febf9c4ab4",
+  "not_executed": {},
+  "signals": 75,
+  "seconds": 4.7
+ },
+ "spy_baseline_2026": {
+  "trades": 227,
+  "pnl": -2581.1,
+  "hash": "c84d3f8d8f81e241",
+  "not_executed": {},
+  "signals": 227,
+  "seconds": 8.8
+ },
+ "qqq_put_30_15": {
+  "trades": 124,
+  "pnl": 381.8,
+  "hash": "2d691f617ff97e7d",
+  "not_executed": {
+   "contract_not_stored": 1
+  },
+  "signals": 125,
+  "seconds": 3.9
+ },
+ "iwm_seq_vwap": {
+  "trades": 28,
+  "pnl": 718.6,
+  "hash": "94d995eed57cc76d",
+  "not_executed": {},
+  "signals": 28,
+  "seconds": 1.7
+ },
+ "spy_spread_7dte": {
+  "trades": 34,
+  "pnl": -511.4,
+  "hash": "d3513a300be84d0c",
+  "not_executed": {
+   "no_recent_trade": 5,
+   "contract_not_stored": 1
+  },
+  "signals": 40,
+  "seconds": 8.7
+ }
+}

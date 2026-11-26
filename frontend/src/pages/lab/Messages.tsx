@@ -1,5 +1,5 @@
 /* The conversation: what was asked, how it was read, what is running, and what came back. */
-import { Check, ChevronRight, Download, FileText, FlaskConical, GitCompareArrows, HelpCircle, Layers, Pencil, Pin, Play, ShieldAlert, ShieldQuestion, X, Zap } from "lucide-react";
+import { Check, ChevronRight, Download, FileText, FlaskConical, GitCompareArrows, HelpCircle, Layers, Pencil, Pin, Play, ShieldAlert, ShieldQuestion, X, Zap, Grid3x3 } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
@@ -337,10 +337,21 @@ export function Message({ m, a }: { m: AiMessage; a: Actions }) {
       </Card>
     );
   }
+  if (m.kind === "experiment") {
+    const runs: RunRef[] = c.runs || [];
+    return (
+      <Card data-testid="pending-experiment">
+        <div className="mb-2 flex items-center gap-2"><span className="eyebrow">Experiment</span><span className="chip !h-5 !text-[11px]">bounded · {c.configurations} configurations</span><span className="flex-1" /><span className="text-[11px] text-faint">{c.interpreter}</span></div>
+        <div className="text-[13.5px] soft">{c.text}</div>
+        {(c.skipped || []).length > 0 && <div className="mt-2 text-xs text-warn">Left out: {c.skipped.slice(0, 3).map((x: any) => `${x.label} (${x.error})`).join("; ")}</div>}
+        {!c.finalized && runs[0] && <div className="mt-3 border-t border-line pt-3"><JobLine r={runs[0]} onDone={a.refresh} /></div>}
+      </Card>
+    );
+  }
   if (["sweep", "investigation", "discovery", "run"].includes(m.kind)) {
     const runs: RunRef[] = c.runs || [];
     return (
-      <Card>
+      <Card data-testid={`pending-${m.kind}`}>
         <div className="mb-2 flex items-center gap-2">
           <span className="eyebrow">{m.kind === "investigation" ? "Research plan" : m.kind === "discovery" ? "Exploration" : m.kind === "sweep" ? "Variants" : "Run"}</span>
           {m.kind === "run" && <ModeBadge mode={c.mode} className="!h-5 !text-[11px]" />}
@@ -440,6 +451,15 @@ export function Message({ m, a }: { m: AiMessage; a: Actions }) {
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="btn sm" data-testid="open-view" onClick={() => a.open({ type: "message", messageId: m.id })}><FileText />{{ fills: "Open the fills", untested: "Open the list of sessions", cost: "Open the budget table" }[v as string]}</button>
           </div>
+        </Card>
+      );
+    }
+    if (v === "experiment") {
+      return (
+        <Card data-testid="result-experiment">
+          <div className="mb-2 flex items-center gap-2"><span className="eyebrow">What the grid shows</span><span className="flex-1" /><span className="text-[11px] text-faint" title="Assembled from the engine's numbers; no language model wrote this.">calculated</span></div>
+          <div className="text-[13.5px] soft">{c.text}</div>
+          <div className="mt-3"><button className="btn sm" data-testid="open-view" onClick={() => a.open({ type: "message", messageId: m.id })}><Grid3x3 />Open the grid</button></div>
         </Card>
       );
     }

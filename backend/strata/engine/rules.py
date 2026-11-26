@@ -509,7 +509,7 @@ class RuleStrategy(Strategy):
             if trades:
                 ctx.bt.diag.expired_orders += 1
                 # distinguish "the contract is not in the stored data" from "it is stored but did not print recently"
-                absent = "expiration in the stored chain" in why or "contracts for" in why or "stored strike range" in why
+                absent = "in the stored chain" in why or "contracts for" in why or "stored strike range" in why
                 kind = "contract_not_stored" if absent else "no_recent_trade"
                 tail = "the required contract is not in the stored trade data for this session" if absent else f"no usable trade print for the required contract within {ex.max_fill_delay_minutes:g} min of the signal"
                 self._reject(ctx, pd, kind, f"{why} - {tail}", "order_expired")
@@ -586,7 +586,8 @@ class RuleStrategy(Strategy):
             if not done:
                 return False, seq_expl
         self.fired_system = None
-        ok, explain, na = evaluate(e.conditions, ctx)
+        # a backtest reads the explanation only when the rule fires; the day inspector reads it at every tick and says so
+        ok, explain, na = evaluate(e.conditions, ctx, lazy=not getattr(self, "explain_every_tick", False))
         if na:
             self.na_today |= {x.split("[not evaluable: ")[-1].rstrip("]") if "[not evaluable: " in x else x for x in na}
         if not e.systems or not ok:

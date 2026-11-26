@@ -154,7 +154,8 @@ def from_draft(d, compiled: dict | None = None) -> dict:
         return {"kind": "study", **base, "outcome": outcome}
     return {"kind": "strategy", **base, "structure": d.structure, "dte": d.dte, "strike": {"method": d.strike.method, "value": d.strike.value} if d.strike else None, "width": d.width, "quantity": d.quantity,
             "exits": {"time": d.exit_time, "time_stated": d.exit_time_stated, "underlying_for": d.underlying_target_pct, "underlying_against": d.underlying_stop_pct, "premium_target": d.premium_target_pct, "premium_stop": d.premium_stop_pct,
-                      "hold_sessions": d.hold_sessions, "to_expiration": bool(d.hold_to_expiration), "weekday": d.exit_weekday}, "mode": getattr(d, "mode", None), "provider": d.provider}
+                      "hold_sessions": d.hold_sessions, "minutes": d.hold_minutes, "to_expiration": bool(d.hold_to_expiration), "weekday": d.exit_weekday}, "mode": getattr(d, "mode", None), "provider": d.provider,
+            "max_entries": d.max_entries, "partials": [{"premium_pct": p.premium_pct, "underlying_pct": p.underlying_pct, "fraction": p.fraction} for p in d.partials]}
 
 
 # ----------------------------------------------------------------------------- nothing stated may vanish

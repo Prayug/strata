@@ -127,9 +127,25 @@ def readiness(store: MarketStore | None = None, symbols: list[str] | None = None
 
 
 # ----------------------------------------------------------------------------- one strategy, before anything is planned
+PRICED = ("quotes", "trades", "eod")  # every check passed on stored observations: the contract, a usable entry observation, the exit window
+ORDER = ("quotes", "trades", "eod", "exit_uncertain", "stale", "contract", "expiration", "partial", "no_contract", "missing")
+WHY = {"quotes": "priced on intraday bid/ask", "trades": "priced on trade prints: contract stored, a print inside the entry window, exit window covered", "eod": "priced on end-of-day quotes",
+       "exit_uncertain": "entry can be priced; no observation stored near the planned exit", "stale": "contract stored, but no trade inside the entry window",
+       "contract": "the strike the strategy needs is not stored", "expiration": "the expiration the strategy needs is not stored", "partial": "the provider holds only part of the session",
+       "no_contract": "no such contract was listed", "missing": "no option prices stored"}
+
+
 def precheck(config: dict, store: MarketStore | None = None, max_rows: int = 300) -> dict:
-    """Can this strategy be evaluated on stored observations? Signals are found from the underlying alone; each signal
-    session is then classified by what is stored for it. Nothing is downloaded and nothing is modelled."""
+    """Can THIS strategy be evaluated on stored observations?
+
+    Signals are found from the underlying alone. Each signal is then taken through the engine's own contract selection and
+    execution settings (data.planner.signal_readiness): the session being stored is not enough. A session counts as priced
+    only when the expiration the legs would choose is stored, the contract they would select printed inside the entry
+    window, and an observation exists near the planned exit and on every later session of the holding period.
+
+    "Priced" here means every check passed on stored observations. It is still not a trade: a run confirms it. The count
+    is never larger than what a run can execute. Nothing is downloaded and nothing is modelled."""
+    from strata.data import planner as PL
     from strata.data.providers import market as MK
     store = store or MarketStore()
     need = MK.needs_of(config, store)
@@ -138,36 +154,57 @@ def precheck(config: dict, store: MarketStore | None = None, max_rows: int = 300
     absent = set(need.get("no_contract_days") or [])
     eod_days = set(st["eod_expirations"])
     intraday_needed = bool(need.get("intraday"))
-    rows, counts = [], {"quotes": 0, "trades": 0, "partial": 0, "eod": 0, "no_contract": 0, "missing": 0}
+    # one determination per session: its first signal (a second entry the same day depends on the first)
+    first: dict = {}
+    for sg in need.get("signal_list") or []:
+        first.setdefault(sg["date"], sg)
+    try:
+        rd = PL.signal_readiness(store, {**config, "pricing": {**(config.get("pricing") or {}), "mode": "trades"}}, list(first.values()))
+    except Exception as e:  # noqa: BLE001
+        rd = {"rows": [], "counts": {}, "error": f"{type(e).__name__}: {e}"[:200], "settings": {}}
+    by = {r["date"]: r for r in rd["rows"]}
+    rows, counts = [], {k: 0 for k in ORDER}
     for iso in need["days"]:
         d = date.fromisoformat(iso)
         items = st["sessions"].get(d, [])
+        r = by.get(iso) or {}
         if any(i["observation"] == "bid/ask quotes" and i["status"] == "complete" for i in items):
-            how = "quotes"
-        elif any(i["observation"] == "trade prints" for i in items):
-            how = "trades"
+            how, detail = "quotes", WHY["quotes"]
+        elif r.get("status") == "trades":
+            how, detail = "trades", r["detail"]
+        elif not intraday_needed and iso in eod_days and iso not in absent:
+            how, detail = "eod", WHY["eod"]
         elif iso in absent:
-            how = "no_contract"
+            how, detail = "no_contract", WHY["no_contract"]
+        elif r and not (r["status"] == "missing" and any(i["status"] != "complete" for i in items)):
+            how, detail = r["status"], r["detail"]
         elif any(i["status"] != "complete" for i in items):
-            how = "partial"
-        elif not intraday_needed and iso in eod_days:
-            how = "eod"
+            # some other observation of the session exists, for part of it only (a vendor's sample of bid/ask, say)
+            how, detail = "partial", next((i.get("reason") for i in items if i.get("reason")), None) or "observed for part of the session only"
         else:
-            how = "missing"
+            how, detail = "missing", WHY["missing"]
         counts[how] += 1
-        rows.append({"date": iso, "status": how, "stored": [f"{i['provider']}: {i['observation']} ({i['resolution']}" + (", part of the session" if i["status"] != "complete" else "") + ")" for i in items]})
+        rows.append({"date": iso, "status": how, "time": r.get("time"), "detail": detail, "entry": r.get("entry"), "exit": r.get("exit"), "downloadable": r.get("downloadable") if how not in PRICED else None,
+                     "stored": [f"{i['provider']}: {i['observation']} ({i['resolution']}" + (", part of the session" if i["status"] != "complete" else "") + ")" for i in items]})
     n = len(rows)
-    priced = counts["quotes"] + counts["trades"] + counts["eod"]
+    priced = sum(counts[k] for k in PRICED)
+    potential = priced + counts["exit_uncertain"]
+    fetch = [r for r in rows if r["downloadable"]]
     budget = MK.budget_table(need) if n else None
     free = (budget["budgets"][0]["best"] or {}) if budget else {}
     cheapest = next((b["best"] for b in (budget["budgets"] if budget else []) if b["best"] and b["best"]["cost"] > 0 and b["best"]["sessions"] > max(priced, free.get("sessions", 0))), None)
+    measured = MK.measured("alpaca")
     alts = []
+    if fetch:
+        lab = fetch[0]["downloadable"]["label"]
+        alts.append({"id": "download", "label": f"Download what {len(fetch):,} more session{'s' if len(fetch) != 1 else ''} need from {lab} (free)", "available": True, "sessions": [r["date"] for r in fetch][-60:],
+                     "detail": "Only the contracts this strategy could select around the price at each signal, on those sessions. Running the strategy does this by itself; nothing else is downloaded."})
     if n:
         alts.append({"id": "study", "label": "Run the underlying market study", "detail": f"What {sym} itself did on those {n:,} sessions needs no option prices: how often the move happened, how far, by when.", "available": True})
-    if priced:
-        ds_ = [r["date"] for r in rows if r["status"] in ("quotes", "trades", "eod")]
-        alts.append({"id": "subset", "label": f"Run it on the {priced:,} session{'s' if priced != 1 else ''} that can be priced", "detail": f"{ds_[0]} to {ds_[-1]}. The other {n - priced:,} are reported as not tested, never filled in.", "available": True, "sessions": ds_[-60:]})
-    if free.get("sessions", 0) > priced:
+    if potential:
+        ds_ = [r["date"] for r in rows if r["status"] in PRICED or r["status"] == "exit_uncertain"]
+        alts.append({"id": "subset", "label": f"Run it on the {potential:,} session{'s' if potential != 1 else ''} whose entry can be priced", "detail": f"{ds_[0]} to {ds_[-1]}. The other {n - potential:,} are reported as not tested, never filled in.", "available": True, "sessions": ds_[-60:]})
+    if free.get("sessions", 0) > priced and not measured:
         alts.append({"id": "connect", "label": f"Connect a free account: up to {free['sessions']:,} of the {budget.get('reachable_sessions', budget['testable_sessions']):,} sessions any source reaches", "detail": "; ".join(free.get("needs") or []) + ". None of these has been run with a real key on this installation.", "available": False,
                      "sessions_with_bid_ask": free.get("sessions_with_bid_ask"), "sessions_trade_prints_only": free.get("sessions_trade_prints_only")})
     if cheapest and cheapest.get("cost", 0) > 0:
@@ -179,17 +216,24 @@ def precheck(config: dict, store: MarketStore | None = None, max_rows: int = 300
     else:
         bits = []
         if counts["quotes"]:
-            bits.append(f"{counts['quotes']:,} with intraday bid/ask")
+            bits.append(f"{counts['quotes']:,} on intraday bid/ask")
         if counts["trades"]:
-            bits.append(f"{counts['trades']:,} with intraday trade prints")
+            bits.append(f"{counts['trades']:,} on trade prints, with the contract stored, a print inside the entry window and the exit window covered")
         if counts["eod"]:
-            bits.append(f"{counts['eod']:,} with end-of-day quotes")
-        text = (f"The entry rule fires on {n:,} session{'s' if n != 1 else ''} ({need['first']} to {need['last']}). " + (f"{priced:,} can be priced on stored option observations ({', '.join(bits)})" if priced else "None can be priced on stored option observations")
+            bits.append(f"{counts['eod']:,} on end-of-day quotes")
+        plural = lambda k, one, many: f" {counts[k]:,} {one if counts[k] == 1 else many}." if counts[k] else ""
+        text = (f"The entry rule fires on {n:,} session{'s' if n != 1 else ''} ({need['first']} to {need['last']}). " + (f"{priced:,} pass every check on stored option observations ({'; '.join(bits)})" if priced else "None passes every check on stored option observations")
                 + f": {priced / n * 100:.1f}% of them."
-                + (f" {counts['partial']} more {'are' if counts['partial'] != 1 else 'is'} observed for part of the session only." if counts["partial"] else "")
+                + plural("exit_uncertain", "more has an entry that can be priced but no observation near the planned exit", "more have an entry that can be priced but no observation near the planned exit")
+                + plural("stale", "has the contract stored but no trade inside the entry window", "have the contract stored but no trade inside the entry window")
+                + plural("contract", "needs a strike outside the stored range", "need a strike outside the stored range")
+                + plural("expiration", "needs an expiration that is not stored", "need an expiration that is not stored")
+                + plural("partial", "is held only in part by the provider", "are held only in part by the provider")
                 + (f" On {counts['no_contract']:,} no contract with the required expiration was listed, so they cannot be tested with any data." if counts["no_contract"] else "")
-                + (f" {counts['missing']:,} have no stored option prices." if counts["missing"] else ""))
-    return {"symbol": sym, "signal_sessions": n, "priced": priced, "priced_pct": round(priced / n * 100, 1) if n else None, "counts": counts, "first": need.get("first"), "last": need.get("last"), "intraday": intraday_needed,
-            "contract_existence": need.get("contract_existence"), "text": text, "alternatives": alts, "sessions": rows[-max_rows:], "sessions_listed": min(n, max_rows),
-            "untested": [r["date"] for r in rows if r["status"] in ("missing", "partial", "no_contract")][-max_rows:], "budget": budget, "executable": priced > 0,
-            "blocking": priced == 0 and n > 0}
+                + plural("missing", "has no stored option prices", "have no stored option prices")
+                + (f" {len(fetch):,} of the unpriced sessions can be downloaded from {fetch[0]['downloadable']['label']} at no cost." if fetch else "")
+                + " A run confirms each one: these are sessions the stored data supports, not trades.")
+    return {"symbol": sym, "signal_sessions": n, "priced": priced, "potential": potential, "fetchable": len(fetch), "priced_pct": round(priced / n * 100, 1) if n else None, "counts": counts, "first": need.get("first"), "last": need.get("last"),
+            "intraday": intraday_needed, "contract_existence": need.get("contract_existence"), "text": text, "alternatives": alts, "sessions": rows[-max_rows:], "sessions_listed": min(n, max_rows),
+            "untested": [r["date"] for r in rows if r["status"] not in PRICED][-max_rows:], "budget": budget, "executable": potential > 0, "blocking": potential == 0 and n > 0 and not fetch,
+            "settings": rd.get("settings") or {}, "not_evaluable": need.get("not_evaluable") or {}, "why": WHY, **({"readiness_error": rd["error"]} if rd.get("error") else {})}

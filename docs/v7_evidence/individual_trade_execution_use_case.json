@@ -1,0 +1,1023 @@
+{
+ "3.0": {
+  "run": "2ea6ede830d4",
+  "trades": 5,
+  "bar_pnl": -892.5,
+  "checks": {
+   "decision clock, no latency": {
+    "positions": 5,
+    "by_status": {
+     "repriced": 5
+    },
+    "repriced": 5,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": -892.5,
+    "tick_pnl_repriced": -978.5,
+    "difference": -86.0,
+    "winners": {
+     "bar": 2,
+     "tick": 2
+    },
+    "late_exits": 0,
+    "exits_not_established": 0,
+    "entry_seconds": {
+     "n": 5,
+     "mean": 3.1842,
+     "median": 0.688,
+     "p05": 0.2246,
+     "p95": 10.8566,
+     "min": 0.179,
+     "max": 13.212
+    },
+    "exit_seconds": {
+     "n": 5,
+     "mean": 54.146,
+     "median": 0.47,
+     "p05": 0.2182,
+     "p95": 211.9428,
+     "min": 0.163,
+     "max": 263.352
+    },
+    "entry_price_worse_pct": {
+     "n": 5,
+     "mean": 1.0533,
+     "median": -1.4469,
+     "p05": -8.8188,
+     "p95": 17.5336,
+     "min": -9.0411,
+     "max": 21.328
+    },
+    "exit_price_worse_pct": {
+     "n": 5,
+     "mean": 5.6227,
+     "median": 0.9655,
+     "p05": 0.0,
+     "p95": 20.9851,
+     "min": -0.0,
+     "max": 25.9259
+    },
+    "first_minute": {
+     "n": 5,
+     "price_worse_pct": {
+      "n": 5,
+      "mean": 1.0533,
+      "median": -1.4469,
+      "p05": -8.8188,
+      "p95": 17.5336,
+      "min": -9.0411,
+      "max": 21.328
+     }
+    },
+    "conditions": {
+     "I": 7,
+     "S": 3
+    },
+    "requests": 10,
+    "pages": 10,
+    "seconds": 3.8
+   },
+   "decision clock, 1 s latency": {
+    "positions": 5,
+    "by_status": {
+     "repriced": 5
+    },
+    "repriced": 5,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": -892.5,
+    "tick_pnl_repriced": -935.5,
+    "difference": -43.0,
+    "winners": {
+     "bar": 2,
+     "tick": 2
+    },
+    "late_exits": 0,
+    "exits_not_established": 0,
+    "entry_seconds": {
+     "n": 5,
+     "mean": 3.9014,
+     "median": 1.682,
+     "p05": 1.3758,
+     "p95": 10.933,
+     "min": 1.361,
+     "max": 13.212
+    },
+    "exit_seconds": {
+     "n": 5,
+     "mean": 54.9548,
+     "median": 2.144,
+     "p05": 1.2346,
+     "p95": 211.9428,
+     "min": 1.067,
+     "max": 263.352
+    },
+    "entry_price_worse_pct": {
+     "n": 5,
+     "mean": -0.0789,
+     "median": 0.4823,
+     "p05": -9.2571,
+     "p95": 11.8998,
+     "min": -9.589,
+     "max": 14.2857
+    },
+    "exit_price_worse_pct": {
+     "n": 5,
+     "mean": 3.3215,
+     "median": 0.0,
+     "p05": -8.9704,
+     "p95": 21.9215,
+     "min": -11.1111,
+     "max": 27.1605
+    },
+    "first_minute": {
+     "n": 5,
+     "price_worse_pct": {
+      "n": 5,
+      "mean": -0.0789,
+      "median": 0.4823,
+      "p05": -9.2571,
+      "p95": 11.8998,
+      "min": -9.589,
+      "max": 14.2857
+     }
+    },
+    "conditions": {
+     "I": 10
+    },
+    "requests": 0,
+    "pages": 0,
+    "seconds": 0.0
+   },
+   "decision clock, 5 s latency": {
+    "positions": 5,
+    "by_status": {
+     "repriced": 5
+    },
+    "repriced": 5,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": -892.5,
+    "tick_pnl_repriced": -980.5,
+    "difference": -88.0,
+    "winners": {
+     "bar": 2,
+     "tick": 2
+    },
+    "late_exits": 0,
+    "exits_not_established": 0,
+    "entry_seconds": {
+     "n": 5,
+     "mean": 7.1212,
+     "median": 5.536,
+     "p05": 5.0166,
+     "p95": 11.9258,
+     "min": 5.002,
+     "max": 13.212
+    },
+    "exit_seconds": {
+     "n": 5,
+     "mean": 57.3918,
+     "median": 6.028,
+     "p05": 5.6362,
+     "p95": 211.9428,
+     "min": 5.636,
+     "max": 263.352
+    },
+    "entry_price_worse_pct": {
+     "n": 5,
+     "mean": 2.3449,
+     "median": 2.356,
+     "p05": -6.286,
+     "p95": 8.4193,
+     "min": -8.2192,
+     "max": 8.6519
+    },
+    "exit_price_worse_pct": {
+     "n": 5,
+     "mean": 5.3426,
+     "median": 0.0,
+     "p05": -15.3443,
+     "p95": 37.724,
+     "min": -18.5185,
+     "max": 46.9136
+    },
+    "first_minute": {
+     "n": 5,
+     "price_worse_pct": {
+      "n": 5,
+      "mean": 2.3449,
+      "median": 2.356,
+      "p05": -6.286,
+      "p95": 8.4193,
+      "min": -8.2192,
+      "max": 8.6519
+     }
+    },
+    "conditions": {
+     "I": 9,
+     "a": 1
+    },
+    "requests": 0,
+    "pages": 0,
+    "seconds": 0.0
+   },
+   "decision clock, 10 s after the open": {
+    "positions": 5,
+    "by_status": {
+     "repriced": 5
+    },
+    "repriced": 5,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": -892.5,
+    "tick_pnl_repriced": -1053.5,
+    "difference": -161.0,
+    "winners": {
+     "bar": 2,
+     "tick": 2
+    },
+    "late_exits": 0,
+    "exits_not_established": 0,
+    "entry_seconds": {
+     "n": 5,
+     "mean": 11.12,
+     "median": 10.753,
+     "p05": 10.2264,
+     "p95": 12.798,
+     "min": 10.213,
+     "max": 13.212
+    },
+    "exit_seconds": {
+     "n": 5,
+     "mean": 54.146,
+     "median": 0.47,
+     "p05": 0.2182,
+     "p95": 211.9428,
+     "min": 0.163,
+     "max": 263.352
+    },
+    "entry_price_worse_pct": {
+     "n": 5,
+     "mean": 4.3872,
+     "median": 2.356,
+     "p05": -4.3777,
+     "p95": 14.741,
+     "min": -5.7534,
+     "max": 16.499
+    },
+    "exit_price_worse_pct": {
+     "n": 5,
+     "mean": 5.6227,
+     "median": 0.9655,
+     "p05": 0.0,
+     "p95": 20.9851,
+     "min": -0.0,
+     "max": 25.9259
+    },
+    "first_minute": {
+     "n": 5,
+     "price_worse_pct": {
+      "n": 5,
+      "mean": 4.3872,
+      "median": 2.356,
+      "p05": -4.3777,
+      "p95": 14.741,
+      "min": -5.7534,
+      "max": 16.499
+     }
+    },
+    "conditions": {
+     "I": 6,
+     "S": 3,
+     "a": 1
+    },
+    "requests": 0,
+    "pages": 0,
+    "seconds": 0.0
+   },
+   "decision clock, 60 s after the open": {
+    "positions": 5,
+    "by_status": {
+     "repriced": 5
+    },
+    "repriced": 5,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": -892.5,
+    "tick_pnl_repriced": -934.5,
+    "difference": -42.0,
+    "winners": {
+     "bar": 2,
+     "tick": 2
+    },
+    "late_exits": 0,
+    "exits_not_established": 0,
+    "entry_seconds": {
+     "n": 5,
+     "mean": 61.358,
+     "median": 60.989,
+     "p05": 60.0136,
+     "p95": 63.2544,
+     "min": 60.012,
+     "max": 63.501
+    },
+    "exit_seconds": {
+     "n": 5,
+     "mean": 54.146,
+     "median": 0.47,
+     "p05": 0.2182,
+     "p95": 211.9428,
+     "min": 0.163,
+     "max": 263.352
+    },
+    "entry_price_worse_pct": {
+     "n": 5,
+     "mean": -0.0221,
+     "median": -0.274,
+     "p05": -0.7853,
+     "p95": 1.1576,
+     "min": -0.8811,
+     "max": 1.4469
+    },
+    "exit_price_worse_pct": {
+     "n": 5,
+     "mean": 5.6227,
+     "median": 0.9655,
+     "p05": 0.0,
+     "p95": 20.9851,
+     "min": -0.0,
+     "max": 25.9259
+    },
+    "first_minute": {
+     "n": 0,
+     "price_worse_pct": null
+    },
+    "conditions": {
+     "I": 4,
+     "S": 4,
+     "a": 2
+    },
+    "requests": 0,
+    "pages": 0,
+    "seconds": 0.0
+   },
+   "decision clock, any in-sequence print": {
+    "positions": 5,
+    "by_status": {
+     "repriced": 5
+    },
+    "repriced": 5,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": -892.5,
+    "tick_pnl_repriced": -959.5,
+    "difference": -67.0,
+    "winners": {
+     "bar": 2,
+     "tick": 2
+    },
+    "late_exits": 0,
+    "exits_not_established": 0,
+    "entry_seconds": {
+     "n": 5,
+     "mean": 1.5672,
+     "median": 0.688,
+     "p05": 0.2246,
+     "p95": 4.3886,
+     "min": 0.179,
+     "max": 5.127
+    },
+    "exit_seconds": {
+     "n": 5,
+     "mean": 9.8056,
+     "median": 0.47,
+     "p05": 0.1262,
+     "p95": 34.6732,
+     "min": 0.048,
+     "max": 41.765
+    },
+    "entry_price_worse_pct": {
+     "n": 5,
+     "mean": 1.0533,
+     "median": -1.4469,
+     "p05": -8.8188,
+     "p95": 17.5336,
+     "min": -9.0411,
+     "max": 21.328
+    },
+    "exit_price_worse_pct": {
+     "n": 5,
+     "mean": 0.9313,
+     "median": 0.9655,
+     "p05": 0.0,
+     "p95": 2.2197,
+     "min": -0.0,
+     "max": 2.4691
+    },
+    "first_minute": {
+     "n": 5,
+     "price_worse_pct": {
+      "n": 5,
+      "mean": 1.0533,
+      "median": -1.4469,
+      "p05": -8.8188,
+      "p95": 17.5336,
+      "min": -9.0411,
+      "max": 21.328
+     }
+    },
+    "conditions": {
+     "I": 5,
+     "f": 2,
+     "S": 2,
+     "j": 1
+    },
+    "requests": 0,
+    "pages": 0,
+    "seconds": 0.0
+   },
+   "decision clock, prints of 5 contracts or more": {
+    "positions": 5,
+    "by_status": {
+     "repriced": 5
+    },
+    "repriced": 5,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": -892.5,
+    "tick_pnl_repriced": -980.5,
+    "difference": -88.0,
+    "winners": {
+     "bar": 2,
+     "tick": 2
+    },
+    "late_exits": 0,
+    "exits_not_established": 0,
+    "entry_seconds": {
+     "n": 5,
+     "mean": 7.5918,
+     "median": 2.572,
+     "p05": 1.9558,
+     "p95": 18.468,
+     "min": 1.875,
+     "max": 20.369
+    },
+    "exit_seconds": {
+     "n": 5,
+     "mean": 59.36,
+     "median": 2.144,
+     "p05": 0.4452,
+     "p95": 216.7606,
+     "min": 0.439,
+     "max": 263.352
+    },
+    "entry_price_worse_pct": {
+     "n": 5,
+     "mean": 2.0574,
+     "median": 1.0471,
+     "p05": -6.3562,
+     "p95": 8.9903,
+     "min": -7.9452,
+     "max": 9.2555
+    },
+    "exit_price_worse_pct": {
+     "n": 5,
+     "mean": 5.4834,
+     "median": 0.0,
+     "p05": -0.7724,
+     "p95": 21.9728,
+     "min": -0.9655,
+     "max": 27.1605
+    },
+    "first_minute": {
+     "n": 5,
+     "price_worse_pct": {
+      "n": 5,
+      "mean": 2.0574,
+      "median": 1.0471,
+      "p05": -6.3562,
+      "p95": 8.9903,
+      "min": -7.9452,
+      "max": 9.2555
+     }
+    },
+    "conditions": {
+     "I": 9,
+     "S": 1
+    },
+    "requests": 0,
+    "pages": 0,
+    "seconds": 0.0
+   }
+  }
+ },
+ "1.0": {
+  "run": "4329148cd02f",
+  "trades": 75,
+  "bar_pnl": 2384.5,
+  "checks": {
+   "decision clock, no latency": {
+    "positions": 75,
+    "by_status": {
+     "repriced": 75
+    },
+    "repriced": 75,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": 2384.5,
+    "tick_pnl_repriced": 2496.5,
+    "difference": 112.0,
+    "winners": {
+     "bar": 38,
+     "tick": 38
+    },
+    "late_exits": 0,
+    "exits_not_established": 0,
+    "entry_seconds": {
+     "n": 75,
+     "mean": 1.0041,
+     "median": 0.444,
+     "p05": 0.0282,
+     "p95": 2.1957,
+     "min": 0.003,
+     "max": 20.592
+    },
+    "exit_seconds": {
+     "n": 75,
+     "mean": 15.4551,
+     "median": 2.1,
+     "p05": 0.013,
+     "p95": 71.9811,
+     "min": 0.005,
+     "max": 263.352
+    },
+    "entry_price_worse_pct": {
+     "n": 75,
+     "mean": 0.3328,
+     "median": -1.1952,
+     "p05": -14.2017,
+     "p95": 17.3,
+     "min": -22.6537,
+     "max": 27.619
+    },
+    "exit_price_worse_pct": {
+     "n": 75,
+     "mean": -1.4668,
+     "median": 0.0,
+     "p05": -12.3011,
+     "p95": 13.1046,
+     "min": -100.0,
+     "max": 30.4348
+    },
+    "first_minute": {
+     "n": 75,
+     "price_worse_pct": {
+      "n": 75,
+      "mean": 0.3328,
+      "median": -1.1952,
+      "p05": -14.2017,
+      "p95": 17.3,
+      "min": -22.6537,
+      "max": 27.619
+     }
+    },
+    "conditions": {
+     "I": 116,
+     "S": 19,
+     "a": 15
+    },
+    "requests": 140,
+    "pages": 140,
+    "seconds": 52.5
+   },
+   "decision clock, 1 s latency": {
+    "positions": 75,
+    "by_status": {
+     "repriced": 75
+    },
+    "repriced": 75,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": 2384.5,
+    "tick_pnl_repriced": 2779.5,
+    "difference": 395.0,
+    "winners": {
+     "bar": 38,
+     "tick": 38
+    },
+    "late_exits": 0,
+    "exits_not_established": 0,
+    "entry_seconds": {
+     "n": 75,
+     "mean": 1.8819,
+     "median": 1.289,
+     "p05": 1.0082,
+     "p95": 3.0785,
+     "min": 1.0,
+     "max": 20.592
+    },
+    "exit_seconds": {
+     "n": 75,
+     "mean": 16.9805,
+     "median": 3.73,
+     "p05": 1.0523,
+     "p95": 71.9811,
+     "min": 1.005,
+     "max": 263.352
+    },
+    "entry_price_worse_pct": {
+     "n": 75,
+     "mean": -0.4296,
+     "median": 0.0,
+     "p05": -14.5903,
+     "p95": 17.5386,
+     "min": -21.7021,
+     "max": 21.9178
+    },
+    "exit_price_worse_pct": {
+     "n": 75,
+     "mean": -1.7009,
+     "median": 0.0,
+     "p05": -19.3333,
+     "p95": 25.5769,
+     "min": -100.0,
+     "max": 50.0
+    },
+    "first_minute": {
+     "n": 75,
+     "price_worse_pct": {
+      "n": 75,
+      "mean": -0.4296,
+      "median": 0.0,
+      "p05": -14.5903,
+      "p95": 17.5386,
+      "min": -21.7021,
+      "max": 21.9178
+     }
+    },
+    "conditions": {
+     "I": 109,
+     "a": 27,
+     "S": 14
+    },
+    "requests": 0,
+    "pages": 0,
+    "seconds": 0.1
+   },
+   "decision clock, 5 s latency": {
+    "positions": 75,
+    "by_status": {
+     "repriced": 75
+    },
+    "repriced": 75,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": 2384.5,
+    "tick_pnl_repriced": 2772.5,
+    "difference": 388.0,
+    "winners": {
+     "bar": 38,
+     "tick": 38
+    },
+    "late_exits": 0,
+    "exits_not_established": 0,
+    "entry_seconds": {
+     "n": 75,
+     "mean": 7.4237,
+     "median": 5.197,
+     "p05": 5.0071,
+     "p95": 20.8122,
+     "min": 5.001,
+     "max": 46.873
+    },
+    "exit_seconds": {
+     "n": 75,
+     "mean": 20.2579,
+     "median": 7.57,
+     "p05": 5.2171,
+     "p95": 71.9811,
+     "min": 5.073,
+     "max": 263.352
+    },
+    "entry_price_worse_pct": {
+     "n": 75,
+     "mean": -1.7456,
+     "median": -1.105,
+     "p05": -16.5894,
+     "p95": 12.4167,
+     "min": -19.5745,
+     "max": 16.7808
+    },
+    "exit_price_worse_pct": {
+     "n": 75,
+     "mean": -0.038,
+     "median": 0.0,
+     "p05": -18.963,
+     "p95": 34.2424,
+     "min": -100.0,
+     "max": 50.0
+    },
+    "first_minute": {
+     "n": 75,
+     "price_worse_pct": {
+      "n": 75,
+      "mean": -1.7456,
+      "median": -1.105,
+      "p05": -16.5894,
+      "p95": 12.4167,
+      "min": -19.5745,
+      "max": 16.7808
+     }
+    },
+    "conditions": {
+     "I": 114,
+     "a": 26,
+     "S": 9,
+     "b": 1
+    },
+    "requests": 0,
+    "pages": 0,
+    "seconds": 0.1
+   },
+   "decision clock, 10 s after the open": {
+    "positions": 75,
+    "by_status": {
+     "repriced": 75
+    },
+    "repriced": 75,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": 2384.5,
+    "tick_pnl_repriced": 2669.5,
+    "difference": 285.0,
+    "winners": {
+     "bar": 38,
+     "tick": 38
+    },
+    "late_exits": 0,
+    "exits_not_established": 0,
+    "entry_seconds": {
+     "n": 75,
+     "mean": 11.9963,
+     "median": 10.287,
+     "p05": 10.006,
+     "p95": 20.8122,
+     "min": 10.0,
+     "max": 46.873
+    },
+    "exit_seconds": {
+     "n": 75,
+     "mean": 15.4551,
+     "median": 2.1,
+     "p05": 0.013,
+     "p95": 71.9811,
+     "min": 0.005,
+     "max": 263.352
+    },
+    "entry_price_worse_pct": {
+     "n": 75,
+     "mean": -0.9461,
+     "median": 0.0,
+     "p05": -15.9218,
+     "p95": 12.8542,
+     "min": -19.1781,
+     "max": 16.499
+    },
+    "exit_price_worse_pct": {
+     "n": 75,
+     "mean": -1.4668,
+     "median": 0.0,
+     "p05": -12.3011,
+     "p95": 13.1046,
+     "min": -100.0,
+     "max": 30.4348
+    },
+    "first_minute": {
+     "n": 75,
+     "price_worse_pct": {
+      "n": 75,
+      "mean": -0.9461,
+      "median": 0.0,
+      "p05": -15.9218,
+      "p95": 12.8542,
+      "min": -19.1781,
+      "max": 16.499
+     }
+    },
+    "conditions": {
+     "I": 103,
+     "a": 30,
+     "S": 17
+    },
+    "requests": 0,
+    "pages": 0,
+    "seconds": 0.1
+   },
+   "decision clock, 60 s after the open": {
+    "positions": 75,
+    "by_status": {
+     "repriced": 75
+    },
+    "repriced": 75,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": 2384.5,
+    "tick_pnl_repriced": 2581.5,
+    "difference": 197.0,
+    "winners": {
+     "bar": 38,
+     "tick": 38
+    },
+    "late_exits": 0,
+    "exits_not_established": 0,
+    "entry_seconds": {
+     "n": 75,
+     "mean": 60.4569,
+     "median": 60.167,
+     "p05": 60.0087,
+     "p95": 61.6695,
+     "min": 60.001,
+     "max": 67.574
+    },
+    "exit_seconds": {
+     "n": 75,
+     "mean": 15.4551,
+     "median": 2.1,
+     "p05": 0.013,
+     "p95": 71.9811,
+     "min": 0.005,
+     "max": 263.352
+    },
+    "entry_price_worse_pct": {
+     "n": 75,
+     "mean": -0.1103,
+     "median": 0.0,
+     "p05": -1.5892,
+     "p95": 1.5909,
+     "min": -2.7484,
+     "max": 3.7168
+    },
+    "exit_price_worse_pct": {
+     "n": 75,
+     "mean": -1.4668,
+     "median": 0.0,
+     "p05": -12.3011,
+     "p95": 13.1046,
+     "min": -100.0,
+     "max": 30.4348
+    },
+    "first_minute": {
+     "n": 0,
+     "price_worse_pct": null
+    },
+    "conditions": {
+     "I": 92,
+     "a": 35,
+     "S": 22,
+     "b": 1
+    },
+    "requests": 0,
+    "pages": 0,
+    "seconds": 0.1
+   },
+   "decision clock, any in-sequence print": {
+    "positions": 75,
+    "by_status": {
+     "repriced": 75
+    },
+    "repriced": 75,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": 2384.5,
+    "tick_pnl_repriced": 2481.5,
+    "difference": 97.0,
+    "winners": {
+     "bar": 38,
+     "tick": 38
+    },
+    "late_exits": 0,
+    "exits_not_established": 0,
+    "entry_seconds": {
+     "n": 75,
+     "mean": 0.8751,
+     "median": 0.404,
+     "p05": 0.0282,
+     "p95": 2.1957,
+     "min": 0.003,
+     "max": 20.592
+    },
+    "exit_seconds": {
+     "n": 75,
+     "mean": 6.2495,
+     "median": 1.492,
+     "p05": 0.013,
+     "p95": 28.6521,
+     "min": 0.005,
+     "max": 47.981
+    },
+    "entry_price_worse_pct": {
+     "n": 75,
+     "mean": 0.2605,
+     "median": -1.1952,
+     "p05": -14.2017,
+     "p95": 17.3,
+     "min": -22.6537,
+     "max": 27.619
+    },
+    "exit_price_worse_pct": {
+     "n": 75,
+     "mean": -1.5227,
+     "median": 0.0,
+     "p05": -11.6489,
+     "p95": 13.1046,
+     "min": -100.0,
+     "max": 30.4348
+    },
+    "first_minute": {
+     "n": 75,
+     "price_worse_pct": {
+      "n": 75,
+      "mean": 0.2605,
+      "median": -1.1952,
+      "p05": -14.2017,
+      "p95": 17.3,
+      "min": -22.6537,
+      "max": 27.619
+     }
+    },
+    "conditions": {
+     "I": 97,
+     "f": 18,
+     "S": 18,
+     "a": 8,
+     "g": 6,
+     "j": 3
+    },
+    "requests": 0,
+    "pages": 0,
+    "seconds": 0.1
+   },
+   "decision clock, prints of 5 contracts or more": {
+    "positions": 75,
+    "by_status": {
+     "repriced": 75
+    },
+    "repriced": 75,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": 2384.5,
+    "tick_pnl_repriced": 2515.5,
+    "difference": 131.0,
+    "winners": {
+     "bar": 38,
+     "tick": 38
+    },
+    "late_exits": 0,
+    "exits_not_established": 4,
+    "entry_seconds": {
+     "n": 75,
+     "mean": 2.5051,
+     "median": 0.955,
+     "p05": 0.1183,
+     "p95": 10.8486,
+     "min": 0.003,
+     "max": 22.481
+    },
+    "exit_seconds": {
+     "n": 71,
+     "mean": 29.4327,
+     "median": 4.791,
+     "p05": 0.024,
+     "p95": 134.2425,
+     "min": 0.005,
+     "max": 263.352
+    },
+    "entry_price_worse_pct": {
+     "n": 75,
+     "mean": -0.1736,
+     "median": 0.0,
+     "p05": -14.994,
+     "p95": 15.0629,
+     "min": -22.5532,
+     "max": 23.6111
+    },
+    "exit_price_worse_pct": {
+     "n": 71,
+     "mean": -0.596,
+     "median": 0.0,
+     "p05": -12.6401,
+     "p95": 22.1626,
+     "min": -100.0,
+     "max": 33.3333
+    },
+    "first_minute": {
+     "n": 75,
+     "price_worse_pct": {
+      "n": 75,
+      "mean": -0.1736,
+      "median": 0.0,
+      "p05": -14.994,
+      "p95": 15.0629,
+      "min": -22.5532,
+      "max": 23.6111
+     }
+    },
+    "conditions": {
+     "I": 117,
+     "a": 17,
+     "S": 12
+    },
+    "requests": 0,
+    "pages": 0,
+    "seconds": 0.3
+   }
+  }
+ }
+}

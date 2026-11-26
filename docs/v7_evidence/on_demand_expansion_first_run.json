@@ -1,0 +1,690 @@
+[
+ {
+  "case": "ATM 0DTE call 10:00 (inside the stored band)",
+  "signals": 7,
+  "ready_before": 7,
+  "entry_ready_before": 7,
+  "before": {
+   "trades": 7
+  },
+  "contract_sessions_needed": 49,
+  "already_stored": 49,
+  "fetched": 0,
+  "bars": 0,
+  "requests": 0,
+  "widening_rounds": 0,
+  "after": {
+   "trades": 7
+  },
+  "trades": 7,
+  "not_executed": {},
+  "delta_error_max": null,
+  "premium_error_median": null,
+  "still_on_edge": 0,
+  "second_acquisition_to_fetch": 0,
+  "stored_growth": 0,
+  "notes": [],
+  "picks": [
+   [
+    "11-17",
+    739.0,
+    "2026-11-17"
+   ],
+   [
+    "11-18",
+    734.0,
+    "2026-11-18"
+   ],
+   [
+    "11-19",
+    736.0,
+    "2026-11-19"
+   ],
+   [
+    "11-20",
+    717.0,
+    "2026-11-20"
+   ],
+   [
+    "11-23",
+    721.0,
+    "2026-11-23"
+   ],
+   [
+    "11-24",
+    720.0,
+    "2026-11-24"
+   ]
+  ],
+  "seconds": 5.5
+ },
+ {
+  "case": "ATM 30DTE call",
+  "signals": 7,
+  "ready_before": 7,
+  "entry_ready_before": 7,
+  "before": {
+   "trades": 7
+  },
+  "contract_sessions_needed": 55,
+  "already_stored": null,
+  "fetched": 55,
+  "bars": 4815,
+  "requests": 8,
+  "widening_rounds": 1,
+  "after": {
+   "trades": 7
+  },
+  "trades": 7,
+  "not_executed": {},
+  "delta_error_max": null,
+  "premium_error_median": null,
+  "still_on_edge": 0,
+  "second_acquisition_to_fetch": 0,
+  "stored_growth": 55,
+  "notes": [],
+  "picks": [
+   [
+    "11-17",
+    739.0,
+    "2026-12-18"
+   ],
+   [
+    "11-18",
+    734.0,
+    "2026-12-18"
+   ],
+   [
+    "11-19",
+    736.0,
+    "2026-12-18"
+   ],
+   [
+    "11-20",
+    717.0,
+    "2026-12-18"
+   ],
+   [
+    "11-23",
+    721.0,
+    "2026-12-24"
+   ],
+   [
+    "11-24",
+    720.0,
+    "2026-12-24"
+   ]
+  ],
+  "seconds": 8.6
+ },
+ {
+  "case": "ATM 90DTE call",
+  "signals": 7,
+  "ready_before": 7,
+  "entry_ready_before": 7,
+  "before": {
+   "trades": 7
+  },
+  "contract_sessions_needed": 20,
+  "already_stored": null,
+  "fetched": 20,
+  "bars": 1049,
+  "requests": 10,
+  "widening_rounds": 1,
+  "after": {
+   "trades": 5,
+   "exit_uncertain": 1,
+   "contract": 1
+  },
+  "trades": 6,
+  "not_executed": {
+   "no_recent_trade": 1
+  },
+  "delta_error_max": null,
+  "premium_error_median": null,
+  "still_on_edge": 0,
+  "second_acquisition_to_fetch": 0,
+  "stored_growth": 20,
+  "notes": [],
+  "picks": [
+   [
+    "11-17",
+    740.0,
+    "2027-02-19"
+   ],
+   [
+    "11-18",
+    735.0,
+    "2027-02-19"
+   ],
+   [
+    "11-20",
+    715.0,
+    "2027-02-19"
+   ],
+   [
+    "11-23",
+    720.0,
+    "2027-02-19"
+   ],
+   [
+    "11-24",
+    720.0,
+    "2027-02-19"
+   ],
+   [
+    "11-25",
+    701.0,
+    "2027-02-26"
+   ]
+  ],
+  "seconds": 9.3
+ },
+ {
+  "case": "ATM call expiring exactly 2026-12-18",
+  "signals": 7,
+  "ready_before": 4,
+  "entry_ready_before": 4,
+  "before": {
+   "trades": 4,
+   "expiration": 3
+  },
+  "contract_sessions_needed": 49,
+  "already_stored": 28,
+  "fetched": 21,
+  "bars": 2354,
+  "requests": 3,
+  "widening_rounds": 0,
+  "after": {
+   "trades": 6,
+   "exit_uncertain": 1
+  },
+  "trades": 7,
+  "not_executed": {},
+  "delta_error_max": null,
+  "premium_error_median": null,
+  "still_on_edge": 0,
+  "second_acquisition_to_fetch": 0,
+  "stored_growth": 21,
+  "notes": [],
+  "picks": [
+   [
+    "11-17",
+    739.0,
+    "2026-12-18"
+   ],
+   [
+    "11-18",
+    734.0,
+    "2026-12-18"
+   ],
+   [
+    "11-19",
+    736.0,
+    "2026-12-18"
+   ],
+   [
+    "11-20",
+    717.0,
+    "2026-12-18"
+   ],
+   [
+    "11-23",
+    721.0,
+    "2026-12-18"
+   ],
+   [
+    "11-24",
+    720.0,
+    "2026-12-18"
+   ]
+  ],
+  "seconds": 4.9
+ },
+ {
+  "case": "5% OTM 7DTE call (deep out of the money)",
+  "signals": 7,
+  "ready_before": 1,
+  "entry_ready_before": 1,
+  "before": {
+   "trades": 1,
+   "contract": 6
+  },
+  "contract_sessions_needed": 48,
+  "already_stored": null,
+  "fetched": 42,
+  "bars": 1606,
+  "requests": 7,
+  "widening_rounds": 1,
+  "after": {
+   "trades": 7
+  },
+  "trades": 7,
+  "not_executed": {},
+  "delta_error_max": null,
+  "premium_error_median": null,
+  "still_on_edge": 0,
+  "second_acquisition_to_fetch": 0,
+  "stored_growth": 42,
+  "notes": [],
+  "picks": [
+   [
+    "11-17",
+    776.0,
+    "2026-11-24"
+   ],
+   [
+    "11-18",
+    770.0,
+    "2026-11-25"
+   ],
+   [
+    "11-19",
+    775.0,
+    "2026-11-27"
+   ],
+   [
+    "11-20",
+    753.0,
+    "2026-11-27"
+   ],
+   [
+    "11-23",
+    757.0,
+    "2026-11-30"
+   ],
+   [
+    "11-24",
+    755.0,
+    "2026-12-01"
+   ]
+  ],
+  "seconds": 10.8
+ },
+ {
+  "case": "8% ITM 7DTE call (deep in the money)",
+  "signals": 7,
+  "ready_before": 0,
+  "entry_ready_before": 0,
+  "before": {
+   "contract": 7
+  },
+  "contract_sessions_needed": 76,
+  "already_stored": null,
+  "fetched": 76,
+  "bars": 226,
+  "requests": 14,
+  "widening_rounds": 3,
+  "after": {
+   "exit_uncertain": 4,
+   "contract": 3
+  },
+  "trades": 2,
+  "not_executed": {
+   "contract_not_stored": 2
+  },
+  "delta_error_max": null,
+  "premium_error_median": null,
+  "still_on_edge": 2,
+  "second_acquisition_to_fetch": 0,
+  "stored_growth": 76,
+  "notes": [],
+  "picks": [
+   [
+    "11-18",
+    724.0,
+    "2026-11-25"
+   ],
+   [
+    "11-20",
+    660.0,
+    "2026-11-27"
+   ]
+  ],
+  "seconds": 19.2
+ },
+ {
+  "case": "30-delta 7DTE call",
+  "signals": 7,
+  "ready_before": 7,
+  "entry_ready_before": 7,
+  "before": {
+   "trades": 7
+  },
+  "contract_sessions_needed": 123,
+  "already_stored": 82,
+  "fetched": 41,
+  "bars": 6384,
+  "requests": 4,
+  "widening_rounds": 0,
+  "after": {
+   "trades": 7
+  },
+  "trades": 7,
+  "not_executed": {},
+  "delta_error_max": 0.024476387457289472,
+  "premium_error_median": null,
+  "still_on_edge": 0,
+  "second_acquisition_to_fetch": 0,
+  "stored_growth": 41,
+  "notes": [],
+  "picks": [
+   [
+    "11-17",
+    750.0,
+    "2026-11-24"
+   ],
+   [
+    "11-18",
+    745.0,
+    "2026-11-25"
+   ],
+   [
+    "11-19",
+    747.0,
+    "2026-11-27"
+   ],
+   [
+    "11-20",
+    730.0,
+    "2026-11-27"
+   ],
+   [
+    "11-23",
+    734.0,
+    "2026-11-30"
+   ],
+   [
+    "11-24",
+    731.0,
+    "2026-12-01"
+   ]
+  ],
+  "seconds": 7.9
+ },
+ {
+  "case": "10-delta 30DTE put",
+  "signals": 7,
+  "ready_before": 6,
+  "entry_ready_before": 6,
+  "before": {
+   "trades": 6,
+   "contract": 1
+  },
+  "contract_sessions_needed": 148,
+  "already_stored": null,
+  "fetched": 148,
+  "bars": 12353,
+  "requests": 8,
+  "widening_rounds": 1,
+  "after": {
+   "trades": 7
+  },
+  "trades": 7,
+  "not_executed": {},
+  "delta_error_max": 0.009453485666564981,
+  "premium_error_median": null,
+  "still_on_edge": 0,
+  "second_acquisition_to_fetch": 0,
+  "stored_growth": 148,
+  "notes": [],
+  "picks": [
+   [
+    "11-17",
+    670.0,
+    "2026-12-18"
+   ],
+   [
+    "11-18",
+    655.0,
+    "2026-12-18"
+   ],
+   [
+    "11-19",
+    670.0,
+    "2026-12-18"
+   ],
+   [
+    "11-20",
+    635.0,
+    "2026-12-18"
+   ],
+   [
+    "11-23",
+    635.0,
+    "2026-12-24"
+   ],
+   [
+    "11-24",
+    635.0,
+    "2026-12-24"
+   ]
+  ],
+  "seconds": 9.1
+ },
+ {
+  "case": "$0.50 premium 0DTE call",
+  "signals": 7,
+  "ready_before": 7,
+  "entry_ready_before": 7,
+  "before": {
+   "trades": 7
+  },
+  "contract_sessions_needed": 175,
+  "already_stored": 170,
+  "fetched": 5,
+  "bars": 1308,
+  "requests": 1,
+  "widening_rounds": 0,
+  "after": {
+   "trades": 7
+  },
+  "trades": 7,
+  "not_executed": {},
+  "delta_error_max": null,
+  "premium_error_median": 0.06000000000000005,
+  "still_on_edge": 0,
+  "second_acquisition_to_fetch": 0,
+  "stored_growth": 5,
+  "notes": [],
+  "picks": [
+   [
+    "11-17",
+    746.0,
+    "2026-11-17"
+   ],
+   [
+    "11-18",
+    741.0,
+    "2026-11-18"
+   ],
+   [
+    "11-19",
+    744.0,
+    "2026-11-19"
+   ],
+   [
+    "11-20",
+    729.0,
+    "2026-11-20"
+   ],
+   [
+    "11-23",
+    735.0,
+    "2026-11-23"
+   ],
+   [
+    "11-24",
+    730.0,
+    "2026-11-24"
+   ]
+  ],
+  "seconds": 5.4
+ },
+ {
+  "case": "$1.00 premium 30DTE call",
+  "signals": 7,
+  "ready_before": 3,
+  "entry_ready_before": 3,
+  "before": {
+   "trades": 3,
+   "contract": 4
+  },
+  "contract_sessions_needed": 322,
+  "already_stored": 0,
+  "fetched": 322,
+  "bars": 5951,
+  "requests": 7,
+  "widening_rounds": 0,
+  "after": {
+   "trades": 4,
+   "exit_uncertain": 3
+  },
+  "trades": 7,
+  "not_executed": {},
+  "delta_error_max": null,
+  "premium_error_median": 0.07000000000000006,
+  "still_on_edge": 0,
+  "second_acquisition_to_fetch": 0,
+  "stored_growth": 322,
+  "notes": [],
+  "picks": [
+   [
+    "11-17",
+    785.0,
+    "2026-12-18"
+   ],
+   [
+    "11-18",
+    786.0,
+    "2026-12-18"
+   ],
+   [
+    "11-19",
+    785.0,
+    "2026-12-18"
+   ],
+   [
+    "11-20",
+    774.0,
+    "2026-12-18"
+   ],
+   [
+    "11-23",
+    800.0,
+    "2026-12-24"
+   ],
+   [
+    "11-24",
+    772.0,
+    "2026-12-24"
+   ]
+  ],
+  "seconds": 6.9
+ },
+ {
+  "case": "QQQ ATM 0DTE call at 09:35 on the +7.8% gap day",
+  "signals": 1,
+  "ready_before": 1,
+  "entry_ready_before": 1,
+  "before": {
+   "trades": 1
+  },
+  "contract_sessions_needed": 7,
+  "already_stored": 7,
+  "fetched": 0,
+  "bars": 0,
+  "requests": 0,
+  "widening_rounds": 0,
+  "after": {
+   "trades": 1
+  },
+  "trades": 1,
+  "not_executed": {},
+  "delta_error_max": null,
+  "premium_error_median": null,
+  "still_on_edge": 0,
+  "second_acquisition_to_fetch": 0,
+  "stored_growth": 0,
+  "notes": [],
+  "picks": [
+   [
+    "11-23",
+    648.0,
+    "2026-11-23"
+   ]
+  ],
+  "seconds": 1.0
+ },
+ {
+  "case": "SPY ATM 0DTE put at 15:00 after a 3.9% intraday fall",
+  "signals": 1,
+  "ready_before": 1,
+  "entry_ready_before": 1,
+  "before": {
+   "trades": 1
+  },
+  "contract_sessions_needed": 1,
+  "already_stored": 1,
+  "fetched": 0,
+  "bars": 0,
+  "requests": 0,
+  "widening_rounds": 0,
+  "after": {
+   "trades": 1
+  },
+  "trades": 1,
+  "not_executed": {},
+  "delta_error_max": null,
+  "premium_error_median": null,
+  "still_on_edge": 0,
+  "second_acquisition_to_fetch": 0,
+  "stored_growth": 0,
+  "notes": [],
+  "picks": [
+   [
+    "11-20",
+    695.0,
+    "2026-11-20"
+   ]
+  ],
+  "seconds": 1.0
+ },
+ {
+  "case": "IWM 20-delta 14DTE put",
+  "signals": 7,
+  "ready_before": 4,
+  "entry_ready_before": 6,
+  "before": {
+   "trades": 4,
+   "exit_uncertain": 2,
+   "contract": 1
+  },
+  "contract_sessions_needed": 88,
+  "already_stored": null,
+  "fetched": 88,
+  "bars": 1069,
+  "requests": 9,
+  "widening_rounds": 1,
+  "after": {
+   "trades": 3,
+   "exit_uncertain": 4
+  },
+  "trades": 1,
+  "not_executed": {},
+  "delta_error_max": 0.324249220324531,
+  "premium_error_median": null,
+  "still_on_edge": 0,
+  "second_acquisition_to_fetch": 0,
+  "stored_growth": 88,
+  "notes": [],
+  "picks": [
+   [
+    "11-17",
+    273.0,
+    "2026-12-01"
+   ]
+  ],
+  "seconds": 9.4
+ }
+]

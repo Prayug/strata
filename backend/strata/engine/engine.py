@@ -15,6 +15,7 @@ The engine is deterministic: no randomness, ordered iteration, inputs fingerprin
 from __future__ import annotations
 
 import math
+import re
 import time as _time
 from array import array
 from dataclasses import dataclass, field
@@ -360,10 +361,19 @@ class _DayChains(dict):
 
 class Backtester:
     def __init__(self, cfg: BacktestConfig, store: MarketStore | None = None, strategies: list[Strategy] | None = None,
-                 progress=None, should_cancel=None, record_paths: bool = True, signals_only: bool = False, extra_symbols: set[str] | None = None):
+                 progress=None, should_cancel=None, record_paths: bool = True, signals_only: bool = False, extra_symbols: set[str] | None = None,
+                 sessions: set | None = None, resume: dict | None = None, keep_open: bool = False):
         from strata.engine.rules import RuleStrategy
 
         self.cfg = cfg
+        # continuing a paper record instead of replaying it: `resume` is the state another run left (cash, open positions,
+        # what each strategy remembers) and this run starts from it on its first session. With `keep_open`, positions still
+        # open at the end are NOT closed at the last price: they are handed on in the state, as an account would hold them.
+        self._resume, self.keep_open = resume, bool(keep_open)
+        # the sessions on which an entry rule of this run fires, when a scan of the SAME rules has already found them (an
+        # experiment runs many configurations that share their entry rule). Any other session is passed over while nothing is
+        # open: no rule can fire on it, so nothing about the trades changes. Left None, every session is evaluated.
+        self.only_sessions = set(sessions) if sessions is not None else None
         self.extra_symbols = {x.upper() for x in (extra_symbols or ())}
         self.store = store or MarketStore()
         self.ex = cfg.execution
@@ -460,7 +470,9 @@ class Backtester:
                 desc = self.store.descriptor(ds)
                 bars_fmt = desc.get("format") == "bars"
                 days = sorted(self.store.option_bar_index(sym, dataset=ds)["date"].unique().to_list()) if bars_fmt else self.store.option_days(sym, obs, dataset=ds)
-                if not any(cfg.start <= d <= cfg.end for d in days):
+                # a continuing record is run one session at a time: a session for which no option observation is stored is not a
+                # reason to stop. It is evaluated, its signals are recorded as not priced, and open positions are carried
+                if not any(cfg.start <= d <= cfg.end for d in days) and not self.keep_open:
                     have = f"{ds.id} covers {days[0]} to {days[-1]}" if days else f"{ds.id} is empty"
                     raise DataUnavailable(f"No historical {what} for {sym} between {cfg.start} and {cfg.end} ({have}). Strata does not fabricate option prices: "
                                           "acquire option history for this period, run a Market Study on the underlying, or explicitly choose the Modeled mode.")
@@ -948,9 +960,68 @@ class Backtester:
             cache[sym] = set(idx.filter(pl.col("status") == "ok")["date"].unique().to_list()) if not idx.is_empty() else set()
         return cache[sym]
 
+    def _expirations_in_play(self, sym: str, d, ds):
+        """The expirations a strategy of this symbol could select today, plus those of its open positions: (dates, [(first,
+        last)]). None when the whole stored chain has to be loaded.
+
+        A same-day strategy reads one expiration of the five or six stored for a session; expanding the others into the
+        chain costs most of the session's load time and none of it is ever looked at. The window of a leg that takes "the
+        nearest expiration" is the distance selection itself accepts on selectively stored data (`dte_tolerance`), so what is
+        left out could not have been chosen. Anything that reads the chain as a whole keeps the whole chain: implied
+        volatility of the underlying, rolls to another expiration, and a dataset that holds complete chains."""
+        from strata.engine.conditions import walk_leaves
+        from strata.engine.selection import dte_tolerance
+        if self._complete_chain(ds):
+            return None
+        exact: set = set()
+        spans: list[tuple] = []
+        for c in self.cfg.strategies:
+            if c.symbol != sym:
+                continue
+            if c.exits.roll.enabled or c.hedge.enabled:
+                return None
+            if any(re.search(r"\biv\b|iv_rank|iv_percentile|\biv\(", x) for x in c.expressions()):
+                return None
+            if any(l.type in ("iv", "iv_rank", "iv_percentile") for tree in (c.entry.conditions, c.exits.custom, *[sy.conditions for sy in c.entry.systems]) for l in walk_leaves(tree)):
+                return None
+            for l in list(c.legs) + [x for sy in c.entry.systems for x in (sy.legs or [])]:
+                if l.kind != "option":
+                    continue
+                if l.expiration is not None:
+                    exact.add(l.expiration)
+                elif l.dte_mode == "exact" or l.dte == 0:
+                    exact.add(d + timedelta(days=int(l.dte)))
+                else:
+                    tol = dte_tolerance(l.dte)
+                    lo = max(0, l.dte - tol) if l.dte_mode != "at_least" else l.dte
+                    hi = l.dte + tol if l.dte_mode != "at_most" else l.dte
+                    if l.dte_min is not None:
+                        lo = max(lo, l.dte_min)
+                    if l.dte_max is not None:
+                        hi = min(hi, l.dte_max)
+                    spans.append((d + timedelta(days=int(lo)), d + timedelta(days=int(hi))))
+        for p in self.account.positions:
+            if p.symbol == sym:
+                exact |= {from_day_num(int(l.exp)) for l in p.legs if l.kind == "option" and l.exp >= 0}
+        return exact, spans
+
     def _trade_chain(self, sym: str, d, ds, ticks: list[int]):
         """The session's chain as it could be observed at each tick, from the stored trade bars (see expand_trade_bars)."""
-        bars = self.store.read_option_bars(sym, d, dataset=ds)
+        cols = ["ts", "occ", "expiration", "strike", "right", "close", "volume"]  # what the chain is built from
+        play = self._expirations_in_play(sym, d, ds)
+        bars = None
+        if play is not None:
+            exact, spans = play
+            keep = pl.col("expiration").is_in(sorted(exact)) if exact else pl.lit(False)
+            for a_, b_ in spans:
+                keep = keep | ((pl.col("expiration") >= a_) & (pl.col("expiration") <= b_))
+            bars = self.store.read_option_bars(sym, d, dataset=ds, columns=cols, where=keep)  # only those expirations leave the file
+            if bars is not None and bars.is_empty():
+                bars = None
+            # none of them is stored for this session: the whole chain is kept, so that the selection says exactly which
+            # expiration was missing instead of this looking like a session with no option data at all
+        if bars is None:
+            bars = self.store.read_option_bars(sym, d, dataset=ds, columns=cols)
         df, cstats = expand_trade_bars(bars, ticks, self.series.get(sym), d) if bars is not None else (pl.DataFrame(), {})
         if df.is_empty():
             lst = self.diag.no_option_data.setdefault(sym, [])
@@ -959,7 +1030,25 @@ class Backtester:
             return None
         ch = DayChain(df, self.cfg.capital.risk_free_rate)
         ch.kind, ch.contract_stats, ch.multipliers = "trades", cstats, getattr(self, "_mults", {}).get(sym, {})
+        ch.complete = self._complete_chain(ds)
         return ch
+
+    def _complete_chain(self, ds) -> bool:
+        """Does the dataset hold EVERY contract of each session, or a band of them?
+
+        Trade bars are downloaded selectively, so they are a band unless the dataset says it is whole (an imported vendor
+        file). Quote chains are whole (archives and vendor files hold the full chain) unless the dataset says it is a band
+        (a selective download of quotes for the contracts a strategy needs). Selection on a band must be able to show that
+        the stored strikes contain the contract asked for; on a whole chain there is nothing beyond what is stored."""
+        cache = self.__dict__.setdefault("_complete_cache", {})
+        k = getattr(ds, "id", str(ds))
+        if k not in cache:
+            try:
+                flag = self.store.descriptor(ds).get("complete_chain") if ds is not None else None
+            except Exception:  # noqa: BLE001
+                flag = None
+            cache[k] = bool(flag) if getattr(ds, "obs", "trade") == "trade" else flag is not False
+        return cache[k]
 
     def _partial_trade_sessions(self, sym: str, ds) -> dict:
         """{iso date: reason} for the sessions of an option trade dataset that the provider holds only in part."""
@@ -969,15 +1058,33 @@ class Backtester:
         return cache[sym]
 
     def settle_expiring(self, d: date, am: bool):
+        """Settle what expires on this session: at its open for contracts settled in the morning, at its close for the rest.
+
+        A contract dated on a day the market is closed expires at the close of the last session before that date (see
+        `effective_expiration`). A leg whose expiration has already passed without a session to settle it on (the session
+        is not stored) is settled at the next open there is, and the run says so: it is never carried on as if alive."""
+        from strata.engine.selection import effective_expiration
         dn = day_num(d)
         close_t = int(cal.session_bounds(d)[1].timestamp())
         for pos in list(self.account.positions):
             meta = self.metas[pos.symbol]
             ser = self.series[pos.symbol]
-            legs = [l for l in pos.legs if l.is_open and l.kind == "option" and l.exp == dn and self._settles_am(pos.symbol, d) == am]
+            legs, late = [], False
+            for l in pos.legs:
+                if not (l.is_open and l.kind == "option"):
+                    continue
+                eff = effective_expiration(l.exp)
+                if eff == dn and (self._settles_am(pos.symbol, d) == am if l.exp == dn else not am):
+                    legs.append(l)  # a moved expiration settles at the close, like the session it was moved to
+                elif eff < dn and am:
+                    legs.append(l)
+                    late = True
             if not legs:
                 continue
             S = ser.session_open(d) if am else ser.session_close(d)
+            if late:
+                pos.flags.add("settled_late")
+                self.diag.warnings.append(f"{d}: a {pos.symbol} leg had expired on a session that is not stored; it was settled at this session's open ({S:.2f}), which is not the price it expired at")
             if not math.isfinite(S):
                 self.diag.warnings.append(f"{d}: no settlement price for {pos.symbol}; legs settled at last stored price")
                 S = pos.last_spot
@@ -1185,7 +1292,7 @@ class Backtester:
                 vix = vser.price_at(t, d) if vser.day_index(d) >= 0 and (vser.resolution(d) < 86400 or t >= int(vser.d_end[vser.day_index(d)])) else (float(vser.d_c[pi]) if pi >= 0 else float("nan"))
             v, self.model_vol_note = base_vol(pr, vix, rv)
             vols.append(v)
-        max_dte = max((max(l.dte, l.dte_max or 0) for c in self.cfg.strategies if c.symbol == sym for l in c.legs if l.kind == "option"), default=7)
+        max_dte = max((max(l.dte, l.dte_max or 0, (l.expiration - d).days if l.expiration else 0) for c in self.cfg.strategies if c.symbol == sym for l in c.legs if l.kind == "option"), default=7)
         df = modeled_chain(d, use, spots, vols, pr, max_dte)
         return DayChain(df, pr.rate) if not df.is_empty() else None
 
@@ -1198,11 +1305,21 @@ class Backtester:
         for s in self.strategies:
             ctx.strategy = s
             s.on_start(ctx)
+        if self._resume is not None:
+            self.restore(self._resume)
         last_t = 0
         for di, d in enumerate(days):
             if self.should_cancel and self.should_cancel():
                 raise BacktestCancelled()
             ctx.today, ctx.today_num = d, day_num(d)
+            if self.only_sessions is not None and d not in self.only_sessions and not self.account.positions:
+                self._day_max_bp, self._day_max_pos = 0.0, 0
+                self._day_open_equity = self.account.equity()
+                self._peak_equity = max(getattr(self, "_peak_equity", self._day_open_equity), self._day_open_equity)
+                self._record_day(d)
+                if self.progress and (di % 5 == 0 or di == len(days) - 1):
+                    self.progress(di + 1, len(days), d)
+                continue
             open_dt, close_dt = cal.session_bounds(d)
             ctx.close_minute = close_dt.hour * 60 + close_dt.minute
             t_open = int(open_dt.timestamp())
@@ -1247,6 +1364,7 @@ class Backtester:
                     self.chains[sym] = DayChain(df, self.cfg.capital.risk_free_rate)
                     if self.trades:
                         self.chains[sym].kind = "trades"
+                    self.chains[sym].complete = self._complete_chain(ds)
             self.settle_expiring(d, am=True)
             clock = sorted({int(x) for ch in self.chains.values() if ch is not None for x in ch.snap_ts if t_open <= x <= t_close} | sig_ticks)
             diffs = np.diff(clock) if len(clock) > 1 else np.array([60])
@@ -1290,8 +1408,8 @@ class Backtester:
             self._record_day(d)
             if self.progress and (di % 5 == 0 or di == len(days) - 1):
                 self.progress(di + 1, len(days), d)
-        # close anything still open at the last snapshot, at the last observed quotes
-        for pos in list(self.account.positions):
+        # close anything still open at the last snapshot, at the last observed quotes (a continuing record keeps it open)
+        for pos in ([] if self.keep_open else list(self.account.positions)):
             ctx.t = last_t or ctx.t
             if any(l.stale for l in pos.legs if l.is_open):
                 pos.flags.add("closed_at_last_known_quote")
@@ -1306,6 +1424,78 @@ class Backtester:
             self.daily[-1]["open_positions"] = len(self.account.positions)  # everything was just closed: the last row must not still count it as open
             self.daily[-1]["commissions"] = self.account.commissions
         return self._result(_time.time() - t0)
+
+    # ------------------------------------------------------------------ state: saving and continuing
+    def state(self) -> dict:
+        """Everything a later run needs to continue this account exactly: cash, every open position with its legs and what
+        its exit rules remember, the position counter, and what each strategy carries from one session to the next.
+        JSON-safe (a number that is not a number is stored as null and restored as such)."""
+        def clean(o):
+            if isinstance(o, dict):
+                return {str(k): clean(v) for k, v in o.items()}
+            if isinstance(o, (list, tuple, set, frozenset)):
+                return [clean(v) for v in (sorted(o, key=str) if isinstance(o, (set, frozenset)) else o)]
+            if isinstance(o, (np.floating, float)):
+                return float(o) if math.isfinite(float(o)) else None
+            if isinstance(o, (np.integer,)):
+                return int(o)
+            if isinstance(o, (np.bool_,)):
+                return bool(o)
+            if isinstance(o, (date, datetime)):
+                return o.isoformat()
+            return o
+        acct = self.account
+        return clean({"version": 1, "engine_version": ENGINE_VERSION, "through": self.daily[-1]["date"] if self.daily else None, "initial": acct.initial, "cash": acct.cash, "commissions": acct.commissions,
+                      "slippage": acct.slippage, "interest": getattr(acct, "interest", 0.0), "next_pos_id": self.next_pos_id, "peak_equity": getattr(self, "_peak_equity", acct.initial),
+                      # every attribute, not only the declared fields: the engine also notes on a leg whether it was priced from a
+                      # trade print, the volume it saw at entry, and on a position the instant of its signal
+                      "positions": [{**{k: v for k, v in vars(p).items() if k != "legs"}, "legs": [dict(vars(l)) for l in p.legs]} for p in acct.positions],
+                      "strategies": [{"idx": st.idx, "name": st.name, "last_exit_t": getattr(st, "last_exit_t", None), "last_exit_reason": getattr(st, "last_exit_reason", None)} for st in self.strategies],
+                      "closed": len(acct.closed) + int((self._resume or {}).get("closed") or 0),
+                      "realised": sum(p.entry_cash + p.exit_cash - p.commissions for p in acct.closed) + float((self._resume or {}).get("realised") or 0.0)})
+
+    def restore(self, st: dict) -> None:
+        """Start from a saved state instead of from an empty account."""
+        from dataclasses import fields
+        if int(st.get("version") or 0) != 1:
+            raise ValueError("this saved state was written in a format this engine does not read")
+        nan4 = (math.nan,) * 4
+
+        def build(cls, raw: dict, **over):
+            kw = {}
+            declared = set()
+            for f in fields(cls):
+                declared.add(f.name)
+                if f.name in over:
+                    kw[f.name] = over[f.name]
+                    continue
+                if f.name not in raw:
+                    continue
+                v = raw[f.name]
+                if f.name in ("entry_greeks", "exit_greeks", "greeks"):
+                    v = tuple(math.nan if x is None else float(x) for x in (v or nan4))
+                elif v is None and isinstance(f.default, float):
+                    v = math.nan if not math.isfinite(f.default) else f.default  # a null where a number lives was "not a number" when it was saved
+                elif f.name == "flags":
+                    v = set(v or [])
+                kw[f.name] = v
+            obj = cls(**kw)
+            for k, v in raw.items():  # what the engine noted on the object beyond its declared fields
+                if k not in declared and k != "legs":
+                    setattr(obj, k, v)
+            return obj
+        acct = self.account
+        acct.cash, acct.commissions, acct.slippage = float(st["cash"]), float(st.get("commissions") or 0.0), float(st.get("slippage") or 0.0)
+        if st.get("interest"):
+            acct.interest = float(st["interest"])
+        acct.positions = [build(Position, p, legs=[build(LegState, l) for l in p.get("legs") or []]) for p in st.get("positions") or []]
+        self.next_pos_id = int(st.get("next_pos_id") or 1)
+        self._peak_equity = float(st.get("peak_equity") or acct.initial)
+        by = {x.get("idx"): x for x in st.get("strategies") or []}
+        for strat in self.strategies:
+            x = by.get(strat.idx)
+            if x is not None and hasattr(strat, "last_exit_t"):
+                strat.last_exit_t, strat.last_exit_reason = x.get("last_exit_t"), x.get("last_exit_reason")
 
     def _close_gaps(self) -> list[dict]:
         rows = _close_gap_rows(self.series, self.cfg.start, self.cfg.end)
@@ -1373,8 +1563,8 @@ class Backtester:
                 from strata.data.store import DatasetKey
                 key = DatasetKey.parse(ds["dataset"] if isinstance(ds, dict) else ds) if ds else None
                 desc = self.store.descriptor(key) if key else {}
-                if self.trades and not desc.get("complete_chain"):
-                    complete = False
+                if (self.trades and not desc.get("complete_chain")) or (not self.trades and desc.get("complete_chain") is False):
+                    complete = False  # a band of strikes: trade bars unless the dataset says it is whole, quotes only when it says it is a band
                 if key is not None and self.trades:
                     con = self.store.read_contracts(key)
                     if not con.is_empty():
@@ -1385,17 +1575,23 @@ class Backtester:
                                 mults[f"{m_:g}" if m_ is not None else "unknown"] = int(n_)
             except Exception:  # noqa: BLE001  (diagnostics only)
                 pass
-        selective = self.trades and not complete
+        selective = (not complete) and not self.modeled
         edge = [r for r in rows if r.get("edge") and selective and r["method"] in ("delta", "premium", "pct_otm")]
+        # signals that were NOT filled because the contract asked for lies beyond the stored strikes: nothing was substituted
+        # for them, and a wider download can still price them
+        beyond = sorted({cal.to_et(x["signal_t"] * 1_000_000_000).date().isoformat() for x in self.diag.skipped_signals
+                         if x.get("kind") == "contract_not_stored" and ("beyond the stored strike range" in x.get("reason", "") or "outside the stored strike range" in x.get("reason", ""))}) if selective else []
         d_err = [abs(r["achieved"] - r["target"]) for r in rows if r["method"] == "delta" and r.get("achieved") is not None]
         p_err = [abs(r["achieved"] - r["target"]) / r["target"] for r in rows if r["method"] == "premium" and r.get("achieved") is not None and r["target"]]
         return {"selections": len(rows), "selective_storage": bool(selective), "complete_chain": bool(not selective), "at_band_edge": len(edge), "edge_dates": sorted({r["date"] for r in edge}),
+                "beyond_band": len(beyond), "beyond_dates": beyond,
                 "edge_examples": [{k: r.get(k) for k in ("date", "leg", "method", "strike", "stored_low", "stored_high", "edge", "target", "achieved")} for r in edge[:8]],
                 "delta_error_median": float(np.median(d_err)) if d_err else None, "delta_error_max": float(max(d_err)) if d_err else None, "delta_misses": int(sum(1 for x in d_err if x > 0.10)),
                 "premium_error_median": float(np.median(p_err)) if p_err else None, "premium_misses": int(sum(1 for x in p_err if x > 0.25)),
                 "methods": {m: sum(1 for r in rows if r["method"] == m) for m in sorted({r["method"] for r in rows})},
                 "contracts_constructed": constructed, "contracts_adjusted": adjusted, "multipliers": mults,
-                "note": ("Contracts are chosen among a downloaded band of strikes around the price at each signal; the band is widened and the run repeated whenever a selection lands on its edge." if selective else
+                "note": ("Contracts are chosen among a downloaded band of strikes around the price at each signal. A strike that lies beyond the band is never replaced by the outermost stored one: the signal is left unfilled, "
+                         "and the band is widened and the run repeated whenever a selection lands on its edge or beyond it." if selective else
                          "Contracts are chosen among every contract in the stored chain as it stood at the decision time.")}
 
     def _executability(self) -> dict:
@@ -1451,6 +1647,7 @@ class Backtester:
             "pricing_assumptions": (__import__("strata.data.modeled", fromlist=["x"]).assumptions_text(self.cfg.pricing) + [f"Volatility input used: {getattr(self, 'model_vol_note', 'n/a')}."]) if self.modeled else [],
             "data_resolution": self._resolution_summary(),
             "runtime_seconds": round(runtime, 3),
+            **({"state": self.state(), "open_positions": [trade_record(p, self) for p in sorted(self.account.positions, key=lambda p: p.id)]} if self.keep_open else {}),
             "sessions": len(self.daily),
             "symbols": sorted(self.series.keys()),
             "benchmark": self.bench,

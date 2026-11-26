@@ -1,0 +1,42 @@
+{
+ "what": "four runs on the stored dataset before and after two engine changes (expirations in play filtered while the file is read; a single row's greeks computed with the scalar kernels)",
+ "fingerprint": "sha256 over every trade's symbol, entry and exit time, exit reason, result, excursions, entry volatility and delta, and each leg's strike, expiration, prices and deltas",
+ "runs": {
+  "spy_call_full": {
+   "trades": 710,
+   "net": -1577.04,
+   "sha_before": "993db9bdf6a6ed1ad46d",
+   "sha_after": "993db9bdf6a6ed1ad46d",
+   "identical": true,
+   "seconds_before": 12.91,
+   "seconds_after": 8.61
+  },
+  "iwm_spread_full": {
+   "trades": 62,
+   "net": 1378.74,
+   "sha_before": "636188c2bbbebe32d871",
+   "sha_after": "636188c2bbbebe32d871",
+   "identical": true,
+   "seconds_before": 6.99,
+   "seconds_after": 5.7
+  },
+  "qqq_vwap_2026": {
+   "trades": 94,
+   "net": -114.2,
+   "sha_before": "9d383fa700f1c30e4e80",
+   "sha_after": "9d383fa700f1c30e4e80",
+   "identical": true,
+   "seconds_before": 2.21,
+   "seconds_after": 1.97
+  },
+  "three_symbols_q4": {
+   "trades": 182,
+   "net": -5068.6,
+   "sha_before": "a85fcc220b13cbdae70d",
+   "sha_after": "a85fcc220b13cbdae70d",
+   "identical": true,
+   "seconds_before": 3.23,
+   "seconds_after": 2.24
+  }
+ }
+}

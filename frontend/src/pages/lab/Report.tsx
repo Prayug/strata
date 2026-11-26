@@ -11,12 +11,18 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { pp, sgn, usd, type Fact } from "@/lib/lab";
 import { useBuilder } from "@/lib/store";
-import { Bar, Callout, Empty, ModeBadge, Section, Skeleton, StatTile, StatusChip, T, Term } from "./bits";
+import { Bar, Callout, Empty, ModeBadge, Section, Skeleton, StatTile, StatusChip, T, Term, useHotkeys } from "./bits";
+import { ExecutionCheck, FillsLedger, PerformanceView } from "./Performance";
+import { ReplayView } from "./ReplayView";
 import { CalendarView } from "./CalendarView";
 import { ResultCoverage } from "./Coverage";
 import { Timeline } from "./Pipeline";
 
 export const REPORT_TABS = [["overview", "Overview"], ["calendar", "Calendar"], ["observations", "Trades"], ["statistics", "Statistics"], ["robustness", "Robustness"], ["methodology", "Methodology"], ["raw", "Raw data"]] as const;
+// a backtest on option observations: what it did (in the order a reader should take it), each trade, the trade over the
+// stored observations, every fill against its stored bar, and the same decisions on individual prints
+export const BACKTEST_TABS = [["overview", "Overview"], ["performance", "Tear sheet"], ["observations", "Trades"], ["replay", "Replay"], ["fills", "Fills"], ["execution", "Execution"], ["calendar", "Calendar"], ["statistics", "Statistics"],
+  ["robustness", "Robustness"], ["methodology", "Methodology"], ["raw", "Raw data"]] as const;
 
 export function useReport(runId: string, sid?: string, trials = 1) {
   return useQuery({ queryKey: ["report", runId, sid, trials], queryFn: () => api.get<any>(`/api/runs/${runId}/report?trials=${trials}${sid ? `&sid=${sid}` : ""}`), staleTime: 60_000 });
@@ -29,22 +35,28 @@ export function Report({ runId, sid, trials, tab, setTab, which, setWhich, onDay
 }) {
   const rep = useReport(runId, sid, trials);
   const [year, setYear] = useState<number | null>(null);
+  const [trade, setTrade] = useState(1);
   const r = rep.data;
+  const tabs: readonly (readonly [string, string])[] = r && r.kind !== "study" ? BACKTEST_TABS : REPORT_TABS;
+  useHotkeys(Object.fromEntries(tabs.slice(0, 9).map(([k], i) => [String(i + 1), () => setTab(k)])), [runId, tabs.length]);
   if (rep.isLoading) return <div className="flex flex-col gap-3 p-5"><Skeleton className="h-8 w-2/3" /><Skeleton className="h-24" /><Skeleton className="h-64" /></div>;
   if (rep.isError || !r) return <Empty title="This result cannot be opened">{String((rep.error as any)?.message || "")}</Empty>;
   const study = r.kind === "study";
   const openObs = (w: string) => { setWhich(w); setTab("observations"); };
   const openYear = (y: string) => { setYear(Number(y)); onDay(null); setTab("calendar"); };
+  const nTrades = Number(String(f(r.facts, "trades")?.shown ?? "").replace(/[^0-9]/g, "")) || undefined;
+  const openTrade = (id: number) => { setTrade(id); setTab("replay"); };
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="report">
-      <div className="shrink-0 px-5 pt-4 pb-3">
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <h2 className="truncate" title={r.question}>{r.question || r.title}</h2>
-            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs dim">
+      <div className={cn("shrink-0 px-5", tab === "replay" ? "py-1.5" : "pt-4 pb-3")}>
+        <div className={cn("flex gap-3", tab === "replay" ? "items-center" : "items-start")}>
+          {/* on the replay the charts need the height: the heading is one line there */}
+          <div className={cn("min-w-0 flex-1", tab === "replay" && "flex items-center gap-3")}>
+            <h2 className={cn("truncate", tab === "replay" && "!text-[13.5px] min-w-0")} title={r.question}>{r.question || r.title}</h2>
+            <div className={cn("flex items-center gap-2 text-xs dim", tab === "replay" ? "shrink-0" : "mt-1.5 flex-wrap")}>
               <ModeBadge mode={r.mode} />
               <span>{r.symbol}</span><span>·</span><span>{r.period[0]} to {r.period[1]}</span>
-              {r.mode_reason && <Tip content={r.mode_reason}><span className="term">why this mode</span></Tip>}
+              {r.mode_reason && tab !== "replay" && <Tip content={r.mode_reason}><span className="term">why this mode</span></Tip>}
             </div>
           </div>
           <button className={cn("btn sm", pinned && "!border-accent/60 !text-accent")} onClick={() => onPin(runId)} title="Pin to the comparison workspace"><Pin />{pinned ? "Pinned" : "Pin"}</button>
@@ -52,16 +64,20 @@ export function Report({ runId, sid, trials, tab, setTab, which, setWhich, onDay
         </div>
       </div>
       <div className="tabbar shrink-0" role="tablist">
-        {REPORT_TABS.map(([k, l], i) => (
+        {tabs.map(([k, l], i) => (
           <button key={k} role="tab" aria-selected={tab === k} data-testid={`tab-${k}`} className={cn("tab", tab === k && "on")} onClick={() => setTab(k)}>
-            {k === "observations" && study ? "Sessions" : l}<span className="num text-[10px] text-faint">{i + 1}</span>
+            {k === "observations" && study ? "Sessions" : l}{i < 9 && <span className="num text-[10px] text-faint">{i + 1}</span>}
           </button>
         ))}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         {tab === "overview" && <Overview r={r} openObs={openObs} setTab={setTab} openYear={openYear} />}
         {tab === "calendar" && <CalendarView runId={runId} day={day} onDay={onDay} year={year} />}
-        {tab === "observations" && <Observations runId={runId} study={study} which={which} setWhich={setWhich} onDay={onDay} day={day} />}
+        {tab === "observations" && <Observations runId={runId} study={study} which={which} setWhich={setWhich} onDay={onDay} day={day} onTrade={study ? undefined : openTrade} />}
+        {tab === "performance" && !study && <PerformanceView runId={runId} sid={sid} trials={trials} onAsk={onAsk} />}
+        {tab === "replay" && !study && <ReplayView runId={runId} tradeId={trade} onTrade={setTrade} tradeCount={nTrades} />}
+        {tab === "fills" && !study && <FillsLedger runId={runId} onTrade={openTrade} />}
+        {tab === "execution" && !study && <ExecutionCheck runId={runId} />}
         {tab === "statistics" && <Statistics r={r} openObs={openObs} />}
         {tab === "robustness" && <Robustness r={r} onAsk={onAsk} />}
         {tab === "methodology" && <Methodology r={r} runId={runId} />}
@@ -253,7 +269,7 @@ function cell(k: string, v: any) {
   return String(v);
 }
 
-function Observations({ runId, study, which, setWhich, onDay, day }: { runId: string; study: boolean; which: string; setWhich: (w: string) => void; onDay: (d: string | null) => void; day: string | null }) {
+function Observations({ runId, study, which, setWhich, onDay, day, onTrade }: { runId: string; study: boolean; which: string; setWhich: (w: string) => void; onDay: (d: string | null) => void; day: string | null; onTrade?: (id: number) => void }) {
   const q = useQuery({ queryKey: ["obs", runId, which], queryFn: () => api.get<any>(`/api/runs/${runId}/observations?which=${which}`), staleTime: 60_000 });
   const [sort, setSort] = useState<{ k: string; d: 1 | -1 }>({ k: "date", d: -1 });
   const rows = useMemo(() => {
@@ -276,7 +292,7 @@ function Observations({ runId, study, which, setWhich, onDay, day }: { runId: st
             <thead><tr>{cols.map((c) => <th key={c} className={cn("cursor-pointer select-none", typeof rows[0]?.[c] === "number" && c !== "id" && "r")} onClick={() => setSort((s) => ({ k: c, d: s.k === c ? ((-s.d) as 1 | -1) : -1 }))}>{HEAD[c] || c.replace(/_/g, " ")}{sort.k === c ? (sort.d > 0 ? " ↑" : " ↓") : ""}</th>)}</tr></thead>
             <tbody>
               {rows.map((r, i) => (
-                <tr key={`${r.date}-${r.id ?? i}`} className={cn("click", day === r.date && "sel")} onClick={() => onDay(r.date)} title="Replay this session">
+                <tr key={`${r.date}-${r.id ?? i}`} className={cn("click", day === r.date && "sel")} onClick={() => (onTrade && typeof r.id === "number" && which !== "skipped" ? onTrade(r.id) : onDay(r.date))} title={onTrade ? "Replay this trade on the stored observations" : "Replay this session"}>
                   {cols.map((c) => <td key={c} className={cn(typeof r[c] === "number" && c !== "id" && "r", c === "reason" && "!whitespace-normal max-w-[520px]")}>{cell(c, r[c])}</td>)}
                 </tr>
               ))}

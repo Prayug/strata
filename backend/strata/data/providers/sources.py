@@ -748,6 +748,48 @@ def strike_band(ref_price: float, pct: float, step: float) -> tuple[float, float
     return math.floor(lo / step) * step, math.ceil(hi / step) * step
 
 
+def session_open(store: MarketStore, sym: str, d: date) -> float | None:
+    """The opening price of session d from the same daily history that gives the previous close, or None when that
+    session's daily bar is not stored yet."""
+    daily = store.read_daily(sym)
+    if daily.is_empty():
+        return None
+    row = daily.filter(pl.col("date") == d)
+    return float(row["open"][0]) if row.height and row["open"][0] is not None else None
+
+
+def session_strikes(store: MarketStore, sym: str, d: date, band_pct: float, step: float) -> tuple[float, float, dict]:
+    """The strike range stored for session d: `band_pct` either side of the PREVIOUS close, widened after a large opening
+    gap so that the strikes always reach at least half that band beyond the session's OPENING price.
+
+    Measured on the stored archive (2026-11-26): on 2026-11-23 SPY closed the previous session at 689.81 and opened at
+    724.33, so a 3% band around the previous close (669 to 711) held no contract near the money all day. A gap is known at
+    09:30, before any decision a strategy can take in that session, so widening the range by the open tells a backtest
+    nothing it could not have known: whether a strike is stored depends on the previous close and the open alone. The range
+    is deliberately NOT widened by where the session went later: that would store far strikes only on the days the market
+    moved towards them, and a strategy that asks for such a strike would then be tested on those days alone."""
+    ref = previous_close(store, sym, d)
+    if ref is None:
+        raise SourceError(f"No daily history for {sym} before {d}: download daily bars first (the strike range is taken from the previous close and the session's open, never from where the session went).")
+    # strikes are quoted in the prices of the day. The stored history is split-adjusted to today, so before a later split it
+    # is brought back to what actually traded (measured: NVDA closed 2024-01-18 at 571, stored as 57.11 after its ten-for-one
+    # split; a band around 57 found no contract at all)
+    f = store.split_factor(sym, d)
+    op = session_open(store, sym, d)
+    if f != 1.0:
+        ref, op = ref * f, (op * f if op is not None else None)
+    lo, hi = strike_band(ref, band_pct, step)
+    info: dict = {"previous_close": ref, "band_pct": band_pct, "from_previous_close": [lo, hi], **({"as_traded_factor": f} if f != 1.0 else {})}
+    if op is not None and op > 0:
+        lo2, hi2 = strike_band(op, band_pct / 2, step)
+        if lo2 < lo or hi2 > hi:
+            info["widened_for_the_open"] = {"open": op, "gap_pct": round((op / ref - 1) * 100, 2), "reach_pct": band_pct / 2, "to": [min(lo, lo2), max(hi, hi2)]}
+            lo, hi = min(lo, lo2), max(hi, hi2)
+    else:
+        info["open"] = "not stored yet: the range comes from the previous close alone"
+    return lo, hi, info
+
+
 class OptionBarSource(Source):
     """A source of per-contract option trade bars. Subclasses implement contract listing
     and the fetch of one batch; `acquire` owns resumability, validation and the index."""
@@ -755,6 +797,7 @@ class OptionBarSource(Source):
     batch_size = 100
     require_volume = False
     rate = 3.0
+    keeps_expired = False  # True when the provider lists its contracts and still serves them after they expire (measured, not assumed)
 
     def bars_window(self, today: date | None = None) -> tuple[date, date]:
         raise NotImplementedError
@@ -785,7 +828,7 @@ class OptionBarSource(Source):
         total = sum(len(v) for v in wanted.values())
         reqs = len(self.batches(todo))
         return {"source": self.name, "pairs_requested": total, "pairs_cached": total - pairs, "pairs_to_fetch": pairs, "requests": reqs,
-                "est_bars": pairs * 150, "est_bytes": pairs * 150 * 30, "est_seconds": int(reqs / self.rate * 1.5 + 2), "cost": 0.0}
+                "est_bars": pairs * 150, "est_bytes": pairs * 150 * 30, "est_seconds": int(reqs / max(self.rate, 1e-6) * 1.5 + 2) if reqs else 0, "cost": 0.0}
 
     def acquire(self, sym: str, wanted: dict[date, list[Contract]], progress=None, should_cancel=None, force: bool = False) -> dict:
         """Download the option trade bars for the requested (session, contract) pairs.
@@ -879,10 +922,7 @@ class OptionBarSource(Source):
 
     # ---- bulk mode (Data page): a band around the previous close, short expirations
     def bulk_contracts(self, client, sym: str, d: date, band_pct: float = 2.0, max_dte: int = 7) -> list[Contract]:
-        ref = previous_close(self.store, sym, d)
-        if ref is None:
-            raise SourceError(f"No daily history for {sym} before {d}: download daily bars first (the strike range is taken from the previous close, never from the session itself).")
-        lo, hi = strike_band(ref, band_pct, STRIKE_STEP.get(sym, 1.0))
+        lo, hi, _ = session_strikes(self.store, sym, d, band_pct, STRIKE_STEP.get(sym, 1.0))
         return self.list_contracts(client, sym, d, d, d + timedelta(days=max_dte), lo, hi)
 
     def bulk_wanted(self, sym: str, start: date, end: date, band_pct: float = 2.0, max_dte: int = 7) -> dict[date, list[Contract]]:
@@ -1037,6 +1077,7 @@ class Alpaca(OptionBarSource):
     LIVE = "https://api.alpaca.markets"
     STOCKS_FIRST = date(2016, 1, 4)
     rate = 3.0  # the free plan allows 200 historical calls a minute
+    keeps_expired = True  # measured on 2026-11-25: trade bars of contracts that expired in January 2024 are still served
     _host: str | None = None
     _throttle: "Throttle | None" = None
 

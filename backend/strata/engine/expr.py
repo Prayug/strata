@@ -180,9 +180,22 @@ def is_ticker(name: str) -> bool:
     return bool(_TICKER.fullmatch(name)) and name not in FIELDS and name not in REGISTRY
 
 
+# level and candle functions that can be asked of another symbol: QQQ.opening_range_high(30). They read that symbol's own
+# bars at the same instant and keep no state, so "SPY breaks its opening range while QQQ has broken its own" is one rule.
+CROSS_FUNCS = ("opening_range_high", "opening_range_low", "rolling_high", "rolling_low", "consecutive_bearish_candles", "consecutive_bullish_candles", "sma", "ema", "rsi")
+
+
 class _Canon(ast.NodeTransformer):
     def visit_Name(self, node: ast.Name):
         return ast.copy_location(ast.Name(id=ALIASES[node.id], ctx=node.ctx), node) if node.id in ALIASES else node
+
+    def visit_Call(self, node: ast.Call):
+        self.generic_visit(node)
+        f = node.func
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and is_ticker(f.value.id) and f.attr in CROSS_FUNCS:
+            # QQQ.opening_range_high(30) is written, opening_range_high(30, symbol="QQQ") is what the rest of the language sees
+            return ast.copy_location(ast.Call(func=ast.Name(id=f.attr, ctx=ast.Load()), args=node.args, keywords=node.keywords + [ast.keyword(arg="symbol", value=ast.Constant(value=f.value.id))]), node)
+        return node
 
 
 @lru_cache(maxsize=4096)
@@ -682,6 +695,16 @@ class Evaluator:
             return (a0 <= b0 and a1 > b1) if f == "crosses_above" else (a0 >= b0 and a1 < b1)
         args = [self._ev(a) for a in n.args]
         kw = {k.arg: self._ev(k.value) for k in n.keywords}
+        if f in CROSS_FUNCS and isinstance(kw.get("symbol"), str):
+            # the same function, on the other symbol's own bars at the same instant
+            other = Evaluator(self.ctx, self.pos, symbol=kw.pop("symbol"))
+            other.shift = self.shift
+            try:
+                return getattr(other, f"f_{f}")(*args, **kw)
+            except TypeError as e:
+                raise ExprError(f"{REGISTRY[f]['signature']}: {e}") from None
+            finally:
+                self.missing |= other.missing
         fn = getattr(self, f"f_{f}", None)
         if fn is None:
             raise ExprError(f"{f} is a value, not a function")

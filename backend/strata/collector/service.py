@@ -118,8 +118,10 @@ def save_config(new: dict) -> dict:
     for k in cfg["rate_per_second"]:
         cfg["rate_per_second"][k] = min(max(float(cfg["rate_per_second"][k]), 0.05), 10.0)
     set_setting("collector.config", json.dumps(cfg))
-    no_opts = [s for s in cfg["symbols"] if s not in STRIKE_STEP]
-    return {"config": cfg, "notes": [f"Option contracts are only collected for {', '.join(STRIKE_STEP)}: their strike grids are configured. {', '.join(no_opts)} will have underlying bars collected only."] if no_opts and o["enabled"] else []}
+    from strata.data.providers.sources import SOURCES
+    lists = bool(getattr(SOURCES.get(o["provider"]), "keeps_expired", False))  # a provider with a contract listing needs no strike grid
+    no_opts = [] if lists else [s for s in cfg["symbols"] if s not in STRIKE_STEP]
+    return {"config": cfg, "notes": [f"Option contracts are only collected for {', '.join(STRIKE_STEP)} from this source: their strike grids are configured. {', '.join(no_opts)} will have underlying bars collected only."] if no_opts and o["enabled"] else []}
 
 
 # ----------------------------------------------------------------------------- one cycle
@@ -153,6 +155,64 @@ def wanted_contracts(store: MarketStore, sym: str, sessions: list[date], cfg: di
         out[d] = cs
         info["contracts"] += len(cs)
     return out, info
+
+
+def keeps_history(src) -> bool:
+    """A provider that lists its contracts and still serves them after they expire (Alpaca, measured): a session that was
+    missed can be collected later, so nothing has to be given up as unrecoverable."""
+    return bool(getattr(src, "keeps_expired", False))
+
+
+def listing_universe(cfg: dict) -> tuple[float, int]:
+    """The strike band (% of the previous close) and the furthest expiration (days) a listing provider is asked for."""
+    o = cfg["options"]
+    return float(o["strike_pct"]), max([int(x) for x in o["dte"]] or [0])
+
+
+def listed_contracts(store: MarketStore, src, sym: str, sessions: list[date], cfg: dict) -> tuple[dict[date, list], dict]:
+    """For a provider with a contract listing: every LISTED contract within `strike_pct` of the previous close that expires
+    within the largest configured number of days. It is the same selection as `strata download ... option_trades --band N
+    --max-dte M` (one function serves both), so a collected session is indistinguishable from a downloaded one.
+
+    The strike range comes from the close of the session BEFORE each one. A session whose previous close is not stored is
+    not guessed at: it is reported in `failed` and retried."""
+    from strata.data.providers import sources as S
+    band, max_dte = listing_universe(cfg)
+    rights = set(cfg["options"]["rights"])
+    info = {"symbol": sym, "sessions": [d.isoformat() for d in sessions], "contracts": 0, "trimmed": False, "skipped": [], "failed": {},
+            "universe": f"every listed contract within {band:g}% of the previous close that expires within {max_dte} days"}
+    out: dict[date, list] = {}
+    daily = store.read_daily(sym)
+    known = set(daily["date"].to_list()) if not daily.is_empty() else set()
+    failed = info["failed"]  # keyed by the session's ISO date: the report is stored as JSON
+    with S._client() as client:
+        for d in sessions:
+            prev = cal.next_trading_day(d, -1)
+            if prev not in known:
+                failed[d.isoformat()] = f"the close of {prev} is not stored, so the strike range of {d} cannot be chosen without guessing"
+                continue
+            try:
+                cs = [c for c in src.bulk_contracts(client, sym, d, band, max_dte) if c.right in rights]
+            except S.SourceError as e:
+                failed[d.isoformat()] = f"the contract listing failed ({str(e)[:140]})"
+                continue
+            if not cs:
+                failed[d.isoformat()] = "the contract listing returned nothing for this session"
+                continue
+            out[d] = cs
+            info["contracts"] += len(cs)
+    info["skipped"] = [f"{d}: {why}" for d, why in failed.items()]
+    return out, info
+
+
+def sessions_behind(store: MarketStore, sym: str, provider: str, last_done: date, cap: int = 60) -> list[date]:
+    """The last session stored for this provider's option data and every completed session after it. The last stored one is
+    included because a cycle that was cut off may have left it unfinished; contract-sessions already stored are skipped."""
+    idx = store.option_bar_index(sym, provider=provider)
+    if idx.is_empty():
+        return []
+    last = idx["date"].max()
+    return [d for d in cal.trading_days(last, last_done)][:cap]
 
 
 STALE_SECONDS = 900  # a running cycle with no heartbeat for this long was cut off
@@ -291,7 +351,7 @@ RECOVERABILITY = [
     {"data": "1-minute bars (underlying)", "source": "Yahoo", "window": "about 30 days back, 7 days per request", "after_a_miss": "Recoverable for about a month, then gone from this source. A free Alpaca key reaches 2016."},
     {"data": "Option 1-minute trade bars", "source": "Yahoo", "window": "contracts still listed, or expired within about a day; the last ~7 days of bars",
      "after_a_miss": "A contract that has expired more than about a day ago is PERMANENTLY unavailable from this source. Same-day (0DTE) contracts must be collected on the day itself or the next morning."},
-    {"data": "Option 1-minute trade bars", "source": "Alpaca (free key)", "window": "any contract, back to February 2024", "after_a_miss": "Recoverable at any time."},
+    {"data": "Option 1-minute trade bars", "source": "Alpaca (free key)", "window": "any contract, listed or expired, back to 2024-01-18 (measured)", "after_a_miss": "Recoverable at any time: the next cycle collects every session since the last stored one."},
     {"data": "Option 1-minute trade aggregates", "source": "Massive (free key)", "window": "any contract, about two years back", "after_a_miss": "Recoverable for about two years."},
     {"data": "Option bid/ask quotes during the session", "source": "no free source", "window": "not available", "after_a_miss": "Cannot be collected by Strata at all without a paid feed; it is never estimated."},
     {"data": "End-of-day option quotes", "source": "public archive (to December 2025), DoltHub (2019 onward)", "window": "static archive; DoltHub updates daily", "after_a_miss": "Recoverable."},
@@ -370,6 +430,20 @@ def run_once(progress=None, should_cancel=None, trigger: str = "manual", store: 
                     rep["requests"] += 1 if ds == "daily" else 3
                 except S.SourceError as e:
                     rep["errors"].append(f"{sym} {ds} bars: {str(e)[:160]}")
+            asrc = S.get_source("alpaca", store)
+            if "1m" in cfg["bar_resolutions"] and getattr(asrc, "name", "") == "alpaca" and asrc.available()[0]:
+                # the consolidated tape's minute bars, continued from the last stored session (the free feed above keeps a month)
+                try:
+                    have_ = store.datasets(sym, "underlying", res="1m", provider="alpaca")
+                    done_ = store.complete_sessions(have_[0]) if have_ else set()
+                    start_ = (max(done_) + timedelta(days=1)) if done_ else last_done - timedelta(days=45)  # a first cycle takes the recent weeks; the full history is `strata download alpaca bars_1m`
+                    asrc.rate = cfg["rate_per_second"].get("alpaca", asrc.rate)
+                    r = asrc.stock_bars(sym, start_, last_done, None, should_cancel) if start_ <= last_done else {"bars": 0, "sessions": 0, "sessions_cached": 0, "pages": 0, "feed": "sip"}
+                    one["underlying"]["alpaca_1m"] = {**{k: r.get(k) for k in ("bars", "sessions", "sessions_cached", "pages", "feed")}, "from": start_.isoformat(), "through": last_done.isoformat()}
+                    rep["requests"] += int(r.get("pages") or 0)
+                    rep["underlying_bars"] = rep.get("underlying_bars", 0) + int(r.get("bars") or 0)
+                except S.SourceError as e:
+                    rep["errors"].append(f"{sym} 1-minute bars (alpaca): {str(e)[:160]}")
             if not cfg["options"]["enabled"]:
                 continue
             if opt_src is None or not opt_src.available()[0]:
@@ -384,15 +458,44 @@ def run_once(progress=None, should_cancel=None, trigger: str = "manual", store: 
             a, b = opt_src.bars_window(today)
             retry = [d for d in due_sessions(sym) if d not in sessions]
             target = sorted(set(sessions) | set(gap) | set(retry))
-            wanted, info = wanted_contracts(store, sym, [d for d in target if a <= d <= b], cfg, today)
+            listing = keeps_history(opt_src)
+            if listing:
+                # nothing expires out of reach here: every session since the last stored one is collected, however long the collector was off
+                behind = sessions_behind(store, sym, opt_src.name, last_done)
+                extra = [d for d in behind if d not in target]
+                if extra:
+                    rep["notes"].append(f"{sym}: {len(extra)} earlier session{'s' if len(extra) != 1 else ''} since the last stored one ({extra[0]} to {extra[-1]}) {'are' if len(extra) != 1 else 'is'} collected too; {opt_src.name} still serves expired contracts.")
+                target = sorted(set(target) | set(behind))
+                wanted, info = listed_contracts(store, opt_src, sym, [d for d in target if a <= d <= b], cfg)
+                rep["requests"] += len(wanted) + len(info["failed"])
+                for d, why in info["failed"].items():
+                    rep["errors"].append(f"{sym} {d}: {why}; queued for retry")
+                    enqueue("options", sym, date.fromisoformat(d), opt_src.name, why, cfg["max_attempts"])
+            else:
+                wanted, info = wanted_contracts(store, sym, [d for d in target if a <= d <= b], cfg, today)
             lost = [d for d in target if not (a <= d <= b) or (d in wanted and not wanted[d])]
             for d in lost:
                 wanted.pop(d, None)
-                rep["unrecoverable"].append({"symbol": sym, "date": d.isoformat(), "reason": f"{opt_src.name} no longer serves the contracts of this session (its window is {a} to {b}, and expired contracts drop out)"})
-                resolve("options", sym, d, "unrecoverable", "the provider no longer serves this session's contracts")
+                why = f"{opt_src.name} has no option history outside {a} to {b}" if listing else f"{opt_src.name} no longer serves the contracts of this session (its window is {a} to {b}, and expired contracts drop out)"
+                rep["unrecoverable"].append({"symbol": sym, "date": d.isoformat(), "reason": why})
+                resolve("options", sym, d, "unrecoverable", "the provider does not serve this session's contracts")
             est = opt_src.estimate(wanted, sym) if wanted else {"requests": 0, "pairs_to_fetch": 0, "pairs_cached": 0, "pairs_requested": 0}
             share = max(50, (budget - rep["requests"]) // max(1, len(syms) - i))
-            if est["requests"] > share and wanted:
+            if est["requests"] > share and wanted and listing:
+                # a session is collected whole or not at all, oldest first: what does not fit waits for the next cycle and is still served then
+                kept: dict[date, list] = {}
+                used, fetching = 0, False
+                for d in sorted(wanted):
+                    n = opt_src.estimate({d: wanted[d]}, sym)["requests"]
+                    if fetching and used + n > share:
+                        break  # at least one session with something left to fetch is always taken, so a cycle always moves forward
+                    kept[d], used, fetching = wanted[d], used + n, fetching or n > 0
+                left = [d for d in sorted(wanted) if d not in kept]
+                wanted = kept
+                if left:
+                    info["deferred"] = [d.isoformat() for d in left]
+                    rep["notes"].append(f"{sym}: {len(left)} session{'s' if len(left) != 1 else ''} ({left[0]} to {left[-1]}) did not fit in {budget} requests per cycle and {'are' if len(left) != 1 else 'is'} left for the next cycle; nothing is lost, the provider still serves them.")
+            elif est["requests"] > share and wanted:
                 # stay inside the request budget by keeping the strikes nearest the money (they come first in each list)
                 keep = max(0.1, share / est["requests"])
                 wanted = {d: cs[:max(2, int(len(cs) * keep))] for d, cs in wanted.items()}
@@ -414,7 +517,7 @@ def run_once(progress=None, should_cancel=None, trigger: str = "manual", store: 
                 else:
                     for d in wanted:
                         resolve("options", sym, d)
-                    rec = [d for d in wanted if d in gap or d in retry]
+                    rec = [d for d in wanted if d in gap or d in retry or (listing and d < sessions[0])]
                     if rec and (r.get("pairs_ok") or r.get("pairs_cached")):
                         rep["recovered"] += [{"symbol": sym, "date": d.isoformat()} for d in rec]
                 chk = integrity(store, sym, opt_src.name, sorted(wanted)) if wanted and hasattr(store, "read_option_bars") else None
@@ -442,21 +545,29 @@ def run_once(progress=None, should_cancel=None, trigger: str = "manual", store: 
             raise
         return rep
     finally:
-        rep["bytes_after"] = store.storage_bytes()
-        rep["seconds"] = round(time.time() - t0, 1)
-        rep["status"] = status
-        if status in ("done", "partial"):
-            try:  # sessions that have just arrived are the forward evidence of any frozen experiment
-                from strata.research import forward as FW
-                rep["forward"] = FW.evaluate_active(store)
-            except Exception as e:  # noqa: BLE001
-                rep["forward"] = [{"status": "error", "error": f"{type(e).__name__}: {e}"[:200]}]
-        with db.connect() as con:
-            con.execute("UPDATE collector_runs SET finished_at=?, status=?, report=? WHERE id=?", (db.now(), status, json.dumps(rep, default=str), run_id))
-        _notify(rep, status)
-        _lock.release()
-        if progress:
-            progress(1.0, "done")
+        # whatever happens while the cycle is being written up, the lock is released and the run is closed: a cycle that
+        # stayed "running" would block every later one until its heartbeat went stale
+        try:
+            rep["bytes_after"] = store.storage_bytes()
+            rep["seconds"] = round(time.time() - t0, 1)
+            rep["status"] = status
+            if status in ("done", "partial"):
+                try:  # sessions that have just arrived are the forward evidence of any frozen experiment
+                    from strata.research import forward as FW
+                    rep["forward"] = FW.evaluate_active(store)
+                except Exception as e:  # noqa: BLE001
+                    rep["forward"] = [{"status": "error", "error": f"{type(e).__name__}: {e}"[:200]}]
+            try:
+                blob = json.dumps(rep, default=str)
+            except (TypeError, ValueError) as e:
+                blob = json.dumps({"status": status, "requests": rep.get("requests", 0), "bars": rep.get("bars", 0), "errors": [str(x) for x in rep.get("errors", [])] + [f"the cycle's full report could not be stored ({type(e).__name__}: {e})"[:200]]})
+            with db.connect() as con:
+                con.execute("UPDATE collector_runs SET finished_at=?, status=?, report=? WHERE id=?", (db.now(), status, blob, run_id))
+            _notify(rep, status)
+        finally:
+            _lock.release()
+            if progress:
+                progress(1.0, "done")
 
 
 def _notify(rep: dict, status: str) -> None:
@@ -535,7 +646,9 @@ def coverage(store: MarketStore, cfg: dict, sessions: int = 45, today: date | No
     today = today or datetime.now(cal.ET).date()
     days = [d for d in cal.trading_days(today - timedelta(days=int(sessions * 1.6) + 10), today)][-sessions:]
     buckets = [int(x) for x in cfg["options"]["dte"]]
-    out = {"sessions": [d.isoformat() for d in days], "buckets": buckets, "symbols": {}, "missed": []}
+    src_cls = S.SOURCES.get(cfg["options"]["provider"])
+    recoverable = bool(getattr(src_cls, "keeps_expired", False))  # a session this provider has not stored yet can still be fetched
+    out = {"sessions": [d.isoformat() for d in days], "buckets": buckets, "symbols": {}, "missed": [], "waiting": [], "recoverable": recoverable}
     for sym in cfg["symbols"]:
         res_by_day: dict[date, str] = {}
         for res in ("60m", "5m", "1m"):
@@ -558,15 +671,17 @@ def coverage(store: MarketStore, cfg: dict, sessions: int = 45, today: date | No
                 slot = per.setdefault(r["date"], {}).setdefault(str(b), {"ok": 0, "empty": 0})
                 slot["ok" if r["status"] == "ok" else "empty"] += r["n"]
         rows = []
-        can_opt = sym in S.STRIKE_STEP and cfg["options"]["enabled"]
+        can_opt = (sym in S.STRIKE_STEP or recoverable) and cfg["options"]["enabled"]
         for d in days:
             o = per.get(d, {})
             traded = sum(v["ok"] for v in o.values())
             age = len([x for x in days if x > d])
-            state = "collected" if traded else ("not applicable" if not can_opt else "pending" if age <= 1 else "missed")
+            state = "collected" if traded else ("not applicable" if not can_opt else "pending" if age <= 1 else "waiting" if recoverable else "missed")
             rows.append({"date": d.isoformat(), "underlying": res_by_day.get(d), "contracts_with_trades": traded, "contracts_without_trades": sum(v["empty"] for v in o.values()), "by_bucket": o, "state": state})
             if state == "missed":
                 out["missed"].append({"symbol": sym, "date": d.isoformat(), "reason": "no option trade bars were collected while the contracts were still being served" + (" (the collector was not enabled)" if not cfg["enabled"] else "")})
+            elif state == "waiting":
+                out["waiting"].append({"symbol": sym, "date": d.isoformat()})
         out["symbols"][sym] = rows
     return out
 
@@ -606,6 +721,12 @@ def next_due(cfg: dict, now: datetime | None = None) -> datetime | None:
             return max(nxt, now)
     m = cal.parse_hhmm(cfg["run_after"])
     d = now.date()
+    # a completed session that no cycle has covered yet (the computer was off, or the collector has just been switched on) is
+    # due at once: the free source drops a 0DTE contract about a day after it expires, so waiting for the next close can lose it
+    at = lambda day: datetime.combine(day, datetime.min.time(), cal.ET) + timedelta(minutes=m)  # noqa: E731
+    prev = d if cal.is_trading_day(d) and at(d) <= now else cal.next_trading_day(d, -1)
+    if last_t is None or last_t < at(prev):
+        return now
     for _ in range(10):
         if cal.is_trading_day(d):
             t = datetime.combine(d, datetime.min.time(), cal.ET) + timedelta(minutes=m)
@@ -613,6 +734,60 @@ def next_due(cfg: dict, now: datetime | None = None) -> datetime | None:
                 return t if t > now else now
         d += timedelta(days=1)
     return None
+
+
+def stored_universe(store: MarketStore, provider: str = "alpaca", recent_days: int = 45) -> dict:
+    """What the option data already stored from a provider covers, measured from its index over the recent sessions: which
+    symbols, how far from the previous close the strikes reach and how far out the expirations go. Read from what is on
+    disk, so a collector that continues the archive asks for the same contracts the archive already holds."""
+    out = {"provider": provider, "symbols": {}, "band_pct": None, "max_dte": None}
+    for key in store.datasets(dtype="options", obs="trade", provider=provider):
+        idx = store.option_bar_index(key.symbol, provider=provider)
+        if idx.is_empty():
+            continue
+        last = idx["date"].max()
+        rec = idx.filter(pl.col("date") >= last - timedelta(days=recent_days))
+        daily = store.read_daily(key.symbol)
+        if daily.is_empty():
+            continue
+        prev = daily.select("date", pl.col("close").shift(1).alias("_prev")).drop_nulls()
+        x = rec.join(prev, on="date", how="inner").with_columns(((pl.col("strike") / pl.col("_prev") - 1) * 100).alias("_off"), (pl.col("expiration") - pl.col("date")).dt.total_days().alias("_dte"))
+        if x.is_empty():
+            continue
+        g = x.group_by("date").agg((-pl.col("_off").min()).alias("lo"), pl.col("_off").max().alias("hi"), pl.col("_dte").max().alias("dte"), pl.len().alias("n"))
+        band = float(pl.concat([g["lo"], g["hi"]]).median())
+        out["symbols"][key.symbol] = {"sessions": int(idx["date"].n_unique()), "first": str(idx["date"].min()), "last": str(last), "band_pct": round(band, 2),
+                                      "max_dte": int(g["dte"].median()), "contracts_per_session": int(g["n"].median()), "rights": sorted(rec["right"].unique().to_list())}
+    if out["symbols"]:
+        vals = list(out["symbols"].values())
+        out["band_pct"] = max(0.25, round(min(v["band_pct"] for v in vals) * 2) / 2)  # the listing rounds the band outward to whole strikes, so the measured reach sits just above the setting
+        out["max_dte"] = max(v["max_dte"] for v in vals)
+    return out
+
+
+def continuing_config(store: MarketStore, provider: str = "alpaca") -> dict | None:
+    """The collector settings that carry the stored archive forward unchanged: the same symbols, strike band and expirations."""
+    u = stored_universe(store, provider)
+    if not u["symbols"]:
+        return None
+    rights = sorted({r for v in u["symbols"].values() for r in v["rights"]})
+    return {"symbols": sorted(u["symbols"]), "options": {"enabled": True, "provider": provider, "strike_pct": u["band_pct"], "dte": sorted({b for b in (0, 1, 3, 7, 14, 30) if b < u["max_dte"]} | {u["max_dte"]}), "rights": rights},
+            "measured": u}
+
+
+def option_sources(store: MarketStore) -> list[dict]:
+    """The option sources the collector can use, whether each is usable now and what happens after a missed session."""
+    from strata.data.providers import sources as S
+    out = []
+    for src in S.option_bar_sources(store):
+        try:
+            ok, msg = src.available()
+        except Exception as e:  # noqa: BLE001
+            ok, msg = False, f"{type(e).__name__}"
+        keeps = keeps_history(src)
+        out.append({"name": src.name, "label": getattr(src, "label", src.name), "available": bool(ok), "detail": msg, "keeps_expired": keeps,
+                    "after_a_miss": "A missed session is collected by the next cycle: expired contracts stay available." if keeps else "A missed session is lost once its contracts drop out of the source (about a day after they expire)."})
+    return out
 
 
 def state(store: MarketStore | None = None) -> dict:
@@ -625,11 +800,22 @@ def state(store: MarketStore | None = None) -> dict:
             by.setdefault(key.symbol, {})[f"{key.provider} {key.dtype} {key.obs} {key.res}"] = store.storage_bytes(key=key)
     nd = next_due(cfg)
     prov = cfg["options"]["provider"]
+    srcs = option_sources(store)
+    cur = next((x for x in srcs if x["name"] == prov), None)
+    keeps = bool(cur and cur["keeps_expired"])
+    band, max_dte = listing_universe(cfg)
+    cont = continuing_config(store) if any(x["name"] == "alpaca" and x["available"] for x in srcs) else None
+    same = bool(cont) and prov == "alpaca" and set(cont["symbols"]) <= set(cfg["symbols"]) and abs(band - cont["options"]["strike_pct"]) < 1e-9 and max_dte == max(cont["options"]["dte"]) and set(cont["options"]["rights"]) <= set(cfg["options"]["rights"])
     return {"config": cfg, "defaults": DEFAULT, "running": running(), "history": hist, "next_due": nd.isoformat() if nd else None, "last": hist[0] if hist else None, "coverage": coverage(store, cfg), "quality": quality(store, cfg),
             "storage": {"total_bytes": store.storage_bytes(), "limit_bytes": int(cfg["storage_limit_gb"] * 1e9), "by_symbol": by},
             "license": [LICENSE_NOTES["yahoo"]] + ([LICENSE_NOTES[prov]] if prov != "yahoo_options" else []),
             "queue": {"pending": queue("pending", 100), "abandoned": queue("abandoned", 50), "unrecoverable": queue("unrecoverable", 50)}, "recoverability": RECOVERABILITY,
-            "offline": "Nothing is collected while the computer is asleep or off, or while Strata is not running. Run the collector on a machine that stays on (see README: unattended collection) if gaps matter.",
+            "sources": srcs, "source": cur, "listing": keeps,
+            "universe": (f"Every listed contract within {band:g}% of the previous close that expires within {max_dte} days, calls and puts as chosen." if keeps
+                         else "Contracts constructed around the previous close at the chosen expirations, nearest the money first."),
+            "continue": None if cont is None else {**cont, "in_effect": same},
+            "offline": ("Nothing is collected while the computer is asleep or off, or while Strata is not running. With this source that costs nothing but time: the next cycle collects every session since the last stored one." if keeps
+                        else "Nothing is collected while the computer is asleep or off, or while Strata is not running. Run the collector on a machine that stays on (see README: unattended collection) if gaps matter."),
             "safety": "The collector only reads market data (GET requests). It cannot place, change or read orders: no trading endpoint is reachable from this code.",
             "how_to_schedule": "While the Strata server is running the collector starts by itself after each close. To collect without the app open, schedule `strata collect --once` (cron or launchd) on a machine that stays awake."}
 
@@ -657,8 +843,8 @@ class Scheduler(threading.Thread):
         if nd is None or nd > datetime.now(cal.ET):
             return None
         last = history(1)
-        if last and last[0]["status"] in ("error", "skipped") and (datetime.now(cal.ET) - datetime.fromisoformat(last[0]["started_at"]).astimezone(cal.ET)) < timedelta(hours=1):
-            return None  # do not hammer a failing source: wait an hour before trying again
+        if last and last[0]["status"] in ("error", "skipped", "cancelled") and (datetime.now(cal.ET) - datetime.fromisoformat(last[0]["started_at"]).astimezone(cal.ET)) < timedelta(hours=1):
+            return None  # do not hammer a failing source, or restart a cycle someone has just stopped: wait an hour before trying again
         rid = db.create_run("collector", "Data collection cycle", {"trigger": "schedule"})
         self.jobs.submit(rid, "collector", {"trigger": "schedule"})
         return rid

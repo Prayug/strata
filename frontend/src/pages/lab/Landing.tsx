@@ -15,8 +15,8 @@ export interface ComposerHandle { focus: () => void; set: (t: string) => void }
 
 /** The one input of the lab. Enter sends, Shift+Enter breaks the line, "/" focuses it from anywhere. */
 export const Composer = forwardRef<ComposerHandle, {
-  onSend: (text: string) => void; busy?: boolean; placeholder?: string; mode: "quick" | "review"; onMode: (m: "quick" | "review") => void; big?: boolean; chips?: string[]; autoFocus?: boolean;
-}>(({ onSend, busy, placeholder, mode, onMode, big, chips, autoFocus }, ref) => {
+  onSend: (text: string) => void; busy?: boolean; placeholder?: string; mode: "quick" | "review"; onMode: (m: "quick" | "review") => void; big?: boolean; chips?: string[]; autoFocus?: boolean; bar?: boolean;
+}>(({ onSend, busy, placeholder, mode, onMode, big, chips, autoFocus, bar }, ref) => {
   const [text, setText] = useState("");
   const el = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(ref, () => ({ focus: () => el.current?.focus(), set: (t: string) => { setText(t); setTimeout(() => el.current?.focus(), 0); } }));
@@ -33,6 +33,30 @@ export const Composer = forwardRef<ComposerHandle, {
     onSend(t);
     setText("");
   };
+  if (bar) {
+    // the command line of the research desk: one row across the top, the request on the left and how it runs on the right
+    return (
+      <div className="cmdline">
+        <div className="flex items-start gap-2.5 px-3.5 py-2">
+          <span className="num mt-[5px] select-none text-[15px] leading-6 text-accent" aria-hidden>❯</span>
+          <textarea ref={el} rows={1} value={text} placeholder={placeholder} data-testid="composer" aria-label="Research request" className="min-w-0 flex-1"
+            onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
+          <div className="mt-[3px] inline-flex shrink-0 border border-line-2 bg-bg-2 p-0.5 text-xs">
+            {([["quick", "Run at once", "Runs straight away and tells you every assumption it made."], ["review", "Review first", "Shows how the request was read and waits for you to confirm before running."]] as const).map(([k, l, h]) => (
+              <Tip key={k} content={h}><button onClick={() => onMode(k)} className={cn("h-6 px-2.5 transition-colors", mode === k ? "bg-bg-4 text-fg" : "text-muted hover:text-fg")}>{l}</button></Tip>
+            ))}
+          </div>
+          <button className="btn primary sm mt-[3px] !rounded-[3px] !px-2.5" onClick={send} disabled={busy || !text.trim()} aria-label="Send" data-testid="send">{busy ? <Loader2 className="animate-spin" /> : <ArrowUp strokeWidth={2.6} />}</button>
+        </div>
+        {chips && chips.length > 0 && (
+          <div className="flex gap-1.5 overflow-x-auto border-t border-line px-3.5 py-1.5" style={{ scrollbarWidth: "none" }}>
+            <span className="shrink-0 self-center text-[10.5px] uppercase tracking-[0.07em] text-faint">next</span>
+            {chips.map((c) => <button key={c} className="chip !h-[22px] shrink-0 !rounded-[3px] !text-[11.5px]" onClick={() => onSend(c)} disabled={busy} title="Send this follow-up">{c}</button>)}
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div>
       {chips && chips.length > 0 && (
@@ -138,6 +162,50 @@ const WORKFLOWS: { id: string; title: string; line: string; tone: string; icon: 
     links: [["Backtests", "/results", "Results on observed option prices"], ["Forward validation", "/forward", "Freeze it and judge it on sessions that do not exist yet"], ["Experiment registry", "/registry", "What has already been tested on which dates"]] },
 ];
 
+const TRY: [string, (s: string) => string][] = [
+  ["A strategy", (s) => `Buy ATM ${s} 0DTE calls at the open after a 1% down day, exit at 3:55 PM Eastern or when ${s} has risen 1%`],
+  ["An ordered rule", (s) => `Buy ${s} 0DTE calls when price reclaims VWAP after declining 0.5% from the open, with a 30% premium target and a 15% premium stop`],
+  ["A grid from one sentence", (s) => `Buy ATM ${s} 0DTE calls at 10:00 AM Eastern after a 0.5% down day and compare exits after 15, 30, 60 and 120 minutes with 0DTE versus 1DTE`],
+  ["Across symbols", () => "Buy ATM SPY 0DTE calls at the open after a 1% down day, sell at 3:55 PM Eastern, and compare the same signal across SPY, QQQ and IWM"],
+];
+
+/** What is stored on this machine, as one line per symbol, and sentences that run on it. Shown only when there is something stored. */
+function Stored({ onPick }: { onPick: (text: string) => void }) {
+  const nav = useNavigate();
+  const q = useQuery({ queryKey: ["dataset-options"], queryFn: () => api.get<any>("/api/dataset/options"), staleTime: 60_000, retry: false });
+  const d = q.data;
+  const rows: any[] = (d?.symbols || []).filter((r: any, i: number, all: any[]) => all.findIndex((x) => x.symbol === r.symbol) === i).slice(0, 6);
+  if (!rows.length) return null;
+  const big = rows[0];
+  return (
+    <div className="mt-6 border border-line" data-testid="stored-tape">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-bg-1 px-3.5 py-2">
+        <span className="eyebrow">Stored on this machine</span>
+        <span className="num text-[12.5px]">{Number(d.bars).toLocaleString()} option trade bars</span>
+        <span className="flex-1" />
+        <span className={cn("text-xs", d.collector.enabled ? "text-up" : "text-warn")}>{d.collector.enabled ? `● collector on${d.collector.next_due ? `, next cycle ${new Date(d.collector.next_due).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}` : ""}` : "○ collector off: new sessions are not being added"}</span>
+        <span className={cn("text-xs", d.quotes.connected ? "text-up" : "dim")}>{d.quotes.connected ? "● " : "○ "}{d.quotes.text}</span>
+      </div>
+      <div className="grid grid-cols-1 gap-px bg-line md:grid-cols-3">
+        {rows.slice(0, 3).map((r) => (
+          <button key={r.symbol} className="bg-bg-0 px-3.5 py-2.5 text-left transition-colors hover:bg-bg-2" onClick={() => nav("/replay")} title="Open a stored session in the replay">
+            <div className="flex items-baseline gap-2"><span className="num text-[15px] font-medium">{r.symbol}</span><span className="num text-xs dim">{r.sessions} sessions</span></div>
+            <div className="num mt-0.5 text-[11.5px] dim">{r.first} → {r.last}</div>
+            <div className="num text-[11.5px] dim">{(r.bars / 1e6).toFixed(1)}M bars · {r.with_trades.toLocaleString()} contract-sessions · {r.provider}</div>
+          </button>
+        ))}
+      </div>
+      <div className="border-t border-line px-3.5 py-2.5">
+        <div className="eyebrow mb-1.5">Sentences that run on it</div>
+        <div className="flex flex-col gap-1">
+          {TRY.map(([k, f]) => <button key={k} className="flex items-baseline gap-3 text-left text-[13px] soft hover:text-fg" onClick={() => onPick(f(big.symbol))} title="Put this on the line to edit or run"><span className="w-[150px] shrink-0 text-xs dim">{k}</span><span className="min-w-0">{f(big.symbol)}</span></button>)}
+        </div>
+        <div className="mt-2 text-[11.5px] dim">These are trade prints, not quotes: a result on them shows where contracts traded, and its cost assumptions are stated with it.</div>
+      </div>
+    </div>
+  );
+}
+
 export function Landing() {
   const nav = useNavigate();
   const meta = useAiMeta();
@@ -188,6 +256,8 @@ export function Landing() {
           ) : <span className="chip"><Database className="size-3.5" />No data stored yet</span>)}
           <span>Nothing is simulated, and no paid data is ever fetched without your approval.</span>
         </div>
+
+        <Stored onPick={(t) => comp.current?.set(t)} />
 
         {firstRun && <Onboarding ob={ob.data} onAsk={start} />}
 

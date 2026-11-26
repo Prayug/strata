@@ -82,7 +82,7 @@ test("follow-ups reuse the question: sessions, option trade prices, skipped sign
   await ask(page, "Show me every skipped signal and why it was skipped.");
   await expect(page.getByTestId("result-skipped")).toContainText("1 qualifying session");
   await expect(page.locator("table.t tbody tr")).toHaveCount(1);
-  await expect(page.locator("table.t tbody tr").first()).toContainText("no option trade data stored for the session");
+  await expect(page.locator("table.t tbody tr").first()).toContainText("no option trade data is stored for the session");
 
   await ask(page, "Export the complete research report.");
   const exp = page.getByTestId("result-export");

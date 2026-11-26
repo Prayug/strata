@@ -61,6 +61,9 @@ class JobManager:
         self.lock = threading.Lock()
         self.loop: asyncio.AbstractEventLoop | None = None
         self._stop = False
+        # the scheduler waits on this, not on time.sleep: a test that switches sleeping off for the whole process (to skip a
+        # provider's retry delays) would otherwise turn every scheduler still alive into a spinning thread that starves it
+        self._tick = threading.Event()
         threading.Thread(target=self._reader, daemon=True).start()
         threading.Thread(target=self._scheduler, daemon=True).start()
 
@@ -124,7 +127,7 @@ class JobManager:
                     proc.start()
                     self.running[rid] = (proc, ev, time.time())
                     self.state[rid] = {**self.state.get(rid, {}), "status": "running", "message": "starting"}
-            time.sleep(0.2)
+            self._tick.wait(0.2)
 
     def _reader(self):
         while not self._stop:

@@ -9,11 +9,43 @@ import { Button, Select, Tip } from "@/components/ui";
 import { api, useRun } from "@/lib/api";
 import { cn, etTime, minutesLabel, money, num, pct, REASON_LABEL } from "@/lib/format";
 import type { Explain, RunRow, Trade } from "@/lib/types";
+import { ReplayExplorer, ReplayView } from "./lab/ReplayView";
 
 export default function Replay() {
   const { id, tid } = useParams();
-  if (!id || !tid) return <Picker />;
-  return <Workspace id={id} tid={Number(tid)} />;
+  if (!id || !tid) return <Start />;
+  return <TradeReplay id={id} tid={Number(tid)} />;
+}
+
+/** A run priced on trade prints is replayed on the stored observations themselves; a run priced on a quote chain keeps the chain view. */
+function TradeReplay({ id, tid }: { id: string; tid: number }) {
+  const nav = useNavigate();
+  const run = useRun(id);
+  if (run.isLoading) return <Loading />;
+  const r: any = run.data;
+  const prints = r?.summary?.mode === "trades" || r?.config?.pricing?.mode === "trades";
+  if (!prints) return <Workspace id={id} tid={tid} />;
+  return (
+    <div className="lab flex h-full min-h-0 flex-col">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3 text-[13px]"><button className="btn quiet sm" onClick={() => nav("/replay")}><ChevronLeft />Replay</button><span className="truncate font-medium">{r?.name}</span></div>
+      <div className="min-h-0 flex-1"><ReplayView runId={id} tradeId={tid} onTrade={(t) => nav(`/replay/${id}/${t}`)} tradeCount={Number(r?.summary?.trades) || undefined} /></div>
+    </div>
+  );
+}
+
+function Start() {
+  const [what, setWhat] = useState<"sessions" | "trades">("sessions");
+  return (
+    <div className="lab flex h-full min-h-0 flex-col" data-testid="replay-start">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-4">
+        <span className="text-[14px] font-medium">Market replay</span>
+        <span className="text-xs dim">stored observations only: nothing is drawn where nothing was recorded</span>
+        <span className="flex-1" />
+        {([["sessions", "Any stored session"], ["trades", "A trade of a backtest"]] as const).map(([k, l]) => <button key={k} className={cn("chip", what === k && "on")} onClick={() => setWhat(k)}>{l}</button>)}
+      </div>
+      <div className="min-h-0 flex-1">{what === "sessions" ? <ReplayExplorer /> : <Picker />}</div>
+    </div>
+  );
 }
 
 function Picker() {

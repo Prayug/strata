@@ -35,10 +35,83 @@ def _sym(text: str, known: list[str], default: str) -> str:
     return NL.find_symbol(text, [k for k in known if k not in NL.NOT_UNDERLYING]) or default
 
 
+# ----------------------------------------------------------------------------- the first candle and the day
+CANDLE = r"(?:candle(?:stick)?s?|bars?)"
+FIRST = r"(?:first|opening|open|initial|1st)"
+PREDICTS = (r"predict\w*|forecast\w*|foreshadow\w*|foretell\w*|indicat\w*|determin\w*|dictat\w*|sets?\s+the\s+tone|carr(?:y|ies)\s+over|agree\w*\s+with|match\w*|"
+            r"(?:tells?|says?)\s+(?:us|you|me)?\s*(?:about|how|where|what|which|whether|anything|something)|(?:same|opposite)\s+(?:direction|way|colou?r)")
+CLOCK = r"\b\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?|[ap]\b)?,?\s*(?:e[sd]?t|eastern|p[sd]?t|pacific|c[sd]?t|central|m[sd]?t|mountain|new york)?(?:\s*time)?"
+# candle lengths measured when the question names none: the three a "first candle" usually means. Four studies each (up and
+# down, against the whole session and against the rest of it) is the twelve an investigation runs at most
+UNSTATED = (5, 15, 30)
+
+
+def first_candle(text: str) -> dict | None:
+    """ "How often does SPY's first 9:30 candle predict its overall day?" -> {"minutes": [...], "stated": bool, "scope": ...}
+
+    The question is whether the direction of the first candle of the session and the direction of the session agree. It
+    has two honest answers and both are given unless the sentence asks for one: the WHOLE session, open to close, which
+    contains the candle and so agrees with it partly by construction; and the REST of the session, from the candle's close
+    on, which is the only part anybody could act on after seeing the candle."""
+    low = " ".join(text.lower().split())
+    if re.search(r"\b(?:buy|sell|short|long|enter|exit)\b", low):
+        return None  # a strategy that mentions the first candle is read by the strategy readers
+    bare = re.sub(CLOCK, " ", low)  # "the first 9:30ET candle": the clock names the candle, it is not its length
+    num = r"(\d{1,3}|one|two|three|five|ten|fifteen|twenty|thirty|forty[- ]five|sixty)"
+    m = (re.search(rf"\b{FIRST}\s+(?:{num}[- ]?(?:minutes?|mins?|m)\b|(half[- ]an?[- ]hour|half[- ]hour|hour))(?:\s+(?:of\s+(?:the\s+)?(?:trading\s+)?(?:day|session)|{CANDLE}))?", bare)
+         or re.search(rf"\b{num}[- ]?(?:minutes?|mins?|m)\s+(?:{FIRST}\s+)?(?:opening\s+)?{CANDLE}\b", bare) if re.search(rf"\b{FIRST}\b", bare) else None)
+    named = re.search(rf"\b{FIRST}\b[^.?!]{{0,24}}?\b{CANDLE}\b|\b{CANDLE}\b[^.?!]{{0,12}}?\bat\s+the\s+open\b", bare)
+    if not (m or named) or not re.search(PREDICTS, bare):
+        return None
+    mins: list[int] = []
+    if m:
+        words = {"forty-five": 45, "forty five": 45}
+        tok = next((g for g in m.groups() if g), "")
+        v = 30 if "half" in tok else 60 if tok == "hour" else words.get(tok) or NL._num(tok)
+        if v and 1 <= int(v) <= 180:
+            mins = [int(v)]
+    rest = bool(re.search(r"\brest of\b|\bremainder\b|\bremaining\b|\bafter (?:it|that|the (?:first|opening))\b|\bfrom (?:there|then) on\b|\bsubsequent\b", bare))
+    return {"minutes": mins or list(UNSTATED), "stated": bool(mins), "scope": "rest" if rest else "both"}
+
+
+def first_candle_plan(text: str, sym: str, fc: dict) -> dict:
+    hhmm = lambda mm: f"{(570 + mm) // 60:02d}:{(570 + mm) % 60:02d}"
+    variants, pairs = [], []
+    for mm in fc["minutes"]:
+        t = hhmm(mm)
+        name = f"first {mm} min"
+        up_c = DraftCondition(expr="from_open_pct > 0", text=f"the first {mm} minute{'s' if mm != 1 else ''} closed above the open")
+        dn_c = DraftCondition(expr="from_open_pct < 0", text=f"the first {mm} minute{'s' if mm != 1 else ''} closed below the open")
+        for scope in (("day", "rest") if fc["scope"] == "both" else ("rest",)):
+            ref = "open" if scope == "day" else "entry"
+            what = ("session closes above its open", "session closes below its open") if scope == "day" else (f"close is above the {t} price", f"close is below the {t} price")
+            lu, ld = f"{name} up: {what[0]}", f"{name} down: {what[1]}"
+            variants.append({"label": lu, "draft": _study(sym, f"{sym}: {lu}", [up_c], t, 0.0, "close", "up", reference=ref)})
+            variants.append({"label": ld, "draft": _study(sym, f"{sym}: {ld}", [dn_c], t, 0.0, "close", "down", reference=ref)})
+            pairs.append({"minutes": mm, "scope": scope, "from": t, "up": lu, "down": ld})
+    one = len(fc["minutes"]) == 1
+    which = f"the first {fc['minutes'][0]} minutes" if one else "the first candle"
+    notes = [] if fc["stated"] else ["The length of the first candle was not stated, so " + ", ".join(f"{x}-" for x in fc["minutes"][:-1]) + f" and {fc['minutes'][-1]}-minute candles are all measured rather than one being assumed."]
+    if fc["scope"] == "both":
+        notes.append("\"The day\" is measured twice. Open to close is the day as a whole, and the first candle is part of it: some agreement is built in. From the candle's close to the session's close is what was still unknown when the candle ended.")
+    notes.append("A candle's direction is its close against the session's open. Sessions whose candle closed exactly at the open have no direction and are left out; so are sessions without intraday bars.")
+    return {"question": text.strip(), "symbol": sym, "kind": "first_candle", "pairs": pairs,
+            "hypothesis": f"The direction of {which} of the session and the direction of the session agree more often than unrelated directions would.",
+            "method": (f"On every {sym} session with intraday bars: the direction of the first " + (f"{fc['minutes'][0]} minutes" if one else "/".join(str(x) for x in fc["minutes"]) + " minutes") + " (close against the open) is compared with "
+                       + ("the direction of the whole session (open to close) and with the direction of the rest of it (the candle's close to the session's close)." if fc["scope"] == "both" else "the direction of the rest of the session (the candle's close to the session's close).")
+                       + " Up and down candles are counted separately, each against all sessions."),
+            "measure": "this happened", "variants": variants, "checks": ["baseline", "significance", "out_of_sample"], "interpretation_notes": notes}
+
+
 # ----------------------------------------------------------------------------- fresh research questions
 def detect_fresh(text: str, known: list[str], default_symbol: str = "SPY") -> dict | None:
     low = text.lower().strip()
     sym = _sym(text, known, default_symbol)
+
+    # ---- does the first candle of the session predict the day (any phrasing; the older pattern below needs "first N minutes ... predict")
+    fc = first_candle(text)
+    if fc:
+        return {"action": "investigate", "plan": first_candle_plan(text, sym, fc)}
 
     # ---- exploratory discovery of a hypothesis over a parameter grid
     if re.match(r"(investigate|explore|research|look for|search for|discover|find (?:me )?(?:an? )?(?:edge|pattern|setup)s?|screen for|mine)\b", low) or re.search(r"\bacross (?:multiple|different|reasonable|a range of) (?:parameters|settings|thresholds)\b", low):
@@ -278,6 +351,88 @@ def pct(x) -> str:
     return "n/a" if x is None else f"{x * 100:.1f}%"
 
 
+def _agreement_report(plan: dict, rows: list[dict], studies: list[dict], trials: int) -> dict:
+    """Two directions, and how often they agree: an "up" study and a "down" study over the same sessions, put together.
+
+    agreement   (sessions where the candle was up and the outcome was up + down and down) / sessions with a direction
+    if unrelated  the agreement two unrelated directions would show with the same shares of up and down:
+                  share(candle up) x share(outcome up, all sessions) + share(candle down) x share(outcome down, all sessions)
+    A pair counts as distinguishable only when BOTH of its studies differ from the other sessions after adjusting for
+    every comparison of the plan (their own tests resample whole weeks; the interval shown here does not)."""
+    from strata.research.robust import wilson
+    by = {r["label"]: r for r in rows}
+    res_of = {e["label"]: e["result"] for e in studies}
+    table, missing = [], []
+    for pr in plan["pairs"]:
+        u, d = by.get(pr["up"]), by.get(pr["down"])
+        if not u or not d or not (u["n"] + d["n"]):
+            missing.append(pr)
+            continue
+        n, k = u["n"] + d["n"], u["hits"] + d["hits"]
+        w = u["n"] / n
+        chance = None if u["baseline"] is None or d["baseline"] is None else w * u["baseline"] + (1 - w) * d["baseline"]
+        both = all(x["adjusted_p_value"] is not None and x["adjusted_p_value"] < 0.05 and (x["lift"] or 0) > 0 for x in (u, d))
+        dates = [s_["date"] for lab in (pr["up"], pr["down"]) for s_ in (res_of[lab].get("sessions") or [])]
+        table.append({"minutes": pr["minutes"], "scope": pr["scope"], "from": pr["from"], "sessions": n, "agree": k, "agreement": k / n, "ci95": wilson(k, n), "if_unrelated": chance,
+                      "up": {"n": u["n"], "probability": u["probability"], "all_sessions": u["baseline"], "adjusted_p_value": u["adjusted_p_value"], "run_id": u["run_id"]},
+                      "down": {"n": d["n"], "probability": d["probability"], "all_sessions": d["baseline"], "adjusted_p_value": d["adjusted_p_value"], "run_id": d["run_id"]},
+                      "distinguishable": bool(both), "small": n < 60, "first": min(dates) if dates else None, "last": max(dates) if dates else None})
+    sym = plan.get("symbol", "")
+    day, rest = [t for t in table if t["scope"] == "day"], [t for t in table if t["scope"] == "rest"]
+
+    def span(ts, key="agreement"):
+        lo, hi = pct(min(t[key] for t in ts)), pct(max(t[key] for t in ts))
+        return lo if lo == hi else f"{lo} to {hi}"
+
+    def un(ts):
+        """What unrelated directions would show: one figure when the candle lengths agree on it to within a third of a point."""
+        xs = [t["if_unrelated"] for t in ts if t["if_unrelated"] is not None]
+        if not xs:
+            return "n/a"
+        return ("about " if len(xs) > 1 and max(xs) != min(xs) else "") + pct(sum(xs) / len(xs)) if max(xs) - min(xs) < 0.0034 else f"{pct(min(xs))} to {pct(max(xs))}"
+    mins = sorted({t["minutes"] for t in table})
+    cndl = f"first {mins[0]} minute{'s' if mins[0] != 1 else ''}" if len(mins) == 1 else "first candle"
+    findings, limits = [], []
+    for mm in mins:
+        parts = []
+        for t in [x for x in table if x["minutes"] == mm]:
+            where = "the whole session (open to close)" if t["scope"] == "day" else f"the rest of the session ({t['from']} to the close)"
+            parts.append(f"matched {where} on {pct(t['agreement'])} of {t['sessions']:,} sessions (95% interval {pct(t['ci95'][0])} to {pct(t['ci95'][1])}; {pct(t['if_unrelated'])} if unrelated)")
+        findings.append(f"First {mm} minute{'s' if mm != 1 else ''}: " + "; ".join(parts) + ".")
+    if not table:
+        seen = max((r.get("evaluated") or 0 for r in rows), default=0)
+        if seen:  # there are intraday bars, and no candle with a direction: that is a fact about these sessions, not a lack of data
+            return {"kind": "study", "rows": rows, "findings": [f"{seen:,} session{'s' if seen != 1 else ''} with intraday bars could be observed; on none of them did the first candle close above or below the session's open."],
+                    "verdict": f"On the {seen:,} {sym} session{'s' if seen != 1 else ''} with intraday bars the first candle closed exactly at the session's open every time, so it has no direction to compare with the day's.",
+                    "level": "insufficient", "limitations": ["A candle's direction is its close against the session's open; a candle that closes at the open has none. Nothing was put in its place."],
+                    "comparisons": len(rows), "trials": trials, "agreement": []}
+        return {"kind": "study", "rows": rows, "findings": ["No session with intraday bars could be measured."], "verdict": "There is no stored intraday history to answer this with.", "level": "insufficient",
+                "limitations": ["The first candle can only be observed on sessions that have intraday bars."], "comparisons": len(rows), "trials": trials, "agreement": []}
+    r_ok = [t for t in rest if t["distinguishable"]]
+    tail = ""
+    if rest:
+        tail = (f"From the end of the candle to the close it matched on {span(rest)}, against {un(rest)} for unrelated directions: " +
+                ("that is no more than chance produces, for every candle length measured." if not r_ok and len(rest) > 1 else "that is no more than chance produces." if not r_ok else
+                 f"{len(r_ok)} of the {len(rest)} candle lengths differ from chance in both directions after adjusting for the {len(rows)} comparisons." if len(rest) > 1 else
+                 f"that differs from chance in both directions after adjusting for the {len(rows)} comparisons."))
+    if day:
+        longer = len(day) > 2 and all(a_["agreement"] < b_["agreement"] for a_, b_ in zip(day, day[1:]))  # day is in order of candle length
+        verdict = (f"The direction of {sym}'s {cndl} matched the direction of the whole session (open to close) on {span(day)} of sessions" + (", more the longer the candle," if longer else "") +
+                   f" against {un(day)} if the two were unrelated. Most of that is the candle itself, which is part of the day it is compared with. " + tail)
+    else:
+        verdict = f"The direction of {sym}'s {cndl} and the direction of the rest of the session: " + tail[0].lower() + tail[1:]
+    level = "insufficient" if all(t["small"] for t in (rest or day)) else "none" if rest and not r_ok else "supported" if rest and len(r_ok) == len(rest) else "mixed"
+    first, last = min(t["first"] for t in table if t["first"]), max(t["last"] for t in table if t["last"])
+    limits.append(f"Only sessions with intraday bars can be measured: {max(t['sessions'] for t in table):,} of them, {first} to {last}.")
+    if day:
+        limits.append("A match with the whole session is not a forecast: the candle's own move is inside the open-to-close move it is compared with. Only the rest-of-session figures describe what was still unknown when the candle closed.")
+    limits.append("Direction only: a session that closes one cent above its open counts the same as one that closes 2% above it. Nothing here says how far the session went.")
+    limits.append("Probabilities describe the underlying's behaviour. They are not option returns and say nothing about trading costs.")
+    if missing:
+        limits.append(f"{len(missing)} of the planned comparisons could not be run and are not in these figures.")
+    return {"kind": "study", "rows": rows, "findings": findings, "verdict": verdict, "level": level, "limitations": limits, "comparisons": len(rows), "trials": trials, "agreement": table}
+
+
 def investigation_report(plan: dict, entries: list[dict], trials: int) -> dict:
     """Findings of an investigation, computed from the variants' stored results.
 
@@ -294,6 +449,10 @@ def investigation_report(plan: dict, entries: list[dict], trials: int) -> dict:
                          "p_value": b["p_value"], "adjusted_p_value": q, "avg_end_return_pct": b["avg_end_return_pct"], "other_avg_end_return_pct": b["other_sessions_avg_end_return_pct"],
                          "end_return_p_value": b["end_return_p_value"], "oos_n": oos.get("n"), "oos_probability": oos.get("probability"), "oos_baseline": oos.get("baseline_probability"),
                          "years_above": rb["years_above_baseline"], "level": rb["level"], "period": e["result"].get("period")})
+        for r, b in zip(rows, blocks):
+            r["hits"], r["evaluated"] = b["hits"], b["baseline_n"]
+        if plan.get("pairs"):
+            return _agreement_report(plan, rows, studies, trials)
         sig = [r for r in rows if r["adjusted_p_value"] is not None and r["adjusted_p_value"] < 0.05 and r["n"] >= 30]
         small = [r for r in rows if r["n"] < 30]
         measure = plan.get("measure", "the outcome")

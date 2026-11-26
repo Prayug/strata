@@ -24,12 +24,25 @@ test that cannot be tuned is the future. An EXPERIMENT here is
   paper only  it is evaluated by the same deterministic engines on observed prices as
               they are collected. There is no order entry anywhere in Strata
 
-`evaluate` replays the frozen configuration from the first eligible session, seals the
-sessions that are new, and reports from the ledger: forward signals, simulated fills,
-forward P&L, positions still open (rebuilt from the ledger and the replay, so nothing is
-lost across a restart), signals that could not be filled and why, sessions still waiting
-for data, and how the forward record compares with the historical benchmark - with the
-plain statement that a handful of forward observations cannot confirm or reject anything.
+`evaluate` is INCREMENTAL for a strategy (since V7). The account is a stored thing: after every
+sealed session its state is written to an append-only table (cash, every open position with
+its legs and what its exit rules remember, what the strategy carries between sessions). The
+next evaluation loads that state and runs the engine over the sessions that are new, one at
+a time, and over nothing else. A sealed session is never simulated again to produce the
+record: positions, cash and earlier decisions are what was stored, not what a replay would
+now give. A restart changes nothing, because nothing lived in memory.
+
+`reconcile` is the other half. Stored data can be revised or filled in after a session was
+sealed. Each seal records a fingerprint of the observations it read; when a fingerprint no
+longer matches, that one session is simulated again FROM ITS OWN STORED STARTING STATE with
+the data as it is now, and any difference is written as a `revision` entry. The sealed
+entries, the stored states and every later decision stay exactly as they were.
+
+The engine that sealed a session is recorded with it. When the engine has changed since the
+experiment was frozen, an `engine_change` entry says from which session on, before any
+session is sealed under the new one.
+
+A market study has no account; its sessions are evaluated from the data once and sealed.
 """
 from __future__ import annotations
 
@@ -314,10 +327,58 @@ def pending(ex: dict, store: MarketStore) -> list[str]:
     return [d.isoformat() for d in _eligible(ex) if d <= have[-1] and d.isoformat() not in sealed]
 
 
+# ----------------------------------------------------------------------------- the stored account
+def _states(eid: str) -> list[dict]:
+    with db.connect() as con:
+        return [dict(r) for r in con.execute("SELECT session, state, state_hash, engine_version, data_fingerprint, origin, created_at FROM forward_states WHERE experiment_id=? ORDER BY session", (eid,))]
+
+
+def _save_state(con, eid: str, session: str, state: dict, fingerprint: str | None, origin: str) -> str:
+    from strata.config import ENGINE_VERSION
+    text = json.dumps(state, sort_keys=True, default=str, separators=(",", ":"))
+    h = hashlib.sha256(text.encode()).hexdigest()
+    con.execute("INSERT INTO forward_states (experiment_id, session, state, state_hash, engine_version, data_fingerprint, origin, created_at) VALUES (?,?,?,?,?,?,?,?)", (eid, session, text, h, ENGINE_VERSION, fingerprint, origin, db.now()))
+    return h
+
+
+def fingerprint(ex: dict, d: date, store: MarketStore) -> str:
+    """What was stored for this session when it was read: the underlying's bars and, for an options strategy, the option
+    observations of the dataset the run uses. Counts and sums, not file dates: copying or re-indexing a store does not
+    change it, a revised or filled-in observation does."""
+    import polars as pl
+    sym = ex["symbol"]
+    parts: list = [sym, d.isoformat()]
+    try:
+        b = store.read_best_bars(sym, d, d)
+        parts += [b.height, round(float(b["close"].sum()), 4), round(float(b["volume"].sum()), 0)] if not b.is_empty() else [0]
+        dd = store.read_daily(sym).filter(pl.col("date") == d)
+        parts += [round(float(dd["close"][0]), 4)] if dd.height else [None]
+    except Exception:  # noqa: BLE001
+        parts.append("underlying unreadable")
+    if ex["kind"] == "strategy":
+        mode = (ex["config"].get("pricing") or {}).get("mode", "historical")
+        prov = (ex["config"].get("data") or {}).get("options_provider")
+        try:
+            if mode == "trades":
+                idx = store.option_bar_index(sym, provider=prov)
+                day = idx.filter(pl.col("date") == d) if not idx.is_empty() else idx
+                parts += ["trades", day.height, int(day["bars"].sum()) if day.height else 0, int(day.filter(pl.col("status") == "ok").height) if day.height else 0]
+            elif mode == "historical":
+                q = store.read_option_day(sym, d, "quote", provider=prov)
+                parts += ["quotes", 0 if q is None else q.height, None if q is None or q.is_empty() else round(float((q["bid"].fill_null(0) + q["ask"].fill_null(0)).sum()), 2)]
+        except Exception:  # noqa: BLE001
+            parts.append("options unreadable")
+    return hashlib.sha256(json.dumps(parts, default=str).encode()).hexdigest()[:20]
+
+
 def evaluate(eid: str, store: MarketStore | None = None, refresh: bool = False) -> dict:
-    """Replay the frozen configuration from its first eligible session, seal the sessions that are new and store the
-    report. With `refresh`, what the configuration needs for the unsealed sessions is first fetched from the free
-    sources (never offline, never a paid provider), because a session is sealed with the data stored at that moment."""
+    """Seal the sessions that are new and store the report.
+
+    A strategy is evaluated INCREMENTALLY: the account state stored after the last sealed session is loaded, and the engine
+    runs over each new session in turn and over nothing else. With `refresh`, what the configuration needs for the unsealed
+    sessions is first fetched from the free sources (never offline, never a paid provider), because a session is sealed with
+    the data stored at that moment. Sessions already sealed are not simulated again here; `reconcile` does that, for the
+    sessions whose stored data has changed, without touching what was sealed."""
     from strata.config import ENGINE_VERSION
     store = store or MarketStore()
     ex = get(eid)
@@ -332,7 +393,8 @@ def evaluate(eid: str, store: MarketStore | None = None, refresh: bool = False) 
     days = _eligible(ex, now)
     rep = {"experiment": eid, "version": ex["version"], "kind": ex["kind"], "config_hash": ex["config_hash"], "activation_date": ex["activation_date"], "activated_at": ex["activated_at"], "first_session": ex["first_session"],
            "activation": ex.get("activation") or {}, "engine_version": ex.get("engine_version"), "engine_version_now": ENGINE_VERSION, "benchmark": ex.get("benchmark") or {}, "notes": [], "as_of": now.isoformat(timespec="seconds"),
-           "eligible_sessions": len(days), "forward_sessions": 0, "first": None, "last": None, "awaiting_data": [], "newly_sealed": [], "revisions": [], "ledger": chain}
+           "eligible_sessions": len(days), "forward_sessions": 0, "first": None, "last": None, "awaiting_data": [], "newly_sealed": [], "revisions": [], "ledger": chain,
+           "method": "incremental: each new session is run from the stored account state" if ex["kind"] == "strategy" else "a market study has no account: its sessions are evaluated from the data and sealed once"}
     if not days:
         rep["status"] = "waiting"
         rep["notes"].append(f"No session since activation has closed yet. The first session that can count is {ex['first_session']}; nothing earlier can count, whenever its data is stored.")
@@ -349,15 +411,121 @@ def evaluate(eid: str, store: MarketStore | None = None, refresh: bool = False) 
         return _store(eid, rep)
     window = [d for d in days if d <= have[-1]]
     rep["awaiting_data"] = [d.isoformat() for d in days if d > have[-1]][-60:]
-    events, extra = (_strategy_events if ex["kind"] == "strategy" else _study_events)(ex, window, store)
-    if extra.get("failed"):
-        rep["status"] = "awaiting_data"
-        rep["notes"].append(extra["failed"])
-        rep["awaiting_data"] = [d.isoformat() for d in days][-60:]
-        return _store(eid, rep)
-    new, revs = _reconcile(ex, window, stored, events, extra)
-    rep["newly_sealed"], rep["revisions_new"] = new, len(revs)
+    if ex["kind"] != "strategy":
+        events, extra = _study_events(ex, window, store)
+        if extra.get("failed"):
+            rep["status"] = "awaiting_data"
+            rep["notes"].append(extra["failed"])
+            rep["awaiting_data"] = [d.isoformat() for d in days][-60:]
+            return _store(eid, rep)
+        new, revs = _reconcile(ex, window, stored, events, extra)
+        rep["newly_sealed"], rep["revisions_new"] = new, len(revs)
+        return _store(eid, _report(ex, rep, window, extra))
+    # ---- a strategy: from the stored account, the new sessions only
+    with db.connect() as con:
+        sealed = [r[0] for r in con.execute("SELECT session FROM forward_ledger WHERE experiment_id=? AND kind='session' ORDER BY seq", (eid,))]
+    states = _states(eid)
+    state = json.loads(states[-1]["state"]) if states else None
+    extra: dict = {"engine_version": ENGINE_VERSION, "open": []}
+    if sealed and (not states or states[-1]["session"] < sealed[-1]):
+        # sealed before account states were stored (version 6 replayed the window at every evaluation): the account is
+        # rebuilt ONCE, by one run through the last sealed session with the data stored now, and that is written down
+        prior = [d for d in window if d.isoformat() <= sealed[-1]]
+        _ev, ex0 = _strategy_events(ex, prior, store, None, incremental=True)
+        if ex0.get("failed"):
+            rep["status"] = "awaiting_data"
+            rep["notes"].append(ex0["failed"])
+            return _store(eid, rep)
+        state = ex0["state"]
+        with db.connect() as con:
+            _save_state(con, eid, sealed[-1], state, fingerprint(ex, prior[-1], store), "rebuilt")
+            _append(con, eid, sealed[-1], "state_rebuilt", sealed[-1], {"through": sealed[-1], "note": "These sessions were sealed before account states were stored. The account as of this session was rebuilt by one run over the "
+                                                                    "sealed sessions with the data stored now; the sealed entries were not changed, and every later session continues from this state.",
+                                                                    "open_positions": len(state.get("positions") or []), "cash": state.get("cash")})
+        rep["notes"].append(f"The account state through {sealed[-1]} was rebuilt once from the sealed sessions; from now on each session continues from the stored state.")
+    new_days = [d for d in window if d.isoformat() not in set(sealed)]
+    pinned = str(ex.get("engine_version") or "")
+    if new_days and pinned and not pinned.startswith("unrecorded") and pinned != ENGINE_VERSION:
+        with db.connect() as con:
+            if not con.execute("SELECT 1 FROM forward_ledger WHERE experiment_id=? AND kind='engine_change' AND key=?", (eid, ENGINE_VERSION)).fetchone():
+                _root(con, ex)
+                _append(con, eid, new_days[0].isoformat(), "engine_change", ENGINE_VERSION, {"frozen_under": pinned, "now": ENGINE_VERSION, "from_session": new_days[0].isoformat(),
+                                                                                           "note": f"The experiment was frozen under engine {pinned}. Sessions from {new_days[0]} on are evaluated by engine {ENGINE_VERSION}; "
+                                                                                                   "sessions sealed earlier keep the result of the engine that sealed them."})
+    newly: list[str] = []
+    for d in new_days:
+        events, ex1 = _strategy_events(ex, [d], store, state, incremental=True)
+        if ex1.get("failed"):
+            rep["notes"].append(ex1["failed"])
+            rep["awaiting_data"] = [x.isoformat() for x in days if x >= d][-60:]
+            break
+        fp = fingerprint(ex, d, store)
+        ex1["fingerprint"] = fp
+        new, _revs = _reconcile(ex, [d], stored, events, ex1)
+        state = ex1["state"]
+        with db.connect() as con:
+            _save_state(con, eid, d.isoformat(), state, fp, "sealed")
+        newly += new
+        extra = ex1
+    rep["newly_sealed"] = newly
+    extra["data"] = _data_summary(ex, window, store)
+    if "sources" not in extra:
+        # nothing was run in this evaluation: the positions still open are the ones the last seal recorded
+        last_pos = ledger(eid, {"position"}, 1)
+        extra["open"] = (last_pos[-1]["body"].get("open") or []) if last_pos else []
+    rep["account"] = None if state is None else {"through": (state.get("through") or "")[:10], "cash": state.get("cash"), "open_positions": len(state.get("positions") or []), "realised": state.get("realised"),
+                                                  "states_stored": len(_states(eid))}
+    # stored data that changed after a session was sealed: recorded, never applied
+    rec = reconcile(eid, store, _evaluating=True)
+    rep["revisions_new"] = rec["revisions_new"]
+    rep["reconciliation"] = {k: rec[k] for k in ("checked", "changed", "revisions_new")}
     return _store(eid, _report(ex, rep, window, extra))
+
+
+def reconcile(eid: str, store: MarketStore | None = None, force: bool = False, _evaluating: bool = False) -> dict:
+    """Has the data of a sealed session changed since it was sealed, and would the session now come out differently?
+
+    For every sealed session whose stored observations no longer match the fingerprint taken when it was sealed (every
+    session with `force`), that ONE session is simulated again from its own stored starting state, with the data as it is
+    now, and compared with its sealed entries. A difference is appended to the ledger as a `revision`. Nothing else is
+    written: the sealed entries, the stored account states and every later session's decisions stay as they were."""
+    store = store or MarketStore()
+    ex = get(eid)
+    if ex is None:
+        raise LookupError("experiment not found")
+    out = {"experiment": eid, "checked": 0, "changed": [], "revisions_new": 0, "revisions": [], "forced": bool(force)}
+    if ex["kind"] != "strategy":
+        out["note"] = "A market study is compared with its sealed entries at every evaluation."
+        return out
+    states = _states(eid)
+    by = {r["session"]: r for r in states}
+    order = [r["session"] for r in states]
+    stored = _stored_days(store, ex["symbol"])
+    for i, sess in enumerate(order):
+        row = by[sess]
+        if row["origin"] != "sealed":
+            continue  # a rebuilt state has no starting state of its own to replay from
+        d = date.fromisoformat(sess)
+        out["checked"] += 1
+        fp = fingerprint(ex, d, store)
+        if not force and fp == row["data_fingerprint"]:
+            continue
+        out["changed"].append(sess)
+        before = json.loads(by[order[i - 1]]["state"]) if i > 0 else None
+        events, ex1 = _strategy_events(ex, [d], store, before, incremental=True)
+        if ex1.get("failed"):
+            continue
+        ex1["fingerprint"] = fp
+        _new, revs = _reconcile(ex, [d], stored, events, ex1, compare_only=True)
+        out["revisions"] += revs
+    out["revisions_new"] = len(out["revisions"])
+    if not _evaluating and out["changed"]:
+        with db.connect() as con:
+            con.execute("UPDATE forward_experiments SET updated_at=? WHERE id=?", (db.now(), eid))
+    out["text"] = (f"{out['checked']} sealed session(s) checked against the data stored now. " + (f"{len(out['changed'])} read different observations than when they were sealed ({', '.join(out['changed'][:6])}"
+                   + (f" and {len(out['changed']) - 6} more" if len(out['changed']) > 6 else "") + f"); replaying them from their own starting state gave {out['revisions_new']} difference(s), recorded as revisions. " if out["changed"] else
+                   "None of them reads different observations than when it was sealed. ") + "The sealed record and every later decision are unchanged.")
+    return out
 
 
 def _store(eid: str, rep: dict) -> dict:
@@ -374,9 +542,10 @@ REVISION = {"changed": "Replaying this session now gives a different result from
             "orphan": "The replay closes a position that the sealed record never opened. It is not added to the record."}
 
 
-def _reconcile(ex: dict, window: list[date], stored: set[date], events: list[dict], extra: dict) -> tuple[list[str], list[dict]]:
+def _reconcile(ex: dict, window: list[date], stored: set[date], events: list[dict], extra: dict, compare_only: bool = False) -> tuple[list[str], list[dict]]:
     """Append the entries of every session that is new, in order, and seal it. Sessions already sealed are only
-    compared with the replay: a difference becomes a `revision` entry and changes nothing that was sealed."""
+    compared with the replay: a difference becomes a `revision` entry and changes nothing that was sealed.
+    With `compare_only` nothing but revisions is ever written (the reconciliation pass)."""
     eid = ex["id"]
     win = {d.isoformat() for d in window}
     new: list[str] = []
@@ -403,6 +572,8 @@ def _reconcile(ex: dict, window: list[date], stored: set[date], events: list[dic
             iso = d.isoformat()
             evs = by_day.get(iso, [])
             was_sealed = iso in sealed
+            if compare_only and not was_sealed:
+                continue
             for ev in evs:
                 k, text = (ev["kind"], ev["key"]), _text(ev["body"])
                 if k in have:
@@ -418,13 +589,14 @@ def _reconcile(ex: dict, window: list[date], stored: set[date], events: list[dic
             if not was_sealed:
                 n = {k: sum(1 for e in evs if e["kind"] == k) for k in ("fill", "exit", "signal", "missing_data", "condition", "observation")}
                 _append(con, eid, iso, "session", iso, {"date": iso, "underlying_stored": d in stored, "entries": n, "realised_pnl": sum(float(e["body"].get("pnl") or 0) for e in evs if e["kind"] == "exit"),
-                                                        "sources": extra.get("sources") or {}, "engine_version": extra.get("engine_version"), "window_end": window[-1].isoformat(), "minutes_after_close": int((_now() - cal.session_bounds(d)[1]).total_seconds() // 60)})
+                                                        "sources": extra.get("sources") or {}, "engine_version": extra.get("engine_version"), "window_end": window[-1].isoformat(), "minutes_after_close": int((_now() - cal.session_bounds(d)[1]).total_seconds() // 60),
+                                                        **({"data_fingerprint": extra["fingerprint"], "from_stored_state": True} if extra.get("fingerprint") else {})})
                 new.append(iso)
         replayed = {(ev["kind"], ev["key"]) for ev in events}
         for r in rows:
             if r["kind"] in REPLAYED and r["session"] in win and (r["kind"], r["key"]) not in replayed:
                 revise(r["session"], "vanished", r["kind"], r["key"], json.loads(r["body"]), None)
-        if new:
+        if new and not compare_only:
             _append(con, eid, new[-1], "position", new[-1], {"through": new[-1], "open": extra.get("open") or []})
     return new, revs
 
@@ -434,8 +606,27 @@ def _fill_key(t: dict) -> str:
     return f"{t.get('strategy_idx', 0)}|{t['entry_ts']}|{t.get('lot', 1)}|{legs}"
 
 
-def _strategy_events(ex: dict, window: list[date], store: MarketStore) -> tuple[list[dict], dict]:
-    """Replay the frozen strategy over the forward window and turn the result into dated entries."""
+def _data_summary(ex: dict, window: list[date], store: MarketStore) -> dict:
+    """How many of the forward sessions have the option observations the strategy's pricing mode reads."""
+    sym, mode = ex["symbol"], (ex["config"].get("pricing") or {}).get("mode", "historical")
+    have: set[str] = set()
+    try:
+        if mode == "trades":
+            idx = store.option_bar_index(sym)
+            have = {str(x)[:10] for x in idx["date"].to_list()} if not idx.is_empty() and "date" in idx.columns else set()
+        elif mode == "historical":
+            have = {str(d) for d in store.option_days(sym, "quote")}
+    except Exception:  # noqa: BLE001
+        have = set()
+    days = [d.isoformat() for d in window]
+    covered = [d for d in days if d in have] if mode != "modeled" else list(days)
+    return {"sessions": len(days), "with_option_data": len(covered), "pricing": mode, "missing": [d for d in days if d not in set(covered)][:60]}
+
+
+def _strategy_events(ex: dict, window: list[date], store: MarketStore, resume: dict | None = None, incremental: bool = False) -> tuple[list[dict], dict]:
+    """Run the frozen strategy over `window` and turn the result into dated entries. With `incremental` the run starts from
+    the stored account state `resume` (None for the first session) and leaves its positions open: the state it ends in is
+    returned in extra["state"]."""
     from strata.config import ENGINE_VERSION
     from strata.engine.engine import DataUnavailable, run_backtest
     from strata.engine.models import BacktestConfig
@@ -454,14 +645,16 @@ def _strategy_events(ex: dict, window: list[date], store: MarketStore) -> tuple[
     covered = [d for d in days if d in have] if mode != "modeled" else list(days)
     extra: dict = {"engine_version": ENGINE_VERSION, "data": {"sessions": len(days), "with_option_data": len(covered), "pricing": mode, "missing": [d for d in days if d not in set(covered)][:60]}, "open": []}
     try:
-        res = run_backtest(BacktestConfig.model_validate(cfg), store=store, record_paths=False)
+        res = run_backtest(BacktestConfig.model_validate(cfg), store=store, record_paths=False, **({"resume": resume, "keep_open": True} if incremental else {}))
     except DataUnavailable as e:
         extra["failed"] = f"The sessions since activation cannot be evaluated yet: {str(e)[:240]}"
         return [], extra
+    if incremental:
+        extra["state"] = res.meta["state"]
     extra["sources"] = {"datasets": res.meta.get("dataset_versions") or {}, "options": (res.meta.get("data") or {}).get("options_dataset") or res.meta.get("options_dataset"), "pricing": mode}
     events: list[dict] = []
     win = set(days)
-    for t in res.trades:
+    for t in list(res.trades) + (list(res.meta.get("open_positions") or []) if incremental else []):
         key = _fill_key(t)
         legs = [{"right": l["right"], "strike": l["strike"], "expiration": l["expiration"], "ratio": l["ratio"], "side": l["side"], "multiplier": l["multiplier"], "price_source": l["price_source"],
                  "entry_price": l["entry_price"], "entry_bid": l["entry_bid"], "entry_ask": l["entry_ask"], "entry_print": l["entry_print"]} for l in t["legs"]]
@@ -469,7 +662,7 @@ def _strategy_events(ex: dict, window: list[date], store: MarketStore) -> tuple[
             events.append({"session": t["entry_date"], "kind": "fill", "key": key, "body": {"strategy": t["strategy"], "signal_time": cal.to_et(int(t["signal_ts"]) * 1_000_000_000).isoformat(), "entry_time": t["entry_time"],
                                                                                            "fill_delay_seconds": t["fill_delay_seconds"], "units": t["original_units"], "entry_cash": t["entry_cash"] if not t.get("stage_exits") else None,
                                                                                            "entry_spot": t["entry_spot"], "legs": legs}})
-        still_open = t["exit_reason"] == "end_of_backtest" or not t.get("exit_time")
+        still_open = t["exit_reason"] == "end_of_backtest" or not t.get("exit_time") or not t.get("exit_reason")
         if still_open:
             extra["open"].append({"key": key, "strategy": t["strategy"], "entry_time": t["entry_time"], "units": t["units"], "legs": [{k: l[k] for k in ("right", "strike", "expiration", "ratio", "entry_price")} for l in legs],
                                   "marked_pnl": t["pnl"], "marked_at": t.get("exit_time"), "note": "marked at the last stored price; the position is still open"})

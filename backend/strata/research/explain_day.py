@@ -22,6 +22,7 @@ from strata.engine.rules import RuleStrategy
 
 class _Recorder(RuleStrategy):
     """Evaluates the entry rule at every tick and keeps the explanations."""
+    explain_every_tick = True  # the view shows every rule's state at every tick, including the ticks on which it did not hold
 
     def on_start(self, ctx: Context):
         self.ticks: list[dict] = []

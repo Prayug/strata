@@ -137,6 +137,31 @@ def implied_vol_vec(price, S, K, T, r, q, is_call):
     return out
 
 
+@njit(cache=True)
+def implied_vol_serial(price, S, K, T, r, q, is_call):
+    """The same values as implied_vol_vec, one after another on the calling thread: for a handful of rows, starting the
+    worker threads costs more than the arithmetic."""
+    n = price.shape[0]
+    out = np.empty(n)
+    for i in range(n):
+        out[i] = implied_vol_scalar(price[i], S[i], K[i], T[i], r, q, is_call[i])
+    return out
+
+
+@njit(cache=True)
+def bs_greeks_serial(S, K, T, r, q, sigma, is_call):
+    n = K.shape[0]
+    out = np.empty((n, 5))
+    for i in range(n):
+        p, d, g, t, v = bs_greeks_scalar(S[i], K[i], T[i], r, q, sigma[i], is_call[i])
+        out[i, 0] = p
+        out[i, 1] = d
+        out[i, 2] = g
+        out[i, 3] = t
+        out[i, 4] = v
+    return out
+
+
 def intrinsic(S, K, is_call):
     S = np.asarray(S, dtype=float)
     return np.where(is_call, np.maximum(S - K, 0.0), np.maximum(K - S, 0.0))

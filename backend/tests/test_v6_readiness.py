@@ -26,10 +26,12 @@ def test_a_strategy_is_checked_against_stored_observations_before_it_is_planned(
     cfg = {**U.manual_config("SPY", 3.0), "start": DAYS[0].isoformat(), "end": DAYS[-1].isoformat()}
     pc = RD.precheck(cfg, store)
     assert pc["signal_sessions"] == 4 and pc["priced"] == 2 and pc["priced_pct"] == 50.0 and pc["executable"] is True and pc["blocking"] is False
-    assert pc["counts"] == {"quotes": 2, "trades": 0, "partial": 0, "eod": 0, "no_contract": 1, "missing": 1}
+    assert pc["counts"] == {"quotes": 2, "trades": 0, "eod": 0, "exit_uncertain": 0, "stale": 0, "contract": 0, "expiration": 0, "partial": 0, "no_contract": 1, "missing": 1}
+    assert pc["potential"] == 2 and pc["fetchable"] == 0
     assert [(s["date"], s["status"]) for s in pc["sessions"]] == [(S3.isoformat(), "quotes"), (S6.isoformat(), "quotes"), (S9.isoformat(), "no_contract"), (S11.isoformat(), "missing")]
     assert pc["untested"] == [S9.isoformat(), S11.isoformat()]
-    assert "fires on 4 sessions" in pc["text"] and "2 can be priced on stored option observations (2 with intraday bid/ask): 50.0%" in pc["text"] and "On 1 no contract with the required expiration was listed" in pc["text"]
+    assert "fires on 4 sessions" in pc["text"] and "2 pass every check on stored option observations (2 on intraday bid/ask): 50.0%" in pc["text"] and "On 1 no contract with the required expiration was listed" in pc["text"]
+    assert "A run confirms each one" in pc["text"], "what the stored data supports is not called a trade"
     ids = [a["id"] for a in pc["alternatives"]]
     assert ids[:2] == ["study", "subset"] and ids[-2:] == ["import", "modeled"] and "connect" in ids
     sub = next(a for a in pc["alternatives"] if a["id"] == "subset")

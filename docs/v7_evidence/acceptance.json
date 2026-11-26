@@ -1,0 +1,1631 @@
+{
+ "at": "2026-11-26T06:16:38-0800",
+ "engine": "7.0.1",
+ "dataset": {
+  "symbols": [
+   {
+    "symbol": "SPY",
+    "provider": "alpaca",
+    "sessions": 718,
+    "first": "2024-01-18",
+    "last": "2026-11-25",
+    "contract_sessions": 335210,
+    "with_trades": 314171,
+    "bars": 43757048,
+    "observation": "one-minute trade bars (no bid/ask)"
+   },
+   {
+    "symbol": "QQQ",
+    "provider": "alpaca",
+    "sessions": 718,
+    "first": "2024-01-18",
+    "last": "2026-11-25",
+    "contract_sessions": 303311,
+    "with_trades": 285734,
+    "bars": 34800936,
+    "observation": "one-minute trade bars (no bid/ask)"
+   },
+   {
+    "symbol": "IWM",
+    "provider": "alpaca",
+    "sessions": 718,
+    "first": "2024-01-18",
+    "last": "2026-11-25",
+    "contract_sessions": 135863,
+    "with_trades": 130618,
+    "bars": 10590036,
+    "observation": "one-minute trade bars (no bid/ask)"
+   },
+   {
+    "symbol": "SPY",
+    "provider": "yahoo_options",
+    "sessions": 7,
+    "first": "2026-11-16",
+    "last": "2026-11-24",
+    "contract_sessions": 687,
+    "with_trades": 632,
+    "bars": 102048,
+    "observation": "one-minute trade bars (no bid/ask)"
+   },
+   {
+    "symbol": "QQQ",
+    "provider": "yahoo_options",
+    "sessions": 2,
+    "first": "2026-11-23",
+    "last": "2026-11-24",
+    "contract_sessions": 122,
+    "with_trades": 92,
+    "bars": 8030,
+    "observation": "one-minute trade bars (no bid/ask)"
+   }
+  ],
+  "bars": 89258098,
+  "collector": {
+   "enabled": true,
+   "symbols": [
+    "IWM",
+    "QQQ",
+    "SPY"
+   ],
+   "provider": "alpaca",
+   "next_due": "2026-11-27T16:20:00-05:00"
+  },
+  "quotes": {
+   "connected": false,
+   "text": "no historical bid/ask source is connected"
+  }
+ },
+ "items": {
+  "A_full_period_each_symbol": {
+   "SPY": {
+    "sentence": "Buy ATM SPY 0DTE calls at the open after a 1% down day, exit at 3:55 PM Eastern or when SPY has risen 1%, from 2024-01-18 to 2026-11-25",
+    "seconds": 6.3,
+    "error": null,
+    "decision": null,
+    "said": [
+     {
+      "kind": "plan",
+      "view": null,
+      "state": "done",
+      "interpreter": "built-in rules",
+      "text": "Here is how I read that strategy. The entry rule fires on 75 sessions (2024-02-01 to 2026-11-23). 75 pass every check on stored option observations (75 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 100.0% of them. A run confirms each one: these are sessions the stored data supports, not trades. Not specified, so I assumed defaults you can edit: stop loss.",
+      "read_as": [
+       "Underlying: SPY",
+       "Condition: previous session fell 1% or more (close-to-close)",
+       "Position: 1 x Long call",
+       "Entry: the open (09:30 ET) - you said \"at the open\" - once per eligible session",
+       "Expiration: 0DTE (exact - never a later expiry)",
+       "Strike: At the money",
+       "Target: SPY rises 1% from its price at entry (underlying move, not option return)",
+       "Stop loss: None [assumed]",
+       "Time exit: 15:55 ET - you said \"3:55 PM Eastern\"",
+       "Period: 2024-01-18 to 2026-11-25",
+       "Costs: $0.65 commission per contract; quotes fill at the bid/ask; trade prints fill at the print with no extra slippage [assumed]"
+      ],
+      "unsupported": [],
+      "questions": [],
+      "runs": [
+       "5f7f034dddf7"
+      ]
+     },
+     {
+      "kind": "result",
+      "view": "single",
+      "state": null,
+      "interpreter": null,
+      "text": "Historical options backtest on option trade prices, 2024-02-01 to 2026-11-23: 75 trades made a net profit of $2,384.50 after $97.50 in commissions (2.4% on starting capital). 50.7% of trades were winners; the average winner was $272.12 against an average loser of -$215.03, for $31.79 per trade and a profit factor of 1.30. The largest winner was $496.70 and the largest loser -$473.30; the deepest drawdown was -2.8% of equity. The per-trade profit has a t-statistic of 1.01, which is below the conventional threshold of two, so the edge is not statistically distinguishable from zero in this sample.",
+      "run_id": "5f7f034dddf7",
+      "coverage": {
+       "priced": null,
+       "of": null,
+       "counts": null,
+       "first": null,
+       "last": null
+      }
+     }
+    ],
+    "notebook": "d0704188a6e9",
+    "run": "5f7f034dddf7",
+    "card": {
+     "trades": "75 trades on 75 sessions.",
+     "coverage": "The entry rule fired 75 times; 75 could be priced on stored observations (100%). ",
+     "net": "+2,384.50 after 97.50 of commissions and 0.00 of assumed slippage (+2,482.00 before them). That is +12.0% of the 19,845 of premium the trades put down.",
+     "average": "+31.79 a trade (median +21.70); 51% of trades made money, averaging +272.12 against -215.03 on the losers.",
+     "expectancy": "The average is +31.79; resampling these trades puts it between -27.10 and +93.82 95 times in 100. Against zero that is p = 0.314, and p = 1.000 once the 4 configurations tried in this research session are allowed for. The interval includes zero: these trades do not show an average different from none.",
+     "drawdown": "The largest fall from a previous high of the cumulative result was 2,921.70, reached on 2026-11-23; the longest stretch below a previous high lasted 19 trades.",
+     "streaks": "The longest run of trades that did not make money was 8; the longest winning run was 4.",
+     "distribution": "Half of the trades fall between -191.30 and +309.20; one in twenty is worse than -334.40 and one in twenty better than +397.70. The best was +496.70, the worst -473.30.",
+     "calendar": "16 of the 26 months with a trade ended above zero; 2024: +794 over 19, 2025: +3,029 over 30, 2026: -1,439 over 26.",
+     "time_of_day": "All entries fall in the half hour from 09:30.",
+     "execution": "With every fill 2% worse the result is +1,541.06, with 5% worse +275.90; it reaches zero at about 5.7% worse fills. Filled on the first individual print after each decision instead, the 75 trades that could be repriced made +2,496.50 against +2,384.50 on minute bars. These are trade prints: the bid/ask spread is not in any of these figures.",
+     "concentration": "Without its best trade (+496.70) the result is +1,887.80; without its best three, +973.40. Half of all the profit made by winning trades came from 14 of them.",
+     "baseline": "Not run yet. The baseline enters the same position at the same time on every session, whatever the signal says: it shows how much of the result is the signal and how much is the position."
+    },
+    "evidence": "No statistically significant edge: the average trade is not distinguishable from zero."
+   },
+   "QQQ": {
+    "sentence": "Buy ATM QQQ 0DTE calls at the open after a 1% down day, exit at 3:55 PM Eastern or when QQQ has risen 1%, from 2024-01-18 to 2026-11-25",
+    "seconds": 6.5,
+    "error": null,
+    "decision": null,
+    "said": [
+     {
+      "kind": "plan",
+      "view": null,
+      "state": "done",
+      "interpreter": "built-in rules",
+      "text": "Here is how I read that strategy. The entry rule fires on 121 sessions (2024-02-01 to 2026-11-25). 121 pass every check on stored option observations (121 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 100.0% of them. A run confirms each one: these are sessions the stored data supports, not trades. Not specified, so I assumed defaults you can edit: stop loss.",
+      "read_as": [
+       "Underlying: QQQ",
+       "Condition: previous session fell 1% or more (close-to-close)",
+       "Position: 1 x Long call",
+       "Entry: the open (09:30 ET) - you said \"at the open\" - once per eligible session",
+       "Expiration: 0DTE (exact - never a later expiry)",
+       "Strike: At the money",
+       "Target: QQQ rises 1% from its price at entry (underlying move, not option return)",
+       "Stop loss: None [assumed]",
+       "Time exit: 15:55 ET - you said \"3:55 PM Eastern\"",
+       "Period: 2024-01-18 to 2026-11-25",
+       "Costs: $0.65 commission per contract; quotes fill at the bid/ask; trade prints fill at the print with no extra slippage [assumed]"
+      ],
+      "unsupported": [],
+      "questions": [],
+      "runs": [
+       "5be03046cb12"
+      ]
+     },
+     {
+      "kind": "result",
+      "view": "single",
+      "state": null,
+      "interpreter": null,
+      "text": "Historical options backtest on option trade prices, 2024-02-01 to 2026-11-25: 121 trades made a net loss of $1,037.30 after $157.30 in commissions (-1.0% on starting capital). 46.3% of trades were winners; the average winner was $246.06 against an average loser of -$227.95, for -$8.57 per trade and a profit factor of 0.93. The largest winner was $479.70 and the largest loser -$607.30; the deepest drawdown was -5.0% of equity. The per-trade profit has a t-statistic of -0.35, which is below the conventional threshold of two, so the edge is not statistically distinguishable from zero in this sample.",
+      "run_id": "5be03046cb12",
+      "coverage": {
+       "priced": null,
+       "of": null,
+       "counts": null,
+       "first": null,
+       "last": null
+      }
+     }
+    ],
+    "notebook": "0456ba33ab39",
+    "run": "5be03046cb12",
+    "card": {
+     "trades": "121 trades on 121 sessions.",
+     "coverage": "The entry rule fired 121 times; 121 could be priced on stored observations (100%). ",
+     "net": "-1,037.30 after 157.30 of commissions and 0.00 of assumed slippage (-880.00 before them). That is -3.0% of the 34,844 of premium the trades put down.",
+     "average": "-8.57 a trade (median -45.30); 46% of trades made money, averaging +246.06 against -227.95 on the losers.",
+     "expectancy": "The average is -8.57; resampling these trades puts it between -55.35 and +39.67 95 times in 100. Against zero that is p = 0.724. The interval includes zero: these trades do not show an average different from none.",
+     "drawdown": "The largest fall from a previous high of the cumulative result was 5,211.10, reached on 2026-11-23; the longest stretch below a previous high lasted 38 trades.",
+     "streaks": "The longest run of trades that did not make money was 10; the longest winning run was 6.",
+     "distribution": "Half of the trades fall between -207.30 and +247.70; one in twenty is worse than -404.30 and one in twenty better than +390.70. The best was +479.70, the worst -607.30.",
+     "calendar": "19 of the 33 months with a trade ended above zero; 2024: +418 over 35, 2025: +2,248 over 35, 2026: -3,703 over 51.",
+     "time_of_day": "All entries fall in the half hour from 09:30.",
+     "execution": "With every fill 2% worse the result is -2,413.46, with 5% worse -4,477.70. These are trade prints: the bid/ask spread is not in any of these figures.",
+     "concentration": "Without its best trade (+479.70) the result is -1,517.00; without its best three, -2,425.40. Half of all the profit made by winning trades came from 19 of them.",
+     "baseline": "Not run yet. The baseline enters the same position at the same time on every session, whatever the signal says: it shows how much of the result is the signal and how much is the position."
+    },
+    "evidence": "No statistically significant edge: the average trade is not distinguishable from zero."
+   },
+   "IWM": {
+    "sentence": "Buy ATM IWM 0DTE calls at the open after a 1% down day, exit at 3:55 PM Eastern or when IWM has risen 1%, from 2024-01-18 to 2026-11-25",
+    "seconds": 7.7,
+    "error": null,
+    "decision": {
+     "asked": "Only 123 of the 129 qualifying sessions in the period you asked for have usable trade prints. option data is stored for the session, but not an expiration the strategy can use (5); the provider holds only part of the session (1).",
+     "choices": [
+      "Run on the 123 qualifying sessions that are covered",
+      "Run the market study on the underlying",
+      "Estimate with modeled premiums (opt-in)"
+     ],
+     "chosen": "Run on the 123 qualifying sessions that are covered"
+    },
+    "said": [
+     {
+      "kind": "plan",
+      "view": null,
+      "state": "needs_decision",
+      "interpreter": "built-in rules",
+      "text": "Here is how I read that strategy. The entry rule fires on 129 sessions (2024-02-01 to 2026-11-23). 120 pass every check on stored option observations (120 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 93.0% of them. 3 more have an entry that can be priced but no observation near the planned exit. 5 need an expiration that is not stored. 1 is held only in part by the provider. 5 of the unpriced sessions can be downloaded from Alpaca Market Data at no cost. A run confirms each one: these are sessions the stored data supports, not trades. Not specified, so I assumed defaults you can edit: stop loss.",
+      "read_as": [
+       "Underlying: IWM",
+       "Condition: previous session fell 1% or more (close-to-close)",
+       "Position: 1 x Long call",
+       "Entry: the open (09:30 ET) - you said \"at the open\" - once per eligible session",
+       "Expiration: 0DTE (exact - never a later expiry)",
+       "Strike: At the money",
+       "Target: IWM rises 1% from its price at entry (underlying move, not option return)",
+       "Stop loss: None [assumed]",
+       "Time exit: 15:55 ET - you said \"3:55 PM Eastern\"",
+       "Period: 2024-01-18 to 2026-11-25",
+       "Costs: $0.65 commission per contract; quotes fill at the bid/ask; trade prints fill at the print with no extra slippage [assumed]"
+      ],
+      "unsupported": [],
+      "questions": [],
+      "runs": [
+       "5e9b88449530"
+      ]
+     },
+     {
+      "kind": "decision",
+      "view": null,
+      "state": null,
+      "interpreter": null,
+      "text": "Only 123 of the 129 qualifying sessions in the period you asked for have usable trade prints. option data is stored for the session, but not an expiration the strategy can use (5); the provider holds only part of the session (1).",
+      "run_id": "5e9b88449530",
+      "coverage": {
+       "priced": null,
+       "of": null,
+       "counts": null,
+       "first": null,
+       "last": null
+      }
+     },
+     {
+      "kind": "run",
+      "view": null,
+      "state": null,
+      "interpreter": null,
+      "text": "Running: Options backtest.",
+      "runs": [
+       "532187fc1857"
+      ]
+     },
+     {
+      "kind": "result",
+      "view": "single",
+      "state": null,
+      "interpreter": null,
+      "text": "The entry rule fired on 129 sessions, but only 123 of them have usable observed option prices; the remaining 6 could not be tested and are not part of these figures. Historical options backtest on option trade prices, 2024-02-01 to 2026-11-23: 123 trades made a net profit of $931.10 after $159.90 in commissions (0.9% on starting capital). 50.4% of trades were winners; the average winner was $107.72 against an average loser of -$94.22, for $7.57 per trade and a profit factor of 1.16. The largest winner was $225.70 and the largest loser -$237.30; the deepest drawdown was -1.2% of equity. The per-trade profit has a t-statistic of 0.75, which is below the conventional threshold of two, so the edge is not statistically distinguishable from zero in this sample.",
+      "run_id": "532187fc1857",
+      "coverage": {
+       "priced": null,
+       "of": null,
+       "counts": null,
+       "first": null,
+       "last": null
+      }
+     }
+    ],
+    "notebook": "131e155ce95b",
+    "run": "532187fc1857",
+    "card": {
+     "trades": "123 trades on 123 sessions.",
+     "coverage": "The entry rule fired 129 times; 123 could be priced on stored observations (95%). The others are not losses and not skipped by choice: 5 contract not stored, 1 no option data. ",
+     "net": "+931.10 after 159.90 of commissions and 0.00 of assumed slippage (+1,091.00 before them). That is +6.3% of the 14,679 of premium the trades put down.",
+     "average": "+7.57 a trade (median +2.70); 50% of trades made money, averaging +107.72 against -94.22 on the losers.",
+     "expectancy": "The average is +7.57; resampling these trades puts it between -12.15 and +26.60 95 times in 100. Against zero that is p = 0.452. The interval includes zero: these trades do not show an average different from none.",
+     "drawdown": "The largest fall from a previous high of the cumulative result was 1,161.90, reached on 2024-12-19; the longest stretch below a previous high lasted 52 trades.",
+     "streaks": "The longest run of trades that did not make money was 13; the longest winning run was 6.",
+     "distribution": "Half of the trades fall between -91.80 and +115.70; one in twenty is worse than -148.30 and one in twenty better than +157.70. The best was +225.70, the worst -237.30.",
+     "calendar": "19 of the 34 months with a trade ended above zero; 2024: -437 over 37, 2025: +1,239 over 44, 2026: +129 over 42.",
+     "time_of_day": "All entries fall in the half hour from 09:30.",
+     "execution": "With every fill 2% worse the result is +322.12, with 5% worse -591.35; it reaches zero at about 3.1% worse fills. These are trade prints: the bid/ask spread is not in any of these figures.",
+     "concentration": "Without its best trade (+225.70) the result is +705.40; without its best three, +345.00. Half of all the profit made by winning trades came from 22 of them.",
+     "baseline": "Not run yet. The baseline enters the same position at the same time on every session, whatever the signal says: it shows how much of the result is the signal and how much is the position."
+    },
+    "evidence": "No statistically significant edge: the average trade is not distinguishable from zero."
+   }
+  },
+  "B_cross_symbol_comparison": {
+   "sentence": "Compare the same signal across SPY, QQQ and IWM.",
+   "seconds": 4.7,
+   "error": null,
+   "decision": null,
+   "said": [
+    {
+     "kind": "experiment",
+     "view": null,
+     "state": null,
+     "interpreter": "built-in rules",
+     "text": "Running 3 configurations of one strategy on stored option trade observations. Varied: underlying: SPY, QQQ, IWM. Every configuration counts as a trial; the result is read as a map of how the outcome depends on the settings, not as a search for the best cell.",
+     "configurations": 3,
+     "dims": [
+      {
+       "field": "symbol",
+       "values": [
+        "SPY",
+        "QQQ",
+        "IWM"
+       ],
+       "text": "across SPY, QQQ and IWM",
+       "assumed": false
+      }
+     ],
+     "runs": [
+      "4b6ca3a3719f"
+     ]
+    },
+    {
+     "kind": "result",
+     "view": "experiment",
+     "state": null,
+     "interpreter": null,
+     "text": "3 of 3 configurations traded. 2 of them (66.7%) end above zero; the median result is +931.10. The best, SPY, made +2,384.50 over 75 trades (t +1.01; as the best of 3 configurations that is p = 0.94 after adjusting for the search, 0.312 before). Chosen on the earlier sessions alone, the best would have been SPY (+78.03 a trade over 49 trades before 2026-01-20); on the later sessions it made -55.34 a trade over 26. Coverage ranges from 95.3% to 100% of the signals: configurations are not all tested on the same sessions. Both parts are history that has now been examined; neither is evidence of an edge.",
+     "run_id": "4b6ca3a3719f",
+     "summary": {
+      "configurations": 3,
+      "with_trades": 3,
+      "best": {
+       "i": 0,
+       "label": "SPY",
+       "net": 2384.5,
+       "trades": 75,
+       "expectancy": 31.79,
+       "t": 1.01,
+       "p_unadjusted": 0.3124952900425092,
+       "p_adjusted_for_configurations": 0.9374858701275276
+      },
+      "profitable_pct": 66.7,
+      "seconds": 3.5
+     },
+     "dims": [
+      {
+       "field": "symbol",
+       "values": [
+        "SPY",
+        "QQQ",
+        "IWM"
+       ],
+       "text": "across SPY, QQQ and IWM",
+       "assumed": false
+      }
+     ]
+    }
+   ]
+  },
+  "D_atm_versus_otm": {
+   "base": {
+    "sentence": "Buy SPY 0DTE calls after a 0.5% down day, sell after 60 minutes, from 2024-01-18 to 2026-11-25",
+    "seconds": 9.8,
+    "error": null,
+    "decision": {
+     "asked": "Only 142 of the 143 qualifying sessions in the period you asked for have usable trade prints. the contract is stored but did not trade inside the entry window: no print recent enough to fill at (1).",
+     "choices": [
+      "Run on the 142 qualifying sessions that are covered",
+      "Run the market study on the underlying",
+      "Estimate with modeled premiums (opt-in)"
+     ],
+     "chosen": "Run on the 142 qualifying sessions that are covered"
+    },
+    "said": [
+     {
+      "kind": "plan",
+      "view": null,
+      "state": "needs_decision",
+      "interpreter": "built-in rules",
+      "text": "Here is how I read that strategy. The entry rule fires on 143 sessions (2024-01-18 to 2026-11-23). 142 pass every check on stored option observations (142 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 99.3% of them. 1 has the contract stored but no trade inside the entry window. A run confirms each one: these are sessions the stored data supports, not trades. Not specified, so I assumed defaults you can edit: entry time, strike, stop loss.",
+      "read_as": [
+       "Underlying: SPY",
+       "Condition: previous session fell 0.5% or more (close-to-close)",
+       "Position: 1 x Long call",
+       "Entry: the open (09:30 ET) - once per eligible session [assumed]",
+       "Expiration: 0DTE (exact - never a later expiry)",
+       "Strike: At the money [assumed]",
+       "Stop loss: None [assumed]",
+       "Holding period: 60 minutes after the entry fill (or the close, whichever comes first)",
+       "Period: 2024-01-18 to 2026-11-25",
+       "Costs: $0.65 commission per contract; quotes fill at the bid/ask; trade prints fill at the print with no extra slippage [assumed]"
+      ],
+      "unsupported": [],
+      "questions": [],
+      "runs": [
+       "844953117d90"
+      ]
+     },
+     {
+      "kind": "decision",
+      "view": null,
+      "state": null,
+      "interpreter": null,
+      "text": "Only 142 of the 143 qualifying sessions in the period you asked for have usable trade prints. the contract is stored but did not trade inside the entry window: no print recent enough to fill at (1).",
+      "run_id": "844953117d90",
+      "coverage": {
+       "priced": null,
+       "of": null,
+       "counts": null,
+       "first": null,
+       "last": null
+      }
+     },
+     {
+      "kind": "run",
+      "view": null,
+      "state": null,
+      "interpreter": null,
+      "text": "Running: Options backtest.",
+      "runs": [
+       "dc6cc6eca064"
+      ]
+     },
+     {
+      "kind": "result",
+      "view": "single",
+      "state": null,
+      "interpreter": null,
+      "text": "The entry rule fired on 143 sessions, but only 142 of them have usable observed option prices; the remaining 1 could not be tested and are not part of these figures. Historical options backtest on option trade prices, 2024-01-18 to 2026-11-23: 142 trades made a net profit of $1,504.40 after $184.60 in commissions (1.5% on starting capital). 47.9% of trades were winners; the average winner was $118.48 against an average loser of -$88.54, for $10.59 per trade and a profit factor of 1.23. The largest winner was $677.70 and the largest loser -$333.30; the deepest drawdown was -1.1% of equity. The per-trade profit has a t-statistic of 0.95, which is below the conventional threshold of two, so the edge is not statistically distinguishable from zero in this sample.",
+      "run_id": "dc6cc6eca064",
+      "coverage": {
+       "priced": null,
+       "of": null,
+       "counts": null,
+       "first": null,
+       "last": null
+      }
+     }
+    ]
+   },
+   "comparison": {
+    "sentence": "Compare ATM and OTM contracts across multiple entry times.",
+    "seconds": 6.3,
+    "error": null,
+    "decision": null,
+    "said": [
+     {
+      "kind": "experiment",
+      "view": null,
+      "state": null,
+      "interpreter": "built-in rules",
+      "text": "Running 8 configurations of one strategy on stored option trade observations. Varied: entry time (New York): 09:30, 10:00, 11:00, 13:00 (assumed); strike: ATM, 1% OTM (assumed). \"multiple entry times\" names none: the open, 10:00, 11:00 and 13:00 New York time are assumed. \"OTM\" names no distance: 1% out of the money is assumed (say \"2% OTM\" or \"30 delta\" to change it). Every configuration counts as a trial; the result is read as a map of how the outcome depends on the settings, not as a search for the best cell.",
+      "configurations": 8,
+      "dims": [
+       {
+        "field": "entry_time",
+        "values": [
+         "open",
+         "10:00",
+         "11:00",
+         "13:00"
+        ],
+        "text": "across multiple entry times",
+        "assumed": true
+       },
+       {
+        "field": "strike",
+        "values": [
+         [
+          "atm",
+          0.0
+         ],
+         [
+          "pct_otm",
+          1.0
+         ]
+        ],
+        "text": "ATM and OTM contracts",
+        "assumed": true
+       }
+      ],
+      "runs": [
+       "16604c5847dc"
+      ]
+     },
+     {
+      "kind": "result",
+      "view": "experiment",
+      "state": null,
+      "interpreter": null,
+      "text": "8 of 8 configurations traded. 5 of them (62.5%) end above zero; the median result is +875.90. The best, 13:00, ATM, made +3,744.70 over 141 trades (t +1.17; as the best of 8 configurations that is p = 1.00 after adjusting for the search, 0.242 before). Chosen on the earlier sessions alone, the best would have been 13:00, ATM (+42.04 a trade over 94 trades before 2026-01-20); on the later sessions it made -4.41 a trade over 47. Across the 8 configurations with enough trades in both parts, the ranking by the earlier part and by the later part correlate at +0.12: the earlier ranking says little about the later one. Coverage ranges from 98.6% to 99.3% of the signals: configurations are not all tested on the same sessions. Both parts are history that has now been examined; neither is evidence of an edge.",
+      "run_id": "16604c5847dc",
+      "summary": {
+       "configurations": 8,
+       "with_trades": 8,
+       "best": {
+        "i": 6,
+        "label": "13:00, ATM",
+        "net": 3744.7,
+        "trades": 141,
+        "expectancy": 26.56,
+        "t": 1.17,
+        "p_unadjusted": 0.24200096884203634,
+        "p_adjusted_for_configurations": 1.0
+       },
+       "profitable_pct": 62.5,
+       "seconds": 4.8
+      },
+      "dims": [
+       {
+        "field": "entry_time",
+        "values": [
+         "open",
+         "10:00",
+         "11:00",
+         "13:00"
+        ],
+        "text": "across multiple entry times",
+        "assumed": true
+       },
+       {
+        "field": "strike",
+        "values": [
+         [
+          "atm",
+          0.0
+         ],
+         [
+          "pct_otm",
+          1.0
+         ]
+        ],
+        "text": "ATM and OTM contracts",
+        "assumed": true
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "E_multiple_expirations": {
+   "base": {
+    "sentence": "Buy ATM SPY calls at the open after a 1% down day, hold for 1 trading day, from 2024-01-18 to 2026-11-25",
+    "seconds": 7.9,
+    "error": null,
+    "decision": null,
+    "said": [
+     {
+      "kind": "plan",
+      "view": null,
+      "state": "done",
+      "interpreter": "built-in rules",
+      "text": "Here is how I read that strategy. The entry rule fires on 75 sessions (2024-02-01 to 2026-11-23). 74 pass every check on stored option observations (74 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 98.7% of them. 1 more has an entry that can be priced but no observation near the planned exit. 1 of the unpriced sessions can be downloaded from Alpaca Market Data at no cost. A run confirms each one: these are sessions the stored data supports, not trades. Not specified, so I assumed defaults you can edit: expiration, stop loss.",
+      "read_as": [
+       "Underlying: SPY",
+       "Condition: previous session fell 1% or more (close-to-close)",
+       "Position: 1 x Long call",
+       "Entry: the open (09:30 ET) - you said \"at the open\" - once per eligible session",
+       "Expiration: 10DTE [assumed]",
+       "Strike: At the money",
+       "Stop loss: None [assumed]",
+       "Holding period: 1 session(s), exiting at the same time of day",
+       "Period: 2024-01-18 to 2026-11-25",
+       "Costs: $0.65 commission per contract; quotes fill at the bid/ask; trade prints fill at the print with no extra slippage [assumed]"
+      ],
+      "unsupported": [],
+      "questions": [],
+      "runs": [
+       "e8a18f43004b"
+      ]
+     },
+     {
+      "kind": "result",
+      "view": "single",
+      "state": null,
+      "interpreter": null,
+      "text": "Historical options backtest on option trade prices, 2024-02-01 to 2026-11-24: 75 trades made a net profit of $5,909.50 after $97.50 in commissions (5.9% on starting capital). 45.3% of trades were winners; the average winner was $409.88 against an average loser of -$195.76, for $78.79 per trade and a profit factor of 1.74. The largest winner was $1,957.70 and the largest loser -$952.30; the deepest drawdown was -1.8% of equity. The per-trade profit has a t-statistic of 1.62, which is below the conventional threshold of two, so the edge is not statistically distinguishable from zero in this sample.",
+      "run_id": "e8a18f43004b",
+      "coverage": {
+       "priced": null,
+       "of": null,
+       "counts": null,
+       "first": null,
+       "last": null
+      }
+     }
+    ]
+   },
+   "comparison": {
+    "sentence": "Test 0DTE, 1DTE, 3DTE, 7DTE, and 30DTE contracts.",
+    "seconds": 21.9,
+    "error": null,
+    "decision": null,
+    "said": [
+     {
+      "kind": "sweep",
+      "view": null,
+      "state": null,
+      "interpreter": "built-in rules",
+      "text": "Running 5 variants of days to expiration.",
+      "runs": [
+       "42aed0fb7bf8",
+       "d4be73d4402a",
+       "3187bb2e5cbf",
+       "395b4a62b52d",
+       "be7b492950d6"
+      ]
+     },
+     {
+      "kind": "result",
+      "view": "sweep",
+      "state": null,
+      "interpreter": null,
+      "text": "Coverage first: days to expiration 30DTE: 30 of 75 qualifying sessions could be priced. Every figure that follows describes the priced sessions only; the rest were not tested and count as nothing. Across 5 variants of days to expiration, the net P&L ranged from $4,788.41 (days to expiration 30DTE, 30 trades) to $6,871.50 (days to expiration 3DTE, 75). Testing 5 variants and picking the best one overstates the edge; prefer settings whose neighbours also perform well."
+     }
+    ]
+   }
+  },
+  "F_complex_stateful": {
+   "sentence": "Buy two ATM QQQ 0DTE calls when price reclaims VWAP after declining 0.5% from the open, sell half when the premium is up 25%, with a 15% premium stop, exit at 3:30 PM Eastern, from 2024-01-18 to 2026-11-25",
+   "seconds": 23.6,
+   "error": null,
+   "decision": {
+    "asked": "Only 254 of the 256 qualifying sessions in the period you asked for have usable trade prints. the provider holds only part of the session (1); the contract is stored but did not trade inside the entry window: no print recent enough to fill at (1).",
+    "choices": [
+     "Run on the 254 qualifying sessions that are covered",
+     "Run the market study on the underlying",
+     "Estimate with modeled premiums (opt-in)"
+    ],
+    "chosen": "Run on the 254 qualifying sessions that are covered"
+   },
+   "said": [
+    {
+     "kind": "plan",
+     "view": null,
+     "state": "needs_decision",
+     "interpreter": "built-in rules",
+     "text": "Here is how I read that strategy. The entry rule fires on 256 sessions (2024-01-31 to 2026-11-25). 254 pass every check on stored option observations (254 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 99.2% of them. 1 has the contract stored but no trade inside the entry window. 1 is held only in part by the provider. A run confirms each one: these are sessions the stored data supports, not trades.",
+     "read_as": [
+      "Underlying: QQQ",
+      "Step 1 of 2: QQQ has been down 0.5% or more from the session open",
+      "Step 2 of 2: price crosses back above session VWAP",
+      "Order: The steps must happen in this order, each later than the one before; the entry is when the last one happens. Reset every session.",
+      "Position: 2 x Long call",
+      "Entry: whenever the conditions hold - first signal each session",
+      "Expiration: 0DTE (exact - never a later expiry)",
+      "Strike: At the money",
+      "Stop loss: 15% of the option premium",
+      "Partial exit: Close 50% of the contracts when the premium is up 25% (option return); the rest stays open under the other exit rules",
+      "Time exit: 15:30 ET - you said \"3:30 PM Eastern\"",
+      "Last entry: before 15:30 ET, the time every position is closed [assumed]",
+      "Period: 2024-01-18 to 2026-11-25",
+      "Costs: $0.65 commission per contract; quotes fill at the bid/ask; trade prints fill at the print with no extra slippage [assumed]"
+     ],
+     "unsupported": [],
+     "questions": [],
+     "runs": [
+      "47235dfadea2"
+     ]
+    },
+    {
+     "kind": "decision",
+     "view": null,
+     "state": null,
+     "interpreter": null,
+     "text": "Only 254 of the 256 qualifying sessions in the period you asked for have usable trade prints. the provider holds only part of the session (1); the contract is stored but did not trade inside the entry window: no print recent enough to fill at (1).",
+     "run_id": "47235dfadea2",
+     "coverage": {
+      "priced": null,
+      "of": null,
+      "counts": null,
+      "first": null,
+      "last": null
+     }
+    },
+    {
+     "kind": "run",
+     "view": null,
+     "state": null,
+     "interpreter": null,
+     "text": "Running: Options backtest.",
+     "runs": [
+      "3e6abeb525b5"
+     ]
+    },
+    {
+     "kind": "result",
+     "view": "single",
+     "state": null,
+     "interpreter": null,
+     "text": "The entry rule fired on 256 sessions, but only 254 of them have usable observed option prices; the remaining 2 could not be tested and are not part of these figures. Historical options backtest on option trade prices, 2024-01-31 to 2026-11-25: 254 trades made a net profit of $775.60 after $660.40 in commissions (0.8% on starting capital). 40.2% of trades were winners; the average winner was $120.48 against an average loser of -$75.74, for $3.05 per trade and a profit factor of 1.07. The largest winner was $481.40 and the largest loser -$204.60; the deepest drawdown was -2.3% of equity. The per-trade profit has a t-statistic of 0.43, which is below the conventional threshold of two, so the edge is not statistically distinguishable from zero in this sample.",
+     "run_id": "3e6abeb525b5",
+     "coverage": {
+      "priced": null,
+      "of": null,
+      "counts": null,
+      "first": null,
+      "last": null
+     }
+    }
+   ],
+   "run": "3e6abeb525b5",
+   "card": {
+    "trades": "254 trades on 254 sessions.",
+    "coverage": "The entry rule fired 257 times on 256 sessions; 254 could be priced on stored observations (99%). The others are not losses and not skipped by choice: 2 no option data, 1 no recent trade. ",
+    "net": "+775.60 after 660.40 of commissions and 0.00 of assumed slippage (+1,436.00 before them). That is +0.8% of the 95,948 of premium the trades put down.",
+    "average": "+3.05 a trade (median -37.60); 40% of trades made money, averaging +120.48 against -75.74 on the losers.",
+    "expectancy": "The average is +3.05; resampling these trades puts it between -11.07 and +17.21 95 times in 100. Against zero that is p = 0.669. The interval includes zero: these trades do not show an average different from none.",
+    "drawdown": "The largest fall from a previous high of the cumulative result was 2,340.00, reached on 2026-11-17; the longest stretch below a previous high lasted 145 trades.",
+    "streaks": "The longest run of trades that did not make money was 11; the longest winning run was 9.",
+    "distribution": "Half of the trades fall between -76.10 and +81.40; one in twenty is worse than -136.60 and one in twenty better than +182.10. The best was +481.40, the worst -204.60.",
+    "calendar": "16 of the 34 months with a trade ended above zero; 2024: +1,224 over 80, 2025: +84 over 80, 2026: -532 over 94.",
+    "time_of_day": "Entries are spread over 12 half hours; most (51) fall in the one from 09:30, which made +1,313.40.",
+    "execution": "With every fill 2% worse the result is -3,091.04, with 5% worse -8,891.00; it reaches zero at about 0.4% worse fills. Filled on the first individual print after each decision instead, the 254 trades that could be repriced made +557.60 against +775.60 on minute bars. These are trade prints: the bid/ask spread is not in any of these figures.",
+    "concentration": "Without its best trade (+481.40) the result is +294.20; without its best three, -546.60. Half of all the profit made by winning trades came from 29 of them. The result is positive only because of its largest trades.",
+    "baseline": "Not run yet. The baseline enters the same position at the same time on every session, whatever the signal says: it shows how much of the result is the signal and how much is the position."
+   }
+  },
+  "G_replay": {
+   "run": "3e6abeb525b5",
+   "trade": {
+    "id": 1,
+    "strategy": "Buy two ATM QQQ 0DTE calls when price reclaims VWAP after declining 0.5% from the open, se",
+    "symbol": "QQQ",
+    "entry_time": "2024-01-31T11:47:00-05:00",
+    "exit_time": "2024-01-31T11:53:00-05:00",
+    "entry_date": "2024-01-31",
+    "pnl": -52.6,
+    "gross_pnl": -50.0,
+    "commissions": 2.6,
+    "slippage": 0.0,
+    "exit_reason": "stop_loss",
+    "units": 1,
+    "basis": 288.0,
+    "max_risk": 288.0,
+    "entry_spot": 419.67,
+    "exit_spot": 419.09,
+    "holding_minutes": 6.0,
+    "mfe": 0.0,
+    "mae": -51.3,
+    "flags": [
+     "trade_based_fill"
+    ],
+    "entry_dte": 0,
+    "pnl_pct_premium": -18.26388888888889
+   },
+   "seconds_to_load": 0.026,
+   "underlying": {
+    "stored": "1m",
+    "candles": 390,
+    "note": "Stored 1m bars as they are.",
+    "levels": {
+     "previous": {
+      "date": "2024-01-30",
+      "close": 425.29998779296875,
+      "high": 427.67999267578125,
+      "low": 424.3800048828125
+     },
+     "opening_range": {
+      "5": {
+       "high": 421.53,
+       "low": 420.2,
+       "complete_at": 1706711700
+      },
+      "15": {
+       "high": 421.53,
+       "low": 419.78,
+       "complete_at": 1706712300
+      },
+      "30": {
+       "high": 421.53,
+       "low": 419.62,
+       "complete_at": 1706713200
+      },
+      "60": {
+       "high": 421.53,
+       "low": 418.915,
+       "complete_at": 1706715000
+      }
+     }
+    }
+   },
+   "legs": [
+    {
+     "contract": "QQQ240131C00420000",
+     "stored_bars": 390,
+     "sessions": [
+      {
+       "date": "2024-01-31",
+       "stored": true,
+       "bars": 390,
+       "volume": 125053,
+       "minutes_with_prints_pct": 100.0
+      }
+     ],
+     "entry_price": 1.44,
+     "exit_price": 1.19
+    }
+   ],
+   "markers": [
+    {
+     "kind": "decision",
+     "t": 1706719620,
+     "text": "the entry rule held",
+     "price": 419.67
+    },
+    {
+     "kind": "entry",
+     "t": 1706719620,
+     "text": "filled 0s after the decision, on a print made 0s before the fill",
+     "print_age_seconds": 0,
+     "print_ts": 1706719620,
+     "underlying": 419.67
+    },
+    {
+     "kind": "exit",
+     "t": 1706719980,
+     "text": "stop loss",
+     "underlying": 419.09
+    }
+   ],
+   "exit_levels": {
+    "premium": [
+     {
+      "rule": "stop",
+      "value": 15.0,
+      "unit": "pct",
+      "text": "stop: 15% of the 1.44 paid = 1.22",
+      "price": 1.224
+     },
+     {
+      "rule": "partial exit 1",
+      "value": 25.0,
+      "unit": "pct",
+      "price": 1.8,
+      "text": "close 50% of the position at 25% of the premium"
+     }
+    ],
+    "underlying": [],
+    "clock": {
+     "rule": "clock exit",
+     "time": "15:30"
+    }
+   },
+   "marks": {
+    "minutes_marked": 7,
+    "first": [
+     0.0,
+     -10.0,
+     -26.0
+    ],
+    "last": -50.0,
+    "oldest_print_seconds_max": 0
+   },
+   "fills_check": {
+    "checked_against_stored_bars": 508,
+    "matching": 508
+   }
+  },
+  "H_minute_bars_against_individual_prints": {
+   "full_SPY:decision_clock": {
+    "run": "5f7f034dddf7",
+    "job": "done",
+    "seconds": 2.0,
+    "requests": 0,
+    "text": "75 of 75 positions were executed again on individual trades. Their result is +2,496.50 on individual trades against +2,384.50 on minute bars (+112.00). An entry filled 0.444 s after its decision at the median, at a price 0.33% worse for the order than the bar price on average. A print is a price at which a trade happened, not a bid or an ask: this narrows where an order could have filled, it does not establish it.",
+    "positions": 75,
+    "repriced": 75,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": 2384.5,
+    "tick_pnl_repriced": 2496.5,
+    "difference": 112.0,
+    "exit_reason_changed": 0,
+    "entry_seconds_after_decision": {
+     "n": 75,
+     "mean": 1.0041,
+     "median": 0.444,
+     "p05": 0.0282,
+     "p95": 2.1957,
+     "min": 0.003,
+     "max": 20.592
+    },
+    "entry_price_worse_pct": {
+     "n": 75,
+     "mean": 0.3328,
+     "median": -1.1952,
+     "p05": -14.2017,
+     "p95": 17.3,
+     "min": -22.6537,
+     "max": 27.619
+    },
+    "exit_price_worse_pct": {
+     "n": 75,
+     "mean": -1.4668,
+     "median": 0.0,
+     "p05": -12.3011,
+     "p95": 13.1046,
+     "min": -100.0,
+     "max": 30.4348
+    }
+   },
+   "full_SPY:resting_orders": {
+    "run": "5f7f034dddf7",
+    "job": "done",
+    "seconds": 2.0,
+    "requests": 0,
+    "text": "75 of 75 positions were executed again on individual trades. Their result is +2,496.50 on individual trades against +2,384.50 on minute bars (+112.00). An entry filled 0.444 s after its decision at the median, at a price 0.33% worse for the order than the bar price on average. With the target and the stop resting from the fill, 0 positions left for a different reason than on the backtest's clock. A print is a price at which a trade happened, not a bid or an ask: this narrows where an order could have filled, it does not establish it.",
+    "positions": 75,
+    "repriced": 75,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": 2384.5,
+    "tick_pnl_repriced": 2496.5,
+    "difference": 112.0,
+    "exit_reason_changed": 0,
+    "entry_seconds_after_decision": {
+     "n": 75,
+     "mean": 1.0041,
+     "median": 0.444,
+     "p05": 0.0282,
+     "p95": 2.1957,
+     "min": 0.003,
+     "max": 20.592
+    },
+    "entry_price_worse_pct": {
+     "n": 75,
+     "mean": 0.3328,
+     "median": -1.1952,
+     "p05": -14.2017,
+     "p95": 17.3,
+     "min": -22.6537,
+     "max": 27.619
+    },
+    "exit_price_worse_pct": {
+     "n": 75,
+     "mean": -1.4668,
+     "median": 0.0,
+     "p05": -12.3011,
+     "p95": 13.1046,
+     "min": -100.0,
+     "max": 30.4348
+    }
+   },
+   "stateful:decision_clock": {
+    "run": "3e6abeb525b5",
+    "job": "done",
+    "seconds": 2.0,
+    "requests": 0,
+    "text": "254 of 254 positions were executed again on individual trades. Their result is +557.60 on individual trades against +775.60 on minute bars (-218.00). An entry filled 0.1635 s after its decision at the median, at a price 0.17% worse for the order than the bar price on average. A print is a price at which a trade happened, not a bid or an ask: this narrows where an order could have filled, it does not establish it.",
+    "positions": 254,
+    "repriced": 254,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": 775.6,
+    "tick_pnl_repriced": 557.6,
+    "difference": -218.0,
+    "exit_reason_changed": 0,
+    "entry_seconds_after_decision": {
+     "n": 254,
+     "mean": 0.3925,
+     "median": 0.1635,
+     "p05": 0.0086,
+     "p95": 1.5347,
+     "min": 0.001,
+     "max": 3.846
+    },
+    "entry_price_worse_pct": {
+     "n": 254,
+     "mean": 0.1738,
+     "median": 0.0,
+     "p05": -1.6802,
+     "p95": 1.8991,
+     "min": -5.3571,
+     "max": 16.1074
+    },
+    "exit_price_worse_pct": {
+     "n": 254,
+     "mean": -0.1492,
+     "median": 0.0,
+     "p05": -3.125,
+     "p95": 2.0988,
+     "min": -5.8333,
+     "max": 9.4118
+    }
+   },
+   "stateful:resting_orders": {
+    "run": "3e6abeb525b5",
+    "job": "done",
+    "seconds": 2.1,
+    "requests": 0,
+    "text": "254 of 254 positions were executed again on individual trades. Their result is +249.60 on individual trades against +775.60 on minute bars (-526.00). An entry filled 0.1635 s after its decision at the median, at a price 0.17% worse for the order than the bar price on average. With the target and the stop resting from the fill, 14 positions left for a different reason than on the backtest's clock. A print is a price at which a trade happened, not a bid or an ask: this narrows where an order could have filled, it does not establish it.",
+    "positions": 254,
+    "repriced": 254,
+    "entries_not_filled": 0,
+    "bar_pnl_repriced": 775.6,
+    "tick_pnl_repriced": 249.6,
+    "difference": -526.0,
+    "exit_reason_changed": 14,
+    "entry_seconds_after_decision": {
+     "n": 254,
+     "mean": 0.3925,
+     "median": 0.1635,
+     "p05": 0.0086,
+     "p95": 1.5347,
+     "min": 0.001,
+     "max": 3.846
+    },
+    "entry_price_worse_pct": {
+     "n": 254,
+     "mean": 0.1738,
+     "median": 0.0,
+     "p05": -1.6802,
+     "p95": 1.8991,
+     "min": -5.3571,
+     "max": 16.1074
+    },
+    "exit_price_worse_pct": {
+     "n": 254,
+     "mean": -1.5415,
+     "median": -1.1812,
+     "p05": -15.9896,
+     "p95": 31.7608,
+     "min": -28.2051,
+     "max": 48.6631
+    }
+   }
+  },
+  "I_matched_comparison": {
+   "sentence": "Does SPY tend to recover after down days of 1.5% or more, even after controlling for volatility?",
+   "seconds": 1.8,
+   "error": null,
+   "decision": null,
+   "said": [
+    {
+     "kind": "graph",
+     "view": null,
+     "state": "done",
+     "interpreter": "built-in rules",
+     "text": "Research graph: 11 steps, 5 analyses. Every condition is checked to be known before the outcome starts, and every analysis is reported, including any that find nothing. 0 configurations have been tested in this notebook so far.",
+     "runs": [
+      "677d129a07df"
+     ]
+    },
+    {
+     "kind": "result",
+     "view": "graph",
+     "state": null,
+     "interpreter": null,
+     "text": "SPY, sessions where SPY fell 1.5% or more on the session: the outcome (the close 1 session later is above its entry price) occurred on 270 of 472 (57.2%, 95% interval 52.0% to 61.9%), against 53.1% of the other 6,339 evaluated sessions. That difference is within what chance produces (p 0.077, weeks resampled). The plain difference of +4.3 points becomes +8.4 points against sessions matched on 21-session realised volatility, the volatility index (previous close) (95% interval +3.6 to +13.1): the difference persists after matching. Not a candidate: not distinguishable from the baseline on the training period after correcting for the 2 configurations tried in this notebook (adjusted p 0.13). The final test period (2020-02-19 to 2026-11-25) was not examined and stays untouched.",
+     "run_id": "677d129a07df"
+    }
+   ]
+  },
+  "J_out_of_sample": {
+   "later_sessions": {
+    "sentence": "Test whether the results hold up out of sample",
+    "seconds": 4.8,
+    "error": null,
+    "decision": null,
+    "said": [
+     {
+      "kind": "sweep",
+      "view": null,
+      "state": null,
+      "interpreter": "built-in rules",
+      "text": "Running 2 variants of the test period. Split at 2026-01-20: the first 70% of sessions versus the last 30%. This only tests robustness honestly if the rules were chosen without looking at the later period; every earlier run in this conversation used the full period, so treat agreement between the two as necessary, not sufficient.",
+      "runs": [
+       "093facea1e51",
+       "2d9c7a9faae3"
+      ]
+     },
+     {
+      "kind": "result",
+      "view": "sweep",
+      "state": null,
+      "interpreter": null,
+      "text": "In-sample 2024-01-18 to 2026-01-16: $3,823.30 net P&L over 49 trades. Out-of-sample 2026-01-20 to 2026-11-25: -$1,438.80 over 26 trades. The net P&L is lower after the change by $5,262.10, but with 26 trades behind the smaller figure that is a description of what happened, not evidence that the change is better or worse."
+     }
+    ]
+   },
+   "significance": {
+    "sentence": "Is this statistically significant?",
+    "seconds": 0.0,
+    "error": null,
+    "decision": null,
+    "said": [
+     {
+      "kind": "result",
+      "view": "robustness",
+      "state": null,
+      "interpreter": null,
+      "text": "No statistically significant edge: the average trade is not distinguishable from zero. Passed - Sample size: 75 trades. Not passed - Average trade different from zero: mean +31.79 per trade, 95% interval -27.10 to +93.82, p = 0.3143 (1.0000 after allowing for 6 configurations tested). Not passed - Holds in later data: first 70% of trades: mean +85.95 (52); last 30% (from 2026-02-24): mean -90.65 (23). Passed - Not carried by a few trades: the three best trades account for 59% of the total profit. Passed - Survives worse fills: with every fill 2% worse the net result is +1,541.06; it reaches zero at about 5.7% worse fills. 6 configurations have been tested in this session; the significance threshold is adjusted for that.",
+      "run_id": "5f7f034dddf7"
+     }
+    ]
+   }
+  },
+  "K_prospective_paper_experiment": {
+   "experiment": "59955eb727",
+   "frozen": {
+    "name": "V7 acceptance: SPY 0DTE calls after a 1% down day",
+    "status": "active",
+    "activation_date": "2026-11-25",
+    "first_session": "2026-11-27",
+    "config_hash": "157545ab8a177cdc",
+    "engine_version": "7.0.1",
+    "version": 1
+   },
+   "activation": {
+    "state": "market_closed",
+    "rule": "Activated while the market was closed. The first session that counts is 2026-11-27.",
+    "stored_through": "2026-11-25",
+    "sessions_not_yet_stored": 0,
+    "note": "The activation date comes from the clock and the exchange calendar. What is stored locally does not affect it."
+   },
+   "evaluation": {
+    "status": "waiting",
+    "forward_sessions": 0,
+    "first": null,
+    "last": null,
+    "notes": [
+     "No session since activation has closed yet. The first session that can count is 2026-11-27; nothing earlier can count, whenever its data is stored."
+    ],
+    "method": "incremental: each new session is run from the stored account state",
+    "account": null
+   },
+   "stored_states": 0,
+   "ledger": {
+    "ok": true,
+    "entries": 1,
+    "head": "1f6c45b80e60e3ef9c039324f3660b55271a6aa99697b471dacd0eaaef9dfc63",
+    "broken_at": null,
+    "detail": "1 entries, each chained to the one before it"
+   },
+   "error": null
+  },
+  "L_quote_based_comparison": {
+   "status": "BLOCKED",
+   "reason": "BLOCKED: no Databento key is stored in Strata's credential store, the environment or a .env file.",
+   "needs": [
+    "DATABENTO_API_KEY"
+   ],
+   "how": [
+    "Open https://databento.com and choose Sign up to create an account.",
+    "Databento states that new users receive $125 of free credit, usable for historical data, shared by the whole team, applied before any charge and expiring six months after it is issued.",
+    "Sign in and open the API keys page of the portal (https://databento.com/portal/keys). A key is created with the account: a 32-character string that starts with db-.",
+    "Before the first download open the Billing page of the portal (https://databento.com/portal/billing). Databento's documentation says the remaining credit is shown there and that the account has a monthly usage limit you can set; it says further historical requests are blocked once the month's usage exceeds that limit. Set the limit to an amount you accept. Strata cannot see the credit or the limit: neither has an API.",
+    "In Strata open Settings, \"Data provider keys\", paste the key into the Databento field and press Save. The key goes to the operating system's credential store and is never shown again.",
+    "Run the check: Data -> Readiness -> \"Check Databento\" or `strata access databento` in a terminal. It makes free metadata requests only and ends with the exact price of a small sample, quoted by Databento itself.",
+    "To download that sample, run it again with a budget that covers the quoted price, for example `strata access databento --budget 1`. Nothing billable is requested without a budget, and never more than it."
+   ],
+   "unverified": "This adapter has never run against the live service: until it has, what it would retrieve is the provider's documentation, not a measurement."
+  },
+  "M_question_typed_by_the_user": {
+   "sentence": "How often does SPY's first 9:30ET candle, predict its overall day?",
+   "seconds": 14.4,
+   "notebook": "72af567fb228",
+   "read_as": {
+    "hypothesis": "The direction of the first candle of the session and the direction of the session agree more often than unrelated directions would.",
+    "method": "On every SPY session with intraday bars: the direction of the first 5/15/30 minutes (close against the open) is compared with the direction of the whole session (open to close) and with the direction of the rest of it (the candle's close to the session's close). Up and down candles are counted separately, each against all sessions.",
+    "interpretation_notes": [
+     "The length of the first candle was not stated, so 5-, 15- and 30-minute candles are all measured rather than one being assumed.",
+     "\"The day\" is measured twice. Open to close is the day as a whole, and the first candle is part of it: some agreement is built in. From the candle's close to the session's close is what was still unknown when the candle ended.",
+     "A candle's direction is its close against the session's open. Sessions whose candle closed exactly at the open have no direction and are left out; so are sessions without intraday bars."
+    ]
+   },
+   "variants": [
+    "first 5 min up: session closes above its open",
+    "first 5 min down: session closes below its open",
+    "first 5 min up: close is above the 09:35 price",
+    "first 5 min down: close is below the 09:35 price",
+    "first 15 min up: session closes above its open",
+    "first 15 min down: session closes below its open",
+    "first 15 min up: close is above the 09:45 price",
+    "first 15 min down: close is below the 09:45 price",
+    "first 30 min up: session closes above its open",
+    "first 30 min down: session closes below its open",
+    "first 30 min up: close is above the 10:00 price",
+    "first 30 min down: close is below the 10:00 price"
+   ],
+   "level": "none",
+   "verdict": "The direction of SPY's first candle matched the direction of the whole session (open to close) on 58.0% to 64.8% of sessions, more the longer the candle, against about 50.0% if the two were unrelated. Most of that is the candle itself, which is part of the day it is compared with. From the end of the candle to the close it matched on 50.4% to 51.2%, against about 50.0% for unrelated directions: that is no more than chance produces, for every candle length measured.",
+   "findings": [
+    "First 5 minutes: matched the whole session (open to close) on 58.0% of 2,714 sessions (95% interval 56.1% to 59.8%; 50.0% if unrelated); matched the rest of the session (09:35 to the close) on 50.7% of 2,714 sessions (95% interval 48.9% to 52.6%; 50.0% if unrelated).",
+    "First 15 minutes: matched the whole session (open to close) on 61.1% of 2,731 sessions (95% interval 59.3% to 63.0%; 50.0% if unrelated); matched the rest of the session (09:45 to the close) on 50.4% of 2,731 sessions (95% interval 48.5% to 52.3%; 50.0% if unrelated).",
+    "First 30 minutes: matched the whole session (open to close) on 64.8% of 2,728 sessions (95% interval 63.0% to 66.5%; 50.1% if unrelated); matched the rest of the session (10:00 to the close) on 51.2% of 2,728 sessions (95% interval 49.4% to 53.1%; 50.0% if unrelated)."
+   ],
+   "limitations": [
+    "Only sessions with intraday bars can be measured: 2,731 of them, 2016-01-04 to 2026-11-25.",
+    "A match with the whole session is not a forecast: the candle's own move is inside the open-to-close move it is compared with. Only the rest-of-session figures describe what was still unknown when the candle closed.",
+    "Direction only: a session that closes one cent above its open counts the same as one that closes 2% above it. Nothing here says how far the session went.",
+    "Probabilities describe the underlying's behaviour. They are not option returns and say nothing about trading costs."
+   ],
+   "agreement": [
+    {
+     "minutes": 5,
+     "scope": "day",
+     "from": "09:35",
+     "sessions": 2714,
+     "agree": 1573,
+     "agreement": 0.5795873249815771,
+     "ci95": [
+      0.5609160547780192,
+      0.5980336058644553
+     ],
+     "if_unrelated": 0.5002038631803732,
+     "distinguishable": true,
+     "first": "2016-01-04",
+     "last": "2026-11-25"
+    },
+    {
+     "minutes": 5,
+     "scope": "rest",
+     "from": "09:35",
+     "sessions": 2714,
+     "agree": 1377,
+     "agreement": 0.5073691967575534,
+     "ci95": [
+      0.48856271734376056,
+      0.5261548438268389
+     ],
+     "if_unrelated": 0.49999220048518356,
+     "distinguishable": false,
+     "first": "2016-01-04",
+     "last": "2026-11-25"
+    },
+    {
+     "minutes": 15,
+     "scope": "day",
+     "from": "09:45",
+     "sessions": 2731,
+     "agree": 1670,
+     "agreement": 0.6114976199194434,
+     "ci95": [
+      0.5930726148674885,
+      0.6296093861668675
+     ],
+     "if_unrelated": 0.5000932788449459,
+     "distinguishable": true,
+     "first": "2016-01-04",
+     "last": "2026-11-25"
+    },
+    {
+     "minutes": 15,
+     "scope": "rest",
+     "from": "09:45",
+     "sessions": 2731,
+     "agree": 1376,
+     "agreement": 0.5038447455144636,
+     "ci95": [
+      0.4851003123153357,
+      0.5225783773755042
+     ],
+     "if_unrelated": 0.5000491785314328,
+     "distinguishable": false,
+     "first": "2016-01-04",
+     "last": "2026-11-25"
+    },
+    {
+     "minutes": 30,
+     "scope": "day",
+     "from": "10:00",
+     "sessions": 2728,
+     "agree": 1767,
+     "agreement": 0.6477272727272727,
+     "ci95": [
+      0.6296055113752455,
+      0.6654335567757044
+     ],
+     "if_unrelated": 0.5009482629449665,
+     "distinguishable": true,
+     "first": "2016-01-04",
+     "last": "2026-11-25"
+    },
+    {
+     "minutes": 30,
+     "scope": "rest",
+     "from": "10:00",
+     "sessions": 2728,
+     "agree": 1398,
+     "agreement": 0.5124633431085044,
+     "ci95": [
+      0.49370176201086613,
+      0.5311898715304051
+     ],
+     "if_unrelated": 0.5003783419312028,
+     "distinguishable": false,
+     "first": "2016-01-04",
+     "last": "2026-11-25"
+    }
+   ]
+  },
+  "C_bounded_sweep": {
+   "base": {
+    "sentence": "Buy ATM SPY calls at 10:00 AM Eastern after a 0.5% down day, from 2024-01-18 to 2026-11-25",
+    "seconds": 11.6,
+    "error": null,
+    "decision": {
+     "asked": "Only 142 of the 143 qualifying sessions in the period you asked for have usable trade prints. the contract is stored but did not trade inside the entry window: no print recent enough to fill at (1).",
+     "choices": [
+      "Run on the 142 qualifying sessions that are covered",
+      "Run the market study on the underlying",
+      "Estimate with modeled premiums (opt-in)"
+     ],
+     "chosen": "Run on the 142 qualifying sessions that are covered"
+    },
+    "said": [
+     {
+      "kind": "plan",
+      "view": null,
+      "state": "needs_decision",
+      "interpreter": "built-in rules",
+      "text": "Here is how I read that strategy. The entry rule fires on 143 sessions (2024-01-18 to 2026-11-23). 142 pass every check on stored option observations (142 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 99.3% of them. 1 has the contract stored but no trade inside the entry window. A run confirms each one: these are sessions the stored data supports, not trades. Not specified, so I assumed defaults you can edit: expiration, stop loss, exit rule.",
+      "read_as": [
+       "Underlying: SPY",
+       "Condition: previous session fell 0.5% or more (close-to-close)",
+       "Position: 1 x Long call",
+       "Entry: 10:00 ET - you said \"10:00 AM Eastern\" - once per eligible session",
+       "Expiration: 0DTE [assumed]",
+       "Strike: At the money",
+       "Stop loss: None [assumed]",
+       "End-of-day exit: 15:55 ET (before the 0DTE contracts expire) [assumed]",
+       "Period: 2024-01-18 to 2026-11-25",
+       "Costs: $0.65 commission per contract; quotes fill at the bid/ask; trade prints fill at the print with no extra slippage [assumed]"
+      ],
+      "unsupported": [],
+      "questions": [],
+      "runs": [
+       "676a30f3281f"
+      ]
+     },
+     {
+      "kind": "decision",
+      "view": null,
+      "state": null,
+      "interpreter": null,
+      "text": "Only 142 of the 143 qualifying sessions in the period you asked for have usable trade prints. the contract is stored but did not trade inside the entry window: no print recent enough to fill at (1).",
+      "run_id": "676a30f3281f",
+      "coverage": {
+       "priced": null,
+       "of": null,
+       "counts": null,
+       "first": null,
+       "last": null
+      }
+     },
+     {
+      "kind": "run",
+      "view": null,
+      "state": null,
+      "interpreter": null,
+      "text": "Running: Options backtest.",
+      "runs": [
+       "784c2c9160a9"
+      ]
+     },
+     {
+      "kind": "result",
+      "view": "single",
+      "state": null,
+      "interpreter": null,
+      "text": "The entry rule fired on 143 sessions, but only 142 of them have usable observed option prices; the remaining 1 could not be tested and are not part of these figures. Historical options backtest on option trade prices, 2024-01-18 to 2026-11-23: 142 trades made a net profit of $3,052.40 after $184.60 in commissions (3.1% on starting capital). 45.1% of trades were winners; the average winner was $243.39 against an average loser of -$160.57, for $21.50 per trade and a profit factor of 1.24. The largest winner was $3,829.70 and the largest loser -$458.30; the deepest drawdown was -2.4% of equity. The per-trade profit has a t-statistic of 0.66, which is below the conventional threshold of two, so the edge is not statistically distinguishable from zero in this sample.",
+      "run_id": "784c2c9160a9",
+      "coverage": {
+       "priced": null,
+       "of": null,
+       "counts": null,
+       "first": null,
+       "last": null
+      }
+     }
+    ]
+   },
+   "experiment": {
+    "sentence": "Compare entry times from 9:30 to 11:00 in 15-minute increments, prior-day declines from 0.5% to 3%, 0DTE versus 1DTE, and several profit targets.",
+    "seconds": 108.9,
+    "error": null,
+    "decision": null,
+    "said": [
+     {
+      "kind": "experiment",
+      "view": null,
+      "state": null,
+      "interpreter": "built-in rules",
+      "text": "Running 252 configurations of one strategy on stored option trade observations. Varied: entry time (New York): 09:30, 09:45, 10:00, 10:15, 10:30, 10:45, 11:00; days to expiration: 0DTE, 1DTE; profit target, % of premium: 25%, 50%, 100% (assumed); previous-day decline, %: 0.5%, 1%, 1.5%, 2%, 2.5%, 3% (assumed). \"several profit targets\" names none: 25%, 50% and 100% of the premium are assumed. No step was given for the decline: 0.5% is assumed. No time zone was stated: the entry times are read as Eastern time and shown in New York time. Every configuration counts as a trial; the result is read as a map of how the outcome depends on the settings, not as a search for the best cell.",
+      "configurations": 252,
+      "dims": [
+       {
+        "field": "entry_time",
+        "values": [
+         "open",
+         "09:45",
+         "10:00",
+         "10:15",
+         "10:30",
+         "10:45",
+         "11:00"
+        ],
+        "text": "entry times from 9:30 to 11:00 in 15-minute increments",
+        "assumed": false
+       },
+       {
+        "field": "dte",
+        "values": [
+         0,
+         1
+        ],
+        "text": "0DTE versus 1DTE",
+        "assumed": false
+       },
+       {
+        "field": "premium_target",
+        "values": [
+         25.0,
+         50.0,
+         100.0
+        ],
+        "text": "several profit targets",
+        "assumed": true
+       },
+       {
+        "field": "prev_decline",
+        "values": [
+         0.5,
+         1.0,
+         1.5,
+         2.0,
+         2.5,
+         3.0
+        ],
+        "text": "prior-day declines from 0.5% to 3%",
+        "assumed": true
+       }
+      ],
+      "runs": [
+       "f9691004bf67"
+      ]
+     },
+     {
+      "kind": "result",
+      "view": "experiment",
+      "state": null,
+      "interpreter": null,
+      "text": "252 of 252 configurations traded. 213 of them (84.5%) end above zero; the median result is +1,020.80. The best, 09:45, 1DTE, 50%, 0.5%, made +8,927.05 over 143 trades (t +2.81; as the best of 252 configurations that is p = 1.00 after adjusting for the search, 0.005 before). Chosen on the earlier sessions alone, the best would have been 10:45, 1DTE, 100%, 1.5% (+287.30 a trade over 27 trades before 2026-01-20); on the later sessions it made -130.12 a trade over 14. Across the 126 configurations with enough trades in both parts, the ranking by the earlier part and by the later part correlate at -0.56: the ranking tends to REVERSE: what looked better earlier mostly looked worse later. Coverage ranges from 99.3% to 100% of the signals: configurations are not all tested on the same sessions. Both parts are history that has now been examined; neither is evidence of an edge.",
+      "run_id": "f9691004bf67",
+      "summary": {
+       "configurations": 252,
+       "with_trades": 252,
+       "best": {
+        "i": 60,
+        "label": "09:45, 1DTE, 50%, 0.5%",
+        "net": 8927.05,
+        "trades": 143,
+        "expectancy": 62.43,
+        "t": 2.81,
+        "p_unadjusted": 0.004954149997571726,
+        "p_adjusted_for_configurations": 1.0
+       },
+       "profitable_pct": 84.5,
+       "seconds": 106.8
+      },
+      "dims": [
+       {
+        "field": "entry_time",
+        "values": [
+         "open",
+         "09:45",
+         "10:00",
+         "10:15",
+         "10:30",
+         "10:45",
+         "11:00"
+        ],
+        "text": "entry times from 9:30 to 11:00 in 15-minute increments",
+        "assumed": false
+       },
+       {
+        "field": "dte",
+        "values": [
+         0,
+         1
+        ],
+        "text": "0DTE versus 1DTE",
+        "assumed": false
+       },
+       {
+        "field": "premium_target",
+        "values": [
+         25.0,
+         50.0,
+         100.0
+        ],
+        "text": "several profit targets",
+        "assumed": true
+       },
+       {
+        "field": "prev_decline",
+        "values": [
+         0.5,
+         1.0,
+         1.5,
+         2.0,
+         2.5,
+         3.0
+        ],
+        "text": "prior-day declines from 0.5% to 3%",
+        "assumed": true
+       }
+      ]
+     }
+    ]
+   },
+   "run": "f9691004bf67",
+   "summary": {
+    "configurations": 252,
+    "ran": 252,
+    "with_trades": 252,
+    "failed": 0,
+    "split": "2026-01-20",
+    "timing": {
+     "seconds": 106.8,
+     "scan_seconds": 9.3,
+     "entry_rules": 42,
+     "configurations": 252,
+     "scans_shared_by": 6.0,
+     "cpu_seconds": 823.7
+    },
+    "best": {
+     "i": 60,
+     "label": "09:45, 1DTE, 50%, 0.5%",
+     "net": 8927.05,
+     "trades": 143,
+     "expectancy": 62.43,
+     "t": 2.81,
+     "p_unadjusted": 0.004954149997571726,
+     "p_adjusted_for_configurations": 1.0
+    },
+    "profitable": 213,
+    "profitable_pct": 84.5,
+    "median_net": 1020.8,
+    "earlier_later_rank_correlation": -0.56,
+    "compared_on_both": 126,
+    "chosen_on_earlier": {
+     "i": 212,
+     "label": "10:45, 1DTE, 100%, 1.5%",
+     "earlier": {
+      "trades": 27,
+      "net": 7757.05,
+      "expectancy": 287.3,
+      "win_rate": 74.1,
+      "profit_factor": 5.44
+     },
+     "later": {
+      "trades": 14,
+      "net": -1821.7,
+      "expectancy": -130.12,
+      "win_rate": 28.6,
+      "profit_factor": 0.47,
+      "ci95": [
+       -305.37,
+       74.76
+      ]
+     }
+    },
+    "coverage": {
+     "min_pct": 99.3,
+     "median_pct": 100.0,
+     "fetchable_signals": 0
+    },
+    "text": "252 of 252 configurations traded. 213 of them (84.5%) end above zero; the median result is +1,020.80. The best, 09:45, 1DTE, 50%, 0.5%, made +8,927.05 over 143 trades (t +2.81; as the best of 252 configurations that is p = 1.00 after adjusting for the search, 0.005 before). Chosen on the earlier sessions alone, the best would have been 10:45, 1DTE, 100%, 1.5% (+287.30 a trade over 27 trades before 2026-01-20); on the later sessions it made -130.12 a trade over 14. Across the 126 configurations with enough trades in both parts, the ranking by the earlier part and by the later part correlate at -0.56: the ranking tends to REVERSE: what looked better earlier mostly looked worse later. Coverage ranges from 99.3% to 100% of the signals: configurations are not all tested on the same sessions. Both parts are history that has now been examined; neither is evidence of an edge."
+   },
+   "stability": "The highest expectancy is 10:45, 1DTE, 100%, 2%: +190.95 a trade; with the 6 configurations next to it the figure ranges down to +36.37. The most stable region is around 10:45, 1DTE, 50%, 2.5%: the cell and its 6 neighbours all make at least +56.96 a trade (mean +90.87).",
+   "notes": [
+    "\"several profit targets\" names none: 25%, 50% and 100% of the premium are assumed.",
+    "No step was given for the decline: 0.5% is assumed.",
+    "No time zone was stated: the entry times are read as Eastern time and shown in New York time."
+   ]
+  }
+ },
+ "runs": {
+  "full_SPY": {
+   "notebook": "d0704188a6e9",
+   "run": "5f7f034dddf7"
+  },
+  "full_QQQ": {
+   "notebook": "0456ba33ab39",
+   "run": "5be03046cb12"
+  },
+  "full_IWM": {
+   "notebook": "131e155ce95b",
+   "run": "532187fc1857"
+  },
+  "cross_symbol": {
+   "notebook": "d0704188a6e9",
+   "run": "4b6ca3a3719f"
+  },
+  "atm_otm": {
+   "notebook": "6fbccda508dc",
+   "run": "16604c5847dc"
+  },
+  "dte": {
+   "notebook": "e6b87b02863b",
+   "run": null
+  },
+  "stateful": {
+   "notebook": "6678a12aab56",
+   "run": "3e6abeb525b5"
+  },
+  "sweep": {
+   "notebook": "77a7e78d8758",
+   "run": "f9691004bf67"
+  }
+ }
+}

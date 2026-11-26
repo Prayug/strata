@@ -257,7 +257,7 @@ def needs_of(config: dict, store=None, max_signals: int = 4000) -> dict:
             for d in days:
                 if d in exps:
                     known += 1
-                    if not all(PL._dte_ok(exps[d], l) for l in leg_specs):
+                    if not all(PL._dte_ok(exps[d], l, date.fromisoformat(d) if isinstance(d, str) else d) for l in leg_specs):
                         absent.append(d)
         for k in store.datasets(strat.symbol):
             if k.dtype == "options" and k.obs == "quote" and k.res != "EOD":
@@ -269,7 +269,7 @@ def needs_of(config: dict, store=None, max_signals: int = 4000) -> dict:
                  "note": (f"A contract with the required expiration is known to have existed (or not) on {known} of the {len(days)} signal sessions, from the stored end-of-day chains. "
                           + (f"On {len(absent)} of them no such expiration was listed: those sessions cannot be tested with any data. " if absent else "")
                           + (f"For the other {len(days) - known} it is not established here." if len(days) > known else ""))}
-    return {"no_contract_days": absent, "contract_existence": existence, "sessions_with_intraday_quotes": intraday_q,
+    return {"no_contract_days": absent, "contract_existence": existence, "sessions_with_intraday_quotes": intraday_q, "signal_list": signals, "not_evaluable": {k: len(v) for k, v in (sigs.get("excluded") or {}).items()},
             "symbol": strat.symbol, "signals": len(signals), "signal_sessions": len(days), "first": days[0] if days else None, "last": days[-1] if days else None, "hold_sessions": hold, "option_legs": len(legs),
             "contracts_per_signal": contracts, "sessions_per_signal": hold + 1, "days": days, "pricing": mode, "sessions_with_quotes": sum(1 for d in days if d in have_q), "sessions_with_trades": sum(1 for d in days if d in have_t),
             "excluded_sessions": len({d for v in (sigs.get("excluded") or {}).values() for d in v}), "sessions_scanned": sigs.get("sessions"), # an end-of-day chain is one snapshot at the close: any entry before it (the open included) needs intraday option prices

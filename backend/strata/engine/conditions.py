@@ -90,13 +90,26 @@ def operand_label(op: dict) -> str:
     return op.get("name", "?")
 
 
-def eval_leaf(node: CondNode, ctx, pos=None) -> tuple[bool, str]:
+CLOCK_TYPES = ("entry_times", "time_window", "session", "day_of_week")  # read the clock and the calendar only: no price, no state
+
+
+def eval_leaf(node: CondNode, ctx, pos=None, lazy: bool = False) -> tuple[bool, str]:
     p = node.params or {}
     t = node.type
     m = ctx.minute
     if t == "expr":
         from strata.engine.expr import Evaluator, explain
         ev = Evaluator(ctx, pos)
+        if lazy:
+            # the description of a comparison (every operand written out with its value) is only read when the rule holds or
+            # could not be evaluated. A plain "no" is the answer on almost every tick, and it needs no description.
+            try:
+                quick = ev.eval(str(p.get("expr", "")))
+            except Exception:  # noqa: BLE001  (let the full evaluation below report it as it always has)
+                quick = None
+            if quick is not None and not bool(quick):
+                return False, ""
+            ev = Evaluator(ctx, pos)
         res, text = explain(str(p.get("expr", "")), ev)
         if res is None and not ev.missing:
             res = False  # "not yet known" (e.g. the opening range is still forming) is a plain no, not missing data
@@ -233,14 +246,30 @@ def eval_leaf(node: CondNode, ctx, pos=None) -> tuple[bool, str]:
     raise ValueError(f"unknown condition type {t!r}")
 
 
-def evaluate(node: CondNode | None, ctx, pos=None) -> tuple[bool, list[dict], list[str]]:
+def evaluate(node: CondNode | None, ctx, pos=None, lazy: bool = False) -> tuple[bool, list[dict], list[str]]:
     """Returns (passed, explanations, not_evaluable). Leaves evaluate to True / False / None
     (None = an input is missing). Kleene logic combines them, so a rule that could not be
-    evaluated is reported as such instead of being counted as "condition false"."""
+    evaluated is reported as such instead of being counted as "condition false".
+
+    `lazy` is for a caller that only reads the explanations when the rule passes (the engine's entry check, run on every
+    tick of every session). The verdict is the same; what is skipped is work whose result nobody reads: under an AND, a
+    leaf that is plainly false settles the answer whatever the others are (false AND unknown is false), so the clock and
+    calendar leaves are looked at first and the first plain "no" ends the evaluation with no explanation built."""
     out: list[dict] = []
     na: list[str] = []
     if node is None:
         return True, out, na
+    if lazy and node.kind == "group" and node.enabled and node.op == "and" and not node.negate:
+        kids = [c for c in node.children if c.enabled]
+        for c in sorted(kids, key=lambda c: 0 if (c.kind == "cond" and c.type in CLOCK_TYPES) else 1):
+            if c.kind != "cond" or c.negate:
+                continue  # groups and negations go through the full evaluation below
+            try:
+                ok, _ = eval_leaf(c, ctx, pos, lazy=True)
+            except Exception:  # noqa: BLE001
+                continue
+            if ok is False:
+                return False, out, na
 
     def rec(n: CondNode, depth: int):
         if not n.enabled:

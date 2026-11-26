@@ -64,6 +64,8 @@ class Reading:
         self.consumed_numbers: set[float] = set()
         self.drop_cats: set[str] = set()  # nl_rules condition categories this reading supersedes
         self.direction = 0  # -1 the entry follows a decline, +1 a rally
+        self.entry_time: str | None = None  # a clock time a construct fixes ("the first 15-minute candle" is known at 09:45)
+        self.confirm: str | None = None  # another symbol that has to confirm the signal ("auto": named only as "cross-symbol")
 
     def take(self, m: re.Match):
         self.spans.append(m.span())
@@ -234,7 +236,183 @@ def read(text: str, symbol: str | None = None) -> Reading:
                 r.notes.append(f"\"{rel} {m.group(2)}\": read as price rising back to {LEVEL_TEXT[lvl]} (the entry follows a decline); say \"falls back to\" for the opposite.")
         r.exits.append(DraftCondition(expr=f"price {op} {lvl}", text=f"price {'is back at or above' if op == '>=' else 'is back at or below'} {LEVEL_TEXT[lvl]}"))
         r.take(m)
+    _read_intraday(r, sym)
     return r
+
+
+PAST_FALL = r"(?:declin(?:ing|ed|es?)|fall(?:ing|en|s)?|fell|dropp(?:ing|ed)|drops?|slid(?:ing)?|slipp(?:ing|ed)|sold off|selling off|sells? off|dipp(?:ing|ed)|lost|losing|been down|being down|is down|was down|trad(?:ing|ed) down)"
+PAST_RISE = r"(?:rall(?:ying|ied|ies|y)|ris(?:ing|en|es)|rose|gain(?:ing|ed|s)?|climb(?:ing|ed|s)?|jump(?:ing|ed|s)?|popp(?:ing|ed)|been up|being up|is up|was up|trad(?:ing|ed) up)"
+REF_WORDS = r"(?:(?:from|below|above|under|over|off|on|versus|vs\.?)\s+)?(?:the|its|that day'?s|the day'?s|today'?s|yesterday'?s|the previous|the prior)\s*(?:day'?s\s+|session'?s\s+)?(open(?:ing)?(?:\s+price)?|(?:previous\s+|prior\s+)?close)"
+BULL = ("bullish", "green", "up")
+TRIGGER = re.compile(r"crosses_|consecutive_(?:bullish|bearish)_candles|price\s*[<>]|opening_range_")
+
+
+def _tf(tok: str | None, default: str = "5m") -> tuple[str, bool]:
+    """'five' / '15' -> '5m' / '15m' (and whether it was stated)."""
+    n = NL._num(tok) if tok else None
+    return (f"{int(n)}m", True) if n and int(n) in (1, 2, 3, 5, 10, 15, 30, 60) else (default, False)
+
+
+def _read_intraday(r: Reading, sym: str) -> None:
+    """Order and confirmation inside the session: what must have happened first, the candle that triggers, the first
+    candle of the day against yesterday's range, and another symbol that has to agree."""
+    low = r.low
+    for a_, b_ in NL.exit_clauses(r.text):  # what closes the position is not an event of the entry (same length: spans stay valid)
+        low = low[:a_] + " " * (b_ - a_) + low[b_:]
+    # ---- the first N-minute candle against yesterday's high or low: known when that candle has closed
+    m = re.search(r"(?:the\s+)?(?:first|opening)\s+(\w+)[- ]?(?:minute|min)\s+(?:candle|bar|range)\s+(?:breaks?|closes?|trades?|falls?|drops?|moves?|rises?|pushes?|takes? out|is)\s*(below|above|under|over|through)?\s*"
+                  r"(?:the\s+)?(?:yesterday'?s|previous\s+(?:day|session)'?s?|prior\s+(?:day|session)'?s?)\s+(high|low)", low)
+    if m and NL._num(m.group(1)):
+        n, hi = int(NL._num(m.group(1))), m.group(3) == "high"
+        r.conditions = [c for c in r.conditions if c.expr not in (f"crosses_above(price, prev_high)", f"crosses_below(price, prev_low)")]
+        r.conditions.append(DraftCondition(expr=f"opening_range_high({n}) > prev_high" if hi else f"opening_range_low({n}) < prev_low",
+                                           text=f"the first {n} minutes traded {'above' if hi else 'below'} yesterday's {'high' if hi else 'low'}"))
+        t = 570 + n
+        r.entry_time = f"{t // 60:02d}:{t % 60:02d}"
+        r.notes.append(f"\"The first {n}-minute candle\" is complete at {r.entry_time} New York time, so that is when the rule is checked and the entry is taken.")
+        r.take(m)
+        r.direction = r.direction or (1 if hi else -1)
+    # ---- price against the range of the first N minutes, however it is worded ("the high of the first hour", "the first
+    #      30 minutes' low is broken", "the opening 15-minute high")
+    WIN = r"(?:(\w+)[- ]?(?:minutes?|mins?)|(hour))"
+    VERB = r"(breaks?|crosses?|trades?|moves?|pushes?|clears?|takes? out|falls?|drops?|rises?|dips?|slips?|closes?|gets?|goes|is)"
+    for pat, order in ((rf"{VERB}\s+(?:back\s+)?(above|below|over|under|through)\s+(?:the\s+)?(high|low)\s+of\s+the\s+(?:first|opening)\s+{WIN}", "verb"),
+                       (rf"{VERB}\s+(?:back\s+)?(above|below|over|under|through)\s+(?:the\s+)?(?:first|opening)\s+{WIN}'?s?\s+(high|low)", "verb2"),
+                       (rf"(?:the\s+)?(high|low)\s+of\s+the\s+(?:first|opening)\s+{WIN}\s+(?:is|gets|has been)\s+(?:broken|taken out|breached|crossed)", "passive"),
+                       (rf"(?:the\s+)?(?:first|opening)\s+{WIN}'?s?\s+(high|low)\s+(?:is|gets|has been)\s+(?:broken|taken out|breached|crossed)", "passive2")):
+        m = re.search(pat, low)
+        if not m:
+            continue
+        g = m.groups()
+        if order == "verb":
+            verb, _rel, lvl, num, hour = g
+        elif order == "verb2":
+            verb, _rel, num, hour, lvl = g
+        elif order == "passive":
+            lvl, num, hour = g
+            verb = "breaks"
+        else:
+            num, hour, lvl = g
+            verb = "breaks"
+        n = 60 if hour else int(NL._num(num) or 0)
+        if n <= 0:
+            continue
+        hi = lvl == "high"
+        lvl_e = f"opening_range_{'high' if hi else 'low'}({n})"
+        cross = verb.startswith("cross")
+        r.conditions.append(DraftCondition(expr=f"crosses_{'above' if hi else 'below'}(price, {lvl_e})" if cross else f"price {'>' if hi else '<'} {lvl_e}",
+                                           text=f"price {'crosses' if cross else 'is'} {'above' if hi else 'below'} the {'high' if hi else 'low'} of the first {n} minutes"))
+        r.take(m)
+        r.drop_cats.add("orb")
+        r.direction = r.direction or (1 if hi else -1)
+        break
+    # ---- price crossing VWAP is an event, not the state of being on one side of it
+    if not any("vwap" in c.expr for c in r.conditions) and not any("vwap" in s_.expr for s_ in r.sequence):
+        m = re.search(r"cross(?:es|ing|ed)?\s+(?:back\s+)?(above|over|below|under)\s+(?:the\s+)?(?:session\s+)?vwap", low)
+        if m and not re.search(r"(?:close|exit|sell|get out)[^.;]{0,40}$", low[:m.start()][-48:]):
+            up = m.group(1) in ("above", "over")
+            r.conditions.append(DraftCondition(expr=f"crosses_{'above' if up else 'below'}(price, vwap)", text=f"price crosses {'above' if up else 'below'} session VWAP"))
+            r.take(m)
+            r.drop_cats.add("vwap")
+    # ---- a run of candles, with the direction before or after the candle length ("three consecutive bearish five-minute candles")
+    if not any("consecutive_" in c.expr and "candles" in c.expr for c in r.conditions):
+        m = re.search(r"(\w+)\s+(?:consecutive|straight|successive)\s+(red|down|bearish|green|up|bullish)\s+(?:(\w+)[- ]?(?:minute|min)\s+)?(?:candles?|bars?)", low)
+        if m and NL._num(m.group(1)):
+            tf, stated = _tf(m.group(3))
+            bear = m.group(2) in ("red", "down", "bearish")
+            cnt = int(NL._num(m.group(1)))
+            r.conditions.append(DraftCondition(expr=f'consecutive_{"bearish" if bear else "bullish"}_candles("{tf}") >= {cnt}', text=f"{cnt} consecutive {'red' if bear else 'green'} {tf} candles"))
+            r.take(m)
+            r.drop_cats.add("streak")
+            if not stated:
+                r.notes.append(f"No candle length was given for the run of candles: {tf} candles are assumed.")
+    # ---- a single candle that triggers ("a bullish reversal", "the first green five-minute candle")
+    streak = next((c for c in r.conditions if "consecutive_" in c.expr and re.search(r">=\s*([2-9]|\d\d)", c.expr)), None)
+    m = re.search(r"(?:followed by|and then|then|before|until)\s+(?:a\s+|an\s+|one\s+)?(bullish|green|up|bearish|red|down)\s+(?:(\w+)[- ]?(?:minute|min)\s+)?(reversal|candle|bar)(?:\s+candle|\s+bar)?", low)
+    if not m:
+        m = re.search(r"(?:on|at|after)\s+the\s+first\s+(bullish|green|up|bearish|red|down)\s+(?:(\w+)[- ]?(?:minute|min)\s+)?(candle|bar)", low)
+    if m:
+        stf = re.search(r'candles\("(\w+)"\)', streak.expr).group(1) if streak else "5m"
+        tf, stated = _tf(m.group(2), stf)
+        bull = m.group(1) in BULL
+        one = DraftCondition(expr=f'consecutive_{"bullish" if bull else "bearish"}_candles("{tf}") >= 1', text=f"a {'bullish' if bull else 'bearish'} {tf} candle closes (it closed {'above' if bull else 'below'} its open)")
+        if streak is not None:
+            r.conditions = [c for c in r.conditions if c is not streak]
+            r.sequence += [DraftStage(name="streak", expr=streak.expr, text=streak.text), DraftStage(name="reversal", expr=one.expr, text=one.text)]
+        else:
+            r.conditions.append(one)
+        if not stated and streak is None:
+            r.notes.append(f"No candle length was given: {tf} candles are assumed.")
+        r.take(m)
+        r.drop_cats.add("streak")
+    # ---- what must have happened first: "... after declining 0.5% from the open", "after having been down at least 1% ..."
+    m = re.search(rf"\b(?:after|once|having|following|when|if)\b[^.;]{{0,48}}?\b({PAST_FALL}|{PAST_RISE})\s+(?:by\s+)?(at least|more than|over|as much as)?\s*{N}\s*%\s*(?:or more\s*)?(?:{REF_WORDS})", low)
+    if m and not re.search(rf"^\s*(?:{NL.PREV}|the day before)", low[m.end():m.end() + 24]):
+        fell = bool(re.fullmatch(PAST_FALL, m.group(1)))
+        # thresholds are inclusive everywhere in Strata's readers ("down more than 0.8%" and "down at least 0.8%" both read as
+        # 0.8% or more): on real prices the two differ only when the move is exactly the threshold
+        x, strict = float(m.group(3)), False
+        ref_close = "close" in (m.group(4) or "")
+        var = "change_pct" if ref_close else "from_open_pct"
+        op = ("<" if strict else "<=") if fell else (">" if strict else ">=")
+        first = DraftStage(name="drop" if fell else "rally", expr=f"{var} {op} {'-' if fell else ''}{x:g}",
+                           text=f"{sym} has been {'down' if fell else 'up'} {x:g}% or more from {'the previous close' if ref_close else 'the session open'}")
+        trig = next((c for c in reversed(r.conditions) if TRIGGER.search(c.expr)), None)
+        # only an ORDER is read here: something else has to happen afterwards. A move on its own ("when SPY is down 1% from
+        # the open") is a plain condition, and the static reader takes it together with the rest of the sentence
+        if not any(s_.name in ("drop", "rally") for s_ in r.sequence) and (r.sequence or trig is not None):
+            if r.sequence:
+                r.sequence.insert(0, first)
+            else:
+                r.conditions = [c for c in r.conditions if c is not trig]
+                name = "reclaim" if "crosses_above" in trig.expr else "break" if "crosses_below" in trig.expr or "opening_range" in trig.expr else "candle" if "consecutive_" in trig.expr else "trigger"
+                r.sequence += [first, DraftStage(name=name, expr=trig.expr, text=trig.text)]
+            r.take(m)
+            # the percentage now has its place. It stops being available as a target or a stop only when the sentence gives it
+            # once: "down 1% from the open, exit when it falls another 1%" states it twice, for two things
+            if len(re.findall(rf"(?<![\d.]){re.escape(f'{x:g}')}\s*%", low)) == 1:
+                r.consumed_numbers.add(x)
+            r.direction = r.direction or (-1 if fell else 1)
+    # ---- another symbol has to agree
+    m = re.search(r"\b([A-Z]{2,5})\s+confirm\w*|confirm(?:ed|ation|s)?\s+(?:by|from|in|on|with)\s+([A-Z]{2,5})\b", r.text)
+    named = next((g for g in (m.groups() if m else ()) if g and g not in NL.NOT_UNDERLYING and g != sym), None)
+    if named:
+        r.confirm = named
+        r.take(m)
+    else:
+        m = re.search(r"(?:with\s+|and\s+|plus\s+)?(?:a\s+)?(?:cross[- ]symbol|cross[- ]market|inter[- ]?market)\s+confirm\w*", low)
+        if m:
+            r.confirm = "auto"
+            r.take(m)
+
+
+def read_extras(text: str, d: Draft, spans: list | None = None) -> list[str]:
+    """Holding time in minutes, several entries a session and partial exits, read from the sentence onto the draft.
+    Returns the names of the fields it set; the character spans it read are added to `spans`."""
+    low = text.lower().replace("’", "'")
+    changed = []
+    spans = spans if spans is not None else []
+    m = re.search(rf"(?:exit|sell|close|get out|out|hold)(?:\s+(?:it|them|each(?:\s+one)?|the position|the trade|for))*\s+(?:after|for)\s+{N}\s*(minutes?|mins?|hours?|hrs?)\b(?!\s*(?:,|and|or|versus|vs)\s*\d)", low)
+    if m and not re.search(r"\bthen\s+re-?enter", low):
+        d.hold_minutes = int(float(m.group(1)) * (60 if m.group(2).startswith("h") else 1))
+        changed.append("hold_minutes")
+        spans.append(m.span())
+    m = re.search(r"(?:up to|at most|as many as|no more than|a maximum of|max(?:imum)?(?:\s+of)?)\s+(\w+)\s+(?:times|entries|trades)(?:\s+(?:a|per|each)\s+(?:day|session))?|(\w+)\s+(?:entries|trades)\s+(?:a|per|each)\s+(?:day|session)", low)
+    n = NL._num((m.group(1) or m.group(2))) if m else None
+    if n and 1 < n <= 20:
+        d.max_entries = int(n)
+        changed.append("max_entries")
+        spans.append(m.span())
+    for m in re.finditer(rf"(?:sell|close|take off|take|exit|scale out of|trim|book)\s+(?:profits? on\s+)?(half|a half|one half|a third|one third|two thirds|a quarter|three quarters|{N}\s*%)(?:\s+of\s+(?:the\s+|my\s+)?(?:position|contracts?|it|them|lot))?"
+                         rf"\s+(?:when|once|at|if|after)\s+(?:the\s+)?(?:premium|option|position|it|price|they|profit)?\s*(?:is|are|has|gains?|reaches|hits|up)?\s*(?:up\s+)?(?:a\s+)?(?:gain\s+of\s+|profit\s+of\s+|by\s+)?{N}\s*%", low):
+        frac = _frac(m.group(1)) if not m.group(2) else float(m.group(2)) / 100
+        from strata.ai.draft import DraftPartial
+        d.partials = list(d.partials) + [DraftPartial(premium_pct=float(m.group(3)), fraction=frac, text=m.group(0))]
+        if d.premium_target_pct == float(m.group(3)):
+            d.premium_target_pct = None  # that percentage closes part of the position, not all of it
+        changed.append("partials")
+        spans.append(m.span())
+    return changed
 
 
 def detect_direction(d: Draft) -> int:
@@ -358,9 +536,27 @@ def read_window(text: str, d: Draft) -> tuple[int, int] | None:
 
 def find_unsupported(text: str, spans: list[tuple[int, int]], d: Draft) -> list[str]:
     """Clauses that state a market condition but were not turned into any rule."""
-    out, partly = [], []
+    out, partly, exits_left = [], [], []
     low = text.lower()
     pos = 0
+    closing = NL.exit_clauses(text) if d.kind == "options" else []
+    # every number an exit rule of the draft uses: targets and stops, partial exits (their level and the share they close), the
+    # time held, and the numbers inside exit conditions
+    levels = {float(x) for x in (d.underlying_target_pct, d.underlying_stop_pct, d.premium_target_pct, d.premium_stop_pct, d.underlying_target_abs, d.underlying_stop_abs, d.hold_minutes, d.hold_sessions) if x is not None}
+    levels |= {abs(float(x)) for c in d.exit_conditions for x in re.findall(r"\d+(?:\.\d+)?", c.expr)}
+    for pt in d.partials:
+        levels |= {float(x) for x in (pt.premium_pct, pt.underlying_pct) if x is not None} | {round(float(pt.fraction) * 100, 6)}
+    for a_, b_ in closing:
+        # a clause that says when to close the position is represented when its sizes are the target, the stop or part of an
+        # exit condition that was read from it. Otherwise it is an exit that could not be represented, in the user's words
+        core = re.sub(r"^\s*(?:when(?:ever)?|if|once|as\s+soon\s+as)\s+", "", text[a_:b_], flags=re.I)
+        core = re.sub(r",?\s*\b(?:or|and)\s+(?:at|by|before|on)\s+(?:the\s+)?(?:close|closing bell|open|bell|end of (?:the )?day|eod|\d{1,2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?(?:\s+(?:eastern|pacific|central|mountain|et|pt|ct|mt|new york))?(?:\s+time)?)\s*$", "", core, flags=re.I).strip(" ,.;")
+        if not core or TIMEISH.search(core):
+            continue
+        sizes = {float(x) for x in re.findall(r"\d+(?:\.\d+)?", re.sub(r"\d{1,2}:\d{2}(?:\s*[ap]\.?m\.?)?", " ", core))}
+        if (sizes and sizes <= levels) or (not sizes and d.exit_conditions):
+            continue
+        exits_left.append(text[a_:b_].strip(" ,.;"))
     for part in re.split(r"(?<=[.;!?])\s+|,\s+(?=(?:and|but|then|unless|only|if|when|while|after|once|provided|as long as|except)\b)|\s+(?=(?:but only if|only if|only when|unless|provided that|as long as|except when|when|whenever|while)\b)", text):
         a = text.find(part, pos)
         if a < 0:
@@ -377,6 +573,8 @@ def find_unsupported(text: str, spans: list[tuple[int, int]], d: Draft) -> list[
             if d.kind == "options":
                 partly += _remainder(part, over, d.symbol)  # a clause that was only partly read: the rest of it is still owed
             continue
+        if d.kind == "options" and any(a_ <= a + 8 and a < b_ for a_, b_ in closing):
+            continue  # it says when to CLOSE the position: handled above, clause by clause, and never a condition of the entry
         # the tail of an exit statement ("exit | when SPY moves up 1% from entry or at 12:45") belongs to the exit the static parser read
         if re.search(r"(exit|exits|sell|sells|close|closes|out|profit|profits|stop|stops|target|targets)\s*$", text[max(0, a - 18):a].lower().strip()):
             continue
@@ -397,7 +595,7 @@ def find_unsupported(text: str, spans: list[tuple[int, int]], d: Draft) -> list[
         elif d.kind == "options":  # in a market question the rest of the clause IS the question, so only a strategy is checked
             res += _remainder(u, [], d.symbol)
     res += _unread_conditionals(text, spans, d, res + partly)
-    return list(dict.fromkeys(res + partly))
+    return list(dict.fromkeys(res + partly + exits_left))
 
 
 # "when ...", "if ...", "after ...", "on days when ...", "only if ...": a clause that makes the entry conditional
@@ -417,10 +615,13 @@ def _unread_conditionals(text: str, spans: list[tuple[int, int]], d: Draft, alre
     out = []
     seen = " ".join(already).lower()
     exprs = {c.expr for c in d.conditions}
+    closing = NL.exit_clauses(text)
     for m in COND_CLAUSE.finditer(text):
         body = m.group("body").strip(" ,.;")
         a, b = m.span("body")
         low = body.lower()
+        if any(a_ <= m.start() + 1 and a <= b_ for a_, b_ in closing):
+            continue  # it says when to close the position: the exit rules have it, and it is not a condition of the entry
         if len(low) < 4 or TIMEISH.search(low) or low in seen or (seen and any(low in x or x in low for x in (u.lower() for u in already))):
             continue
         # part of an exit statement: "exit when SPY moves up 1%", "sell after 3 days", "close it if ..."
@@ -488,9 +689,13 @@ def _read_with_research_reader(d: Draft, known: list[str], window: tuple[str, in
         store = None
     left = []
     have = {c.expr.replace(" ", "") for c in d.conditions}
+    closing = [(full_text or "")[a_:b_].lower() for a_, b_ in NL.exit_clauses(full_text or "")]
     for u in d.unsupported:
         if re.match(r"\s*(?:unless|except)\b", u.lower()):
             left.append(u)  # a negated clause is not rewritten here
+            continue
+        if any(u.lower().strip(" ,.;") in c for c in closing):
+            left.append(u)  # an exit that could not be represented stays one: it is not rewritten into a condition of the entry
             continue
         phrase = u.replace(window[0], " ") if window and window[0] in u else u  # a clock window in the clause was already read
         try:
@@ -559,8 +764,39 @@ def enrich(text: str, known: list[str], default_symbol: str = "SPY") -> Draft:
                 r.direction = r.direction or (-1 if fell else 1)
     d.sequence = r.sequence
     d.conditions = d.conditions + [c for c in r.conditions if c.expr not in {x.expr for x in d.conditions}]
+    if r.sequence:
+        # what the sequence states is not repeated as a separate condition that must hold at the same tick
+        d.conditions = [c for c in d.conditions if c.expr not in {s_.expr for s_ in r.sequence}]
+    if r.entry_time:
+        d.entry_time, d.entry_time_stated = r.entry_time, None
+    if r.confirm:
+        other = r.confirm if r.confirm != "auto" else ("QQQ" if d.symbol != "QQQ" else "SPY")
+        added = False
+        for c in list(d.conditions) + [DraftCondition(expr=s_.expr, text=s_.text) for s_ in r.sequence]:
+            mo = re.search(r"price\s*(>|<)=?\s*opening_range_(high|low)\((\d+)\)", c.expr)
+            if mo:
+                e = f"{other}.price {mo.group(1)} {other}.opening_range_{mo.group(2)}({mo.group(3)})"
+                d.conditions.append(DraftCondition(expr=e, text=f"{other} has broken its own first {mo.group(3)} minutes' {mo.group(2)} as well"))
+                added = True
+                break
+        if not added:
+            up = r.direction >= 0
+            d.conditions.append(DraftCondition(expr=f"{other}.from_open_pct {'>' if up else '<'} 0", text=f"{other} is {'above' if up else 'below'} its own open as well"))
+        if r.confirm == "auto":
+            d.notes.append(f"\"Cross-symbol confirmation\" names no symbol: {other} is assumed, and it has to show the same move.")
+    read_extras(text, d, r.spans)
     d.adds = r.adds
-    d.exit_conditions = r.exits
+    d.exit_conditions = r.exits + [c for c in d.exit_conditions if c.expr not in {x.expr for x in r.exits}]
+    for a_, b_ in NL.exit_clauses(text):
+        # an intraday event inside an exit clause ("exit when SPY breaks below the low of the first 15 minutes") closes the
+        # position: the same reader, on that clause alone
+        rx = Reading(text[a_:b_])
+        _read_intraday(rx, sym or default_symbol)
+        for c in rx.conditions + [DraftCondition(expr=s_.expr, text=s_.text) for s_ in rx.sequence[-1:]]:
+            same_side = {"price <= vwap": "crosses_below(price, vwap)", "price >= vwap": "crosses_above(price, vwap)"}
+            d.exit_conditions = [x for x in d.exit_conditions if same_side.get(x.expr) != c.expr]  # the crossing says it more exactly than the side
+            if c.expr not in {x.expr for x in d.exit_conditions}:
+                d.exit_conditions.append(c)
     d.notes += r.notes
     if (r.sequence or any("crosses_" in c.expr for c in r.conditions)) and d.entry_time in ("open", "09:30"):
         d.entry_time = None  # an intraday trigger decides the entry time

@@ -188,6 +188,21 @@ CREATE TABLE IF NOT EXISTS forward_ledger (
 CREATE INDEX IF NOT EXISTS forward_ledger_exp ON forward_ledger(experiment_id, seq);
 CREATE TRIGGER IF NOT EXISTS forward_ledger_no_update BEFORE UPDATE ON forward_ledger BEGIN SELECT RAISE(ABORT, 'the forward ledger is append-only: an entry cannot be changed'); END;
 CREATE TRIGGER IF NOT EXISTS forward_ledger_no_delete BEFORE DELETE ON forward_ledger BEGIN SELECT RAISE(ABORT, 'the forward ledger is append-only: an entry cannot be deleted'); END;
+CREATE TABLE IF NOT EXISTS forward_states (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  experiment_id TEXT NOT NULL,
+  session TEXT NOT NULL,
+  state TEXT NOT NULL,
+  state_hash TEXT NOT NULL,
+  engine_version TEXT,
+  data_fingerprint TEXT,
+  origin TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(experiment_id, session)
+);
+CREATE INDEX IF NOT EXISTS forward_states_exp ON forward_states(experiment_id, session);
+CREATE TRIGGER IF NOT EXISTS forward_states_no_update BEFORE UPDATE ON forward_states BEGIN SELECT RAISE(ABORT, 'a sealed account state cannot be changed'); END;
+CREATE TRIGGER IF NOT EXISTS forward_states_no_delete BEFORE DELETE ON forward_states BEGIN SELECT RAISE(ABORT, 'a sealed account state cannot be deleted'); END;
 CREATE TABLE IF NOT EXISTS ml_test_exposures (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   symbol TEXT NOT NULL,

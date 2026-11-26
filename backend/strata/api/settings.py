@@ -42,6 +42,15 @@ DEFAULTS = {
     "llm.model.openai": "gpt-4.1-mini", "llm.model.anthropic": "claude-opus-5-5", "llm.model.gemini": "gemini-2.5-flash",
     "llm.model.openrouter": "openai/gpt-4.1-mini", "llm.model.ollama": "", "llm.ollama_url": "http://127.0.0.1:11434",
     "llm.fallback": "rules",  # rules = use the built-in interpreter when the model fails (and say so) | none = stop and report the failure
+    # who reads a request when a model is configured: model = the model reads everything | assist = the built-in readers first,
+    # the model only for what they could not place (its reading is used only if it compiles and leaves nothing unplaced) |
+    # check = both read every strategy and comparison, and where they differ the difference is asked instead of run |
+    # auto = check for a local model, model for a hosted one
+    "llm.mode": "auto",
+    # how a model is asked: tools = the full planner (every tool, free expressions) | form = a short form of typed fields that a
+    # small model can fill, every value checked against the sentence | auto = form for a local model, tools for a hosted one
+    "llm.planner": "auto",
+    "llm.ollama.context_tokens": 12288,  # context asked of a local model; left to the server it is the model's maximum
     "llm.timeout_seconds": 90, "llm.max_retries": 2,
     "ai.exec_mode": "quick",  # quick | review (default for new research sessions)
     "ui.timezone": "America/Los_Angeles", "data.default_symbol": "SPY",

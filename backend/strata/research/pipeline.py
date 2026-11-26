@@ -123,6 +123,13 @@ class Pipeline:
         if self.progress:
             self.progress(min(0.98, (i + (1.0 if status in ("done", "skipped") else 0.4)) / len(self.stages)), f"{s['label']}{': ' + s['detail'] if s['detail'] else ''}"[:240])
 
+    def restate(self, sid: str, detail: str, **data):
+        """Correct what a finished stage says, when something later in the run changed what it had determined."""
+        s = next(s for s in self.stages if s["id"] == sid)
+        s["detail"] = detail
+        s["data"].update(data)
+        self._write()
+
     def sub(self, sid: str):
         i = next(k for k, s in enumerate(self.stages) if s["id"] == sid)
         s = self.stages[i]
@@ -327,7 +334,8 @@ class Pipeline:
             first_edge = None
             while adaptive["rounds"] < MAX_EXPANSIONS:
                 cs = res.meta.get("contract_selection") or {}
-                edge = [date.fromisoformat(x) for x in cs.get("edge_dates") or []]
+                # on the edge of the stored strikes (filled, but a better contract may lie beyond), or beyond them (not filled)
+                edge = sorted({date.fromisoformat(x) for x in (cs.get("edge_dates") or []) + (cs.get("beyond_dates") or [])})
                 if first_edge is None:
                     first_edge = len(edge)
                 if not edge:
@@ -337,7 +345,7 @@ class Pipeline:
                     break
                 for d_ in edge:
                     widen[d_] = widen.get(d_, 0) + 1
-                self.stage("simulate", "running", f"{len(edge)} selection(s) sit on the edge of the downloaded strikes: widening the range and simulating again")
+                self.stage("simulate", "running", f"{len(edge)} selection(s) sit on the edge of the stored strikes or beyond it: widening the range for those sessions and simulating again")
                 try:
                     r2 = P.acquire_trades(store, req, [s for s in signals if s["date"] in set(edge)], src_name, None, self.should_cancel, True, widen)
                 except Exception as e:  # noqa: BLE001
@@ -352,10 +360,23 @@ class Pipeline:
                     adaptive["stopped"] = "no further strikes are available from the source"
                     break
                 res = run_backtest(cfg, store, progress=prog, should_cancel=self.should_cancel)
-            left = len((res.meta.get("contract_selection") or {}).get("edge_dates") or [])
+            cs_ = res.meta.get("contract_selection") or {}
+            left = len(set(cs_.get("edge_dates") or []) | set(cs_.get("beyond_dates") or []))
             adaptive.update(remaining=left, resolved=max(0, (first_edge or 0) - left), first_edge=first_edge or 0)
             if left and not adaptive["stopped"]:
                 adaptive["stopped"] = f"still on the edge after {MAX_EXPANSIONS} widenings"
+            if adaptive["rounds"]:
+                # the stored observations changed while the run was simulating: what was determined before describes a store
+                # that no longer exists. Every later statement (the summary, the explanation, the skipped signals) reads this.
+                need = sorted({s["date"] for s in signals})
+                cov2 = P.trade_coverage(store, _req(spec, "trades"), signals, spec.get("provider"), cfg=_bt_cfg(spec, need[0], need[-1], "trades"))
+                cov2["issues"] += [x for x in opt_cov.get("issues") or [] if x.get("kind") == "underlying"]
+                opt_cov = {**opt_cov, **cov2}
+                k_ok = opt_cov["executable"]
+                record["options"] = opt_cov
+                record["executable"]["signals"] = k_ok
+                self.restate("contracts", f"{k_ok:,} of {k:,} qualifying sessions have usable {opt_cov['observation']}, counted again after the strike range was widened for {len(adaptive['widened_sessions'])} session(s)",
+                             issues=opt_cov["issues"][:6])
         record["contract_selection"] = {**(res.meta.get("contract_selection") or {}), "adaptive": adaptive}
         self.stage("simulate", "done", f"{len(res.trades):,} trades from {res.diagnostics['signals']:,} signals in the simulated window"
                    + (f"; strike range widened for {len(adaptive['widened_sessions'])} session(s)" if adaptive["rounds"] else ""))
@@ -423,10 +444,22 @@ class Pipeline:
                             self.downloads.append({"source": a["source"], "label": a["label"], "dataset": a["dataset"], "symbols": a["symbols"], "why": a["why"], "error": str(e)[:200]})
                     elif a["large"]:
                         pending_large.append(a)
-            if info and info["available"] and info["signals_in_window"] and not approvals.get("no_download"):
-                self.stage("acquire", "running", f"{info['label']}: option trade prints for {info['signals_in_window']} qualifying session(s) only")
+            # what the strategy needs is decided signal by signal on the observations already stored (the engine's own selection
+            # and execution settings). A signal that is fully priced needs nothing from anyone: the provider is asked only
+            # about the others. Before this, every signal's contracts were looked up at the provider first, and a strategy whose
+            # data was all on disk waited minutes for a nine-second run.
+            todo = signals
+            try:
+                todo = P.unpriced_signals(store, _bt_cfg(spec, need_days[0], need_days[-1], "trades"), signals, provider)
+                acq["already_priced"] = len(signals) - len(todo)
+            except Exception:  # noqa: BLE001  (if readiness cannot be worked out here, every signal is looked up, as before)
+                todo = signals
+            if info and info["available"] and info["signals_in_window"] and not approvals.get("no_download") and not todo:
+                self.stage("acquire", "running", f"all {len(signals)} qualifying sessions are priced on stored observations: nothing to download")
+            if info and info["available"] and info["signals_in_window"] and not approvals.get("no_download") and todo:
+                self.stage("acquire", "running", f"{info['label']}: option trade prints for the {len(todo)} qualifying session(s) the stored observations do not fully price" + (f" ({len(signals) - len(todo)} need nothing)" if len(todo) < len(signals) else ""))
                 try:
-                    r = P.acquire_trades(store, req, signals, src, self.sub("acquire"), self.should_cancel, bool(approvals.get("large_download")))
+                    r = P.acquire_trades(store, req, todo, src, self.sub("acquire"), self.should_cancel, bool(approvals.get("large_download")))
                 except S.SourceError as e:
                     r = {"source": src, "error": str(e)[:240]}
                 acq["ran"] = r
@@ -439,7 +472,41 @@ class Pipeline:
                     self.downloads.append({"source": src, "label": info["label"], "dataset": "option_trades", "symbols": [req["symbol"]], "tier": info["tier"], "cost": 0.0,
                                            "why": f"option trade prints for {r['signals_in_window']} qualifying session(s): {r['contract_sessions']:,} contract-sessions requested",
                                            "result": {k: x.get(k) for k in ("pairs_requested", "pairs_cached", "pairs_ok", "pairs_empty", "pairs_unavailable", "pairs_failed", "bars", "requests", "rejected")}})
-            cov = P.trade_coverage(store, req, signals, provider)
+            # the same determination the plan showed: the engine's own selection and execution settings on each signal
+            cfg_tr = _bt_cfg(spec, need_days[0], need_days[-1], "trades")
+            cov = P.trade_coverage(store, req, signals, provider, cfg=cfg_tr)
+            # A strike outside the stored range is a contract the provider may well hold. The range is widened for those
+            # sessions alone and the determination made again, BEFORE anything is reported: a run used to ask for a go-ahead
+            # on "74 of 75 sessions", then fetch the missing strike while simulating and trade all 75 under a summary that
+            # still said 74.
+            widen: dict = {}
+            widened = {"rounds": 0, "sessions": [], "stopped": None}
+            while cov.get("outside_stored_strikes") and info and info["available"] and not approvals.get("no_download") and widened["rounds"] < MAX_EXPANSIONS:
+                out_days = {date.fromisoformat(x) for x in cov["outside_stored_strikes"]}
+                for d_ in out_days:
+                    widen[d_] = widen.get(d_, 0) + 1
+                self.stage("acquire", "running", f"{info['label']}: {len(out_days)} session(s) need a strike outside the stored range: fetching a wider range for those sessions only")
+                try:
+                    r2 = P.acquire_trades(store, req, [s for s in signals if s["date"] in out_days], src, None, self.should_cancel, bool(approvals.get("large_download")), widen)
+                except S.SourceError as e:
+                    widened["stopped"] = f"the wider range could not be downloaded: {str(e)[:160]}"
+                    break
+                if r2.get("needs_approval"):
+                    widened["stopped"] = "the wider range is a large download that has not been approved"
+                    break
+                widened["rounds"] += 1
+                widened["sessions"] = sorted(x.isoformat() for x in widen)
+                got = r2.get("result") or {}
+                if got.get("requests"):
+                    self.downloads.append({"source": src, "label": info["label"], "dataset": "option_trades", "symbols": [req["symbol"]], "tier": info["tier"], "cost": 0.0,
+                                           "why": f"a wider strike range for {len(out_days)} session(s) whose strike was outside the stored one (round {widened['rounds']})",
+                                           "result": {k: got.get(k) for k in ("pairs_requested", "pairs_cached", "pairs_ok", "pairs_empty", "bars", "requests")}})
+                if not (got.get("pairs_ok") or got.get("pairs_empty")):
+                    widened["stopped"] = "no further strikes are available from the source"
+                    break
+                cov = P.trade_coverage(store, req, signals, provider, cfg=cfg_tr)
+            if widened["rounds"] or widened["stopped"]:
+                acq["widened"] = widened
             # sessions whose underlying bars are too coarse cannot be executed on trade bars either
             tab = {r["date"]: r["res"] for r in P.session_table(store, req["symbol"], need_days[0], need_days[-1]).iter_rows(named=True)}
             still = {d for d in need_days if tab.get(d, 10**9) > 300}

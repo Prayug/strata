@@ -39,22 +39,35 @@ const BASE = {
   crosshair: { mode: CrosshairMode.Normal, vertLine: { color: "#535d6e", labelBackgroundColor: "#222a37" }, horzLine: { color: "#535d6e", labelBackgroundColor: "#222a37" } },
 };
 
-export function LWChart({ series, height = 260, timeVisible = false, className, onCrosshair, onClick, fit = true, extra, cursorTime }: {
+export type LWRange = { from: number; to: number };
+
+/** `range` / `onRange` share one visible window between charts drawn over the same time points (bars are positions on the
+    time scale, so two charts with the same points and the same logical range show the same minutes one above the other). */
+export function LWChart({ series, height = 260, timeVisible = false, className, onCrosshair, onClick, fit = true, extra, cursorTime, range, onRange }: {
   series: LWSeries[]; height?: number | string; timeVisible?: boolean; className?: string;
   onCrosshair?: (t: number | null) => void; onClick?: (t: number | null) => void; fit?: boolean; extra?: Record<string, any>; cursorTime?: number | null;
+  range?: LWRange | null; onRange?: (r: LWRange) => void;
 }) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const handles = useRef<ISeriesApi<any>[]>([]);
-  const cbs = useRef({ onCrosshair, onClick });
-  cbs.current = { onCrosshair, onClick };
+  const cbs = useRef({ onCrosshair, onClick, onRange });
+  cbs.current = { onCrosshair, onClick, onRange };
+  const quiet = useRef(0);  // until when (ms) range changes are this chart's own doing (data set, fitted, a range it was given) and not a gesture
 
   useEffect(() => {
     if (!el.current) return;
     const c = createChart(el.current, { ...BASE, autoSize: true, ...(extra || {}), timeScale: { ...BASE.timeScale, timeVisible, ...(extra?.timeScale || {}) } } as any);
     chart.current = c;
-    c.subscribeCrosshairMove((p) => cbs.current.onCrosshair?.(p.time ? (p.time as number) : null));
+    // Only a pointer that really moved (or left) is reported. The library also fires this when the chart redraws under a
+    // pointer that is standing still: with the mouse parked on a chart, the replay's cursor snapped back to it every time
+    // the slider or the keyboard moved it.
+    c.subscribeCrosshairMove((p) => { if (p.time && !(p as any).sourceEvent) return; cbs.current.onCrosshair?.(p.time ? (p.time as number) : null); });
     c.subscribeClick((p) => cbs.current.onClick?.(p.time ? (p.time as number) : null));
+    c.timeScale().subscribeVisibleLogicalRangeChange((r) => {
+      if (!r || !cbs.current.onRange || performance.now() < quiet.current) return;
+      cbs.current.onRange({ from: r.from, to: r.to });
+    });
     return () => {
       c.remove();
       chart.current = null;
@@ -86,6 +99,7 @@ export function LWChart({ series, height = 260, timeVisible = false, className, 
       for (const pl of s.priceLines || []) h.createPriceLine({ price: pl.price, color: pl.color, lineWidth: 1, lineStyle: pl.style === "solid" ? LineStyle.Solid : LineStyle.Dashed, axisLabelVisible: true, title: pl.title || "" });
       handles.current.push(h);
     }
+    quiet.current = performance.now() + 250;
     if (fit) c.timeScale().fitContent();
   }, [series, fit]);
 
@@ -100,6 +114,17 @@ export function LWChart({ series, height = 260, timeVisible = false, className, 
       c.setCrosshairPosition(NaN as any, cursorTime as Time, handles.current[0]);
     } catch { /* outside range */ }
   }, [cursorTime]);
+
+  useEffect(() => {
+    const c = chart.current;
+    if (!c || !range) return;
+    const cur = c.timeScale().getVisibleLogicalRange();
+    if (cur && Math.abs(cur.from - range.from) < 0.05 && Math.abs(cur.to - range.to) < 0.05) return;
+    quiet.current = performance.now() + 250;
+    try {
+      c.timeScale().setVisibleLogicalRange(range as any);
+    } catch { /* no data yet */ }
+  }, [range, series]);
 
   return <div ref={el} className={className} style={{ height, width: "100%" }} />;
 }

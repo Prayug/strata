@@ -1,7 +1,7 @@
 /* One research notebook: the conversation on the left, and on the right whatever it produced:
    the report of a result, the editable interpretation, a set of variants, or the pinned comparison. */
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowLeft, FileText, GitCompareArrows, History, Keyboard, Network, PanelRightClose, PanelRightOpen, Pencil, Sparkles } from "lucide-react";
+import { ArrowLeft, FileText, GitCompareArrows, History, Keyboard, Maximize2, Minimize2, Network, PanelRightClose, PanelRightOpen, Pencil, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
@@ -14,18 +14,20 @@ import { Empty, Skeleton, useHotkeys } from "./bits";
 import { Canvas } from "./Canvas";
 import { Compare } from "./Compare";
 import { CostView, DataCheckView, FillsView, StageRail, UntestedView, type Alt } from "./Coverage";
+import { ExperimentView } from "./Experiment";
 import { Composer, InterpreterChip, type ComposerHandle } from "./Landing";
 import { Message, type Actions, type OpenTarget } from "./Messages";
 import { Timeline } from "./Pipeline";
-import { Report, REPORT_TABS } from "./Report";
+import { Ticket } from "./Ticket";
+import { Report } from "./Report";
 import { GraphView, MemoryView, RegistryCheckView, StrategyPlanView } from "./Graph";
 import { AnalysisView, ChallengeView, ExecutionView, HoldoutChip, HypothesisView } from "./Research";
 import { Setup } from "./Setup";
 import { DiscoveryView, InvestigationView, SweepView } from "./Views";
 
 type View = OpenTarget | { type: "compare" } | { type: "canvas" } | null;
-const PENDING = ["plan", "sweep", "run", "investigation", "discovery", "hypothesis", "stress", "challenge", "graph"];
-const MSG_VIEWS = ["sweep", "investigation", "discovery", "hypothesis", "execution", "challenge", "analysis", "graph", "graph_batch", "fills", "untested", "cost"];
+const PENDING = ["plan", "sweep", "run", "investigation", "discovery", "hypothesis", "stress", "challenge", "graph", "experiment"];
+const MSG_VIEWS = ["sweep", "investigation", "discovery", "hypothesis", "execution", "challenge", "analysis", "graph", "graph_batch", "fills", "untested", "cost", "experiment"];
 const MSG_KINDS = ["memory", "registry", "strategy_plan"];  // answers that open on the right without being a run result
 const isPending = (m: AiMessage) => PENDING.includes(m.kind) && m.content?.runs?.length > 0 && !m.content.finalized;
 const TAB_OF: Record<string, string> = { robustness: "robustness", skipped: "observations", breakdown: "statistics", timing: "statistics" };
@@ -50,7 +52,7 @@ function resultName(m: AiMessage, all: AiMessage[]) {
   const c = m.content;
   const kind = { sweep: `Comparison${c.what ? `: ${c.what}` : ""}`, investigation: `${c.plan?.stage === "options" ? "Option structures" : "Investigation"}: ${c.plan?.question || c.plan?.hypothesis || ""}`,
     discovery: `Exploration: ${c.discovery?.hypothesis || c.discovery?.question || ""}`, hypothesis: `Plan: ${c.question || ""}`, execution: `Execution stress: ${strip(c.label || "").replace(/^Execution stress: /, "")}`,
-    challenge: `Review: ${strip(c.label || "").replace(/^Challenge: /, "")}`, fills: "Every fill and its source", untested: "Sessions that could not be tested", cost: "What the missing data would cost", analysis: `Answer: ${c.analysis?.title || ""}`, graph: `Graph: ${c.question || c.label || ""}`, graph_batch: `Re-test: ${c.label || ""}` }[c.view as string];
+    experiment: `Grid: ${strip(c.label || "").replace(/^Experiment: /, "")}`, challenge: `Review: ${strip(c.label || "").replace(/^Challenge: /, "")}`, fills: "Every fill and its source", untested: "Sessions that could not be tested", cost: "What the missing data would cost", analysis: `Answer: ${c.analysis?.title || ""}`, graph: `Graph: ${c.question || c.label || ""}`, graph_batch: `Re-test: ${c.label || ""}` }[c.view as string];
   if (kind) return kind.slice(0, 80);
   const asked = [...all].reverse().find((x) => x.role === "user" && x.id < m.id)?.content?.text;
   return `${String(asked || strip(c.label || c.title) || "Result").slice(0, 64)}${c.mode && c.mode !== "study" ? ` (${(MODE_NAME[c.mode] || c.mode).replace("Options · ", "")})` : ""}`;
@@ -69,6 +71,9 @@ export function Workspace({ sid }: { sid: string }) {
   const [which, setWhich] = useState("all");
   const [day, setDay] = useState<string | null>(null);
   const [showRight, setShowRight] = useState(true);
+  // the workbench can take the height of the reading and the suggestions (charts need it on a laptop screen); remembered
+  const [focus, setFocus] = useState(() => { try { return localStorage.getItem("strata.desk.focus") === "1"; } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem("strata.desk.focus", focus ? "1" : "0"); } catch { /* private mode: not remembered */ } }, [focus]);
   const [help, setHelp] = useState(false);
   const [wide, setWide] = useState(false);
   const comp = useRef<ComposerHandle>(null);
@@ -139,6 +144,9 @@ export function Workspace({ sid }: { sid: string }) {
   const results = useMemo(() => messages.filter((m) => m.kind === "result" && ["single", "compare", ...MSG_VIEWS].includes(m.content?.view) && targetOf(m)), [messages]);
   const plans = useMemo(() => messages.filter((m) => m.kind === "plan"), [messages]);
   const lastPlan = plans[plans.length - 1];
+  // a plan that had to ask about coverage keeps saying so in its own record; once the answer was given and a run came back,
+  // the ticket says that it ran
+  const ranAfterPlan = !!lastPlan && messages.slice(messages.indexOf(lastPlan) + 1).some((m) => m.kind === "result" && ["single", "compare"].includes(m.content.view) && !!m.content.run_id);
   // what the right-hand side shows when nothing was picked explicitly: the newest result, else the interpretation in progress
   const eff: View = useMemo(() => {
     if (view) return view;
@@ -185,7 +193,6 @@ export function Workspace({ sid }: { sid: string }) {
   };
   useHotkeys({
     "/": (e) => { e.preventDefault(); comp.current?.focus(); },
-    ...Object.fromEntries(REPORT_TABS.map(([k], i) => [String(i + 1), () => { if (runView) setTab(k); }])),
     c: () => go({ view: { type: "compare" } }),
     v: () => go({ view: { type: "canvas" } }),
     e: () => lastPlan && go({ view: { type: "setup", versionId: lastPlan.content.version_id } }),
@@ -259,7 +266,6 @@ export function Workspace({ sid }: { sid: string }) {
         <button className={cn("btn quiet sm", eff?.type === "canvas" && "!bg-bg-3 !text-fg")} onClick={() => go({ view: { type: "canvas" } })} title="The whole notebook as a graph you can branch from (V)" data-testid="open-canvas"><Network />Canvas</button>
         <button className={cn("btn quiet sm", eff?.type === "compare" && "!bg-bg-3 !text-fg")} onClick={() => go({ view: { type: "compare" } })} title="Pinned results side by side (C)" data-testid="open-compare"><GitCompareArrows />Compare{pinned.length > 0 && <span className="num rounded-full bg-accent/20 px-1.5 text-[11px] text-accent">{pinned.length}</span>}</button>
         <Tip content="Keyboard shortcuts (?)"><button className="btn quiet sm !px-1.5" onClick={() => setHelp((h) => !h)} aria-label="Keyboard shortcuts"><Keyboard /></button></Tip>
-        <button className="btn quiet sm !px-1.5" onClick={() => setShowRight(false)} aria-label="Hide the workspace" title="Hide the workspace"><PanelRightClose /></button>
       </div>
       {help && (
         <div className="shrink-0 border-b border-line bg-bg-1 px-4 py-3 text-xs dim">
@@ -273,6 +279,7 @@ export function Workspace({ sid }: { sid: string }) {
           onBranch={(text, version_id) => act.mutate(() => api.post(`/api/ai/sessions/${sid}/branch`, { text, version_id }))} onSelect={actions.select} onAnalyse={actions.analyse} />}
         {eff?.type === "message" && msg?.content.view === "hypothesis" && <HypothesisView runId={msg.content.run_id} busy={act.isPending} onSelect={(key, what) => actions.select(msg.content.run_id, key, what)} />}
         {eff?.type === "message" && msg?.content.view === "execution" && <ExecutionView runId={msg.content.run_id} />}
+        {eff?.type === "message" && msg?.content.view === "experiment" && <ExperimentView key={msg.content.run_id} runId={msg.content.run_id} onAsk={send} />}
         {eff?.type === "message" && msg?.content.view === "challenge" && <ChallengeView runId={msg.content.run_id} />}
         {eff?.type === "message" && msg?.content.view === "analysis" && <AnalysisView c={msg.content} />}
         {eff?.type === "message" && msg && ["graph", "graph_batch"].includes(msg.content.view) && <GraphView key={msg.content.run_id} runId={msg.content.run_id} findings={msg.content.findings || []} busy={act.isPending} onStrategy={(id) => actions.strategyFrom(id)} onAsk={send} />}
@@ -291,49 +298,60 @@ export function Workspace({ sid }: { sid: string }) {
         {eff?.type === "compare" && <Compare ids={pinned} names={runNames} onOpen={(id) => go({ view: { type: "run", runId: id }, tab: "overview" })} onUnpin={(id) => pin(id, false)}
           onSwap={async (from, to) => { for (const id of from) await api.post(`/api/ai/sessions/${sid}/pin`, { run_id: id, on: false }); for (const id of to) await api.post(`/api/ai/sessions/${sid}/pin`, { run_id: id, on: true }); queryClient.invalidateQueries({ queryKey: ["ai", sid] }); }} />}
         {!eff && (liveRun ? <div className="mx-auto max-w-xl p-8"><div className="card px-5 py-4"><Timeline runId={liveRun.content.runs[liveRun.content.runs.length - 1].run_id} onDone={actions.refresh} title="Working on it" /></div></div>
-          : <Empty icon={FileText} title="Results appear here">Ask a question on the left. The report, the calendar of qualifying sessions and the comparison of pinned results open on this side.</Empty>)}
+          : <Empty icon={FileText} title="The workbench is empty">Describe a strategy or ask a question on the line above. Its reading appears under the line; the result, its trades, the replay and the comparison of variants open here.</Empty>)}
       </div>
     </div>
   );
 
-  const left = (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-3">
+  const waiting = act.isPending || pending;
+  const top = (
+    <div className="shrink-0">
+      <div className="flex h-10 items-center gap-2 border-b border-line px-3">
         <button className="btn quiet sm !px-1.5" onClick={() => nav("/")} aria-label="All research" title="All research"><ArrowLeft /></button>
         <Sparkles className="size-4 shrink-0 text-accent" />
         <Title sid={sid} title={data.session.title} />
         <span className="flex-1" />
-        {data.trials > 1 && <Tip content="How many distinct configurations this notebook has tested so far, including every one inside plans, maps and stress runs - not only the ones shown. Significance figures are corrected for it."><span className="chip !h-6" data-testid="trials-chip"><History className="size-3.5" />{data.trials} tested</span></Tip>}
+        {data.trials > 1 && <Tip content="How many distinct configurations this notebook has tested so far, including every one inside plans, maps and stress runs - not only the ones shown. Significance figures are corrected for it."><span className="chip !h-6 !text-[11.5px]" data-testid="trials-chip"><History className="size-3.5" />{data.trials} tested</span></Tip>}
         {((data as any).ledger?.holdouts || []).slice(-1).map((h: any) => <HoldoutChip key={h.id} h={h} compact />)}
         <InterpreterChip />
-        {!showRight && <button className="btn quiet sm !px-1.5" onClick={() => setShowRight(true)} aria-label="Show the workspace" title="Show the workspace"><PanelRightOpen /></button>}
+        <button className={cn("btn quiet sm", focus && "!text-accent")} onClick={() => setFocus((v) => !v)} title={focus ? "Show the reading of the request and the suggestions again" : "Give the workbench the whole height: the reading and the suggestions fold away until this is pressed again"} data-testid="toggle-focus">{focus ? <Minimize2 /> : <Maximize2 />}{focus ? "Reading" : "Focus"}</button>
+        <button className={cn("btn quiet sm", showRight && "!text-fg")} onClick={() => setShowRight((v) => !v)} title={showRight ? "Hide the log of this notebook" : "Show the log of this notebook"} data-testid="toggle-log">{showRight ? <PanelRightClose /> : <PanelRightOpen />}Log</button>
       </div>
-      {stages.length > 0 && <div className="shrink-0 border-b border-line bg-bg-1/60 px-3 py-1"><StageRail stages={stages} onStage={openStage} /></div>}
+      <Composer ref={comp} bar onSend={send} busy={act.isPending} mode={data.exec_mode} onMode={setMode} chips={focus ? [] : chips} placeholder={messages.length ? "Change something, compare settings, ask about the result, or describe another strategy" : (meta.data?.examples?.[0] ? `e.g. ${meta.data.examples[0]}` : "Describe a strategy or ask a question")} />
+      {lastPlan && (lastPlan.content.items || []).length > 0 && !(focus && !(lastPlan.content.questions || []).some((q: any) => q.answered === undefined || q.answered === null) && lastPlan.content.state !== "awaiting_confirmation")
+        ? <Ticket c={lastPlan.content} ran={ranAfterPlan} busy={act.isPending} onEdit={() => go({ view: { type: "setup", versionId: lastPlan.content.version_id } })} onAnswer={actions.answer} onConfirm={actions.confirm}
+            rail={stages.length > 0 ? <StageRail stages={stages} onStage={openStage} /> : undefined} />
+        : stages.length > 0 && <div className="border-b border-line bg-bg-1/60 px-3 py-0.5"><StageRail stages={stages} onStage={openStage} /></div>}
+    </div>
+  );
+
+  const left = (
+    <div className="desk-log flex h-full min-h-0 flex-col">
+      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line px-3"><span className="eyebrow">Log</span><span className="text-[11px] text-faint">{messages.length ? `${messages.filter((m) => m.role === "user").length} requests` : "nothing yet"}</span>
+        {waiting && <span className="flex items-center gap-1.5 text-[11.5px] dim"><span className="dot bg-accent pulse !size-1.5" />working</span>}</div>
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className={cn("mx-auto flex w-full flex-col gap-3 px-4 py-4", showRight ? "max-w-[720px]" : "max-w-[820px]")} data-testid="conversation">
-          {messages.length === 0 && !act.isPending && <div className="pt-10 text-center text-[13.5px] dim">Ask a question about the market, or describe a strategy in plain words.</div>}
+        <div className="flex w-full flex-col gap-3 px-3 py-3" data-testid="conversation">
+          {messages.length === 0 && !act.isPending && <div className="pt-8 text-center text-[13px] dim">Describe a strategy or ask a question on the line above. What was read, what ran and what it found is kept here.</div>}
           {messages.map((m) => <Message key={m.id} m={m} a={actions} />)}
           {act.isPending && <div className="flex items-center gap-2 px-1 text-[13px] dim"><span className="dot bg-accent pulse" />Reading the request…</div>}
           <div ref={end} />
-        </div>
-      </div>
-      <div className="shrink-0 border-t border-line bg-bg-0 px-4 pb-3 pt-2.5">
-        <div className={cn("mx-auto w-full", showRight ? "max-w-[720px]" : "max-w-[820px]")}>
-          <Composer ref={comp} onSend={send} busy={act.isPending} mode={data.exec_mode} onMode={setMode} chips={chips} placeholder={messages.length ? "Ask a follow-up, change something, or start a new question" : (meta.data?.examples?.[0] ? `e.g. ${meta.data.examples[0]}` : "Ask a question")} />
         </div>
       </div>
     </div>
   );
 
   return (
-    <div className="lab h-full min-h-0">
-      {showRight && wide && eff?.type === "canvas" ? right : showRight ? (
-        <Group orientation="horizontal" id="lab-split">
-          <Panel defaultSize="40%" minSize="26%" id="lab-chat">{left}</Panel>
-          <Separator className="w-px bg-line transition-colors hover:bg-accent data-[separator=active]:bg-accent" />
-          <Panel defaultSize="60%" minSize="34%" id="lab-work">{right}</Panel>
-        </Group>
-      ) : left}
+    <div className="lab flex h-full min-h-0 flex-col" data-testid="desk">
+      {!(wide && eff?.type === "canvas") && top}
+      <div className="min-h-0 flex-1">
+        {wide && eff?.type === "canvas" ? right : showRight ? (
+          <Group orientation="horizontal" id="desk-split">
+            <Panel defaultSize="67%" minSize="40%" id="desk-work">{right}</Panel>
+            <Separator className="w-px bg-line transition-colors hover:bg-accent data-[separator=active]:bg-accent" />
+            <Panel defaultSize="33%" minSize="20%" id="desk-log">{left}</Panel>
+          </Group>
+        ) : right}
+      </div>
     </div>
   );
 }

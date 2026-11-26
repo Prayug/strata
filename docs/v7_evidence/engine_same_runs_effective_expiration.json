@@ -1,0 +1,40 @@
+{
+ "what": "four runs on the stored dataset with a contract's effective expiration switched off (the engine as it was) and on, same stored data, same process",
+ "why": "none of the four holds a contract dated on a day the market was closed, so nothing may change",
+ "note": "two of the four differ from the fingerprints recorded earlier the same day (engine_same_runs_file_filter_and_scalar_greeks.json): contracts fetched on demand since then let one more session trade in each. Both columns here are on the data as it stands now.",
+ "fingerprint": "sha256 over every trade's symbol, entry and exit time, exit reason, result, excursions, entry volatility, and each leg's strike, expiration, prices and deltas",
+ "runs": {
+  "spy_call_full": {
+   "trades": 710,
+   "net": -1577.04,
+   "sha_before": "a1b7c24e781d32d98110",
+   "sha_after": "a1b7c24e781d32d98110",
+   "identical": true,
+   "account_equals_trades": true
+  },
+  "iwm_spread_full": {
+   "trades": 62,
+   "net": 1378.74,
+   "sha_before": "34f057ed14de875ccdc6",
+   "sha_after": "34f057ed14de875ccdc6",
+   "identical": true,
+   "account_equals_trades": true
+  },
+  "qqq_vwap_2026": {
+   "trades": 95,
+   "net": -199.5,
+   "sha_before": "31aca51098f6d2a00893",
+   "sha_after": "31aca51098f6d2a00893",
+   "identical": true,
+   "account_equals_trades": true
+  },
+  "three_symbols_q4": {
+   "trades": 183,
+   "net": -5565.9,
+   "sha_before": "f16a5c76f710869e8e9f",
+   "sha_after": "f16a5c76f710869e8e9f",
+   "identical": true,
+   "account_equals_trades": true
+  }
+ }
+}

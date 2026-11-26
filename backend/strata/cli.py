@@ -200,6 +200,16 @@ def cmd_collect(a):
 
 def cmd_bench(a):
     from strata import bench
+    if a.dataset:
+        # the stored option history itself, read-only: full-period backtests, a 100-configuration sweep, replay loading
+        import json as _json
+        from strata import bench_real as BR
+        print("Benchmarks on the stored dataset (read-only; each workload in a fresh process)", flush=True)
+        rec = BR.run(out=lambda m: print(m, flush=True), quick=a.quick)
+        if rec.get("workloads"):
+            print(f"\nsaved to {BR.save(rec)}\n")
+        print(_json.dumps(rec, indent=1) if a.json else BR.render(rec))
+        sys.exit(0 if rec.get("workloads") and all(w.get("ok") for w in rec["workloads"]) else 1)
     sys.exit(bench.main(quick=a.quick, real=a.real, check=a.check, update_baseline=a.update_baseline, as_json=a.json))
 
 
@@ -286,11 +296,51 @@ def cmd_download(a):
 
 def cmd_access(a):
     """What the stored credentials can really retrieve: the expired-contract matrix, or BLOCKED and what to supply."""
+    if getattr(a, "provider", "alpaca") == "databento":
+        # staged: free metadata and an exact price first; a download only with --budget covering that price
+        from strata.data.providers import databento as DBN
+        rep = DBN.access(symbol=a.symbol.upper(), sessions=a.sessions, budget_usd=a.budget, progress=lambda f, m: print(f"  {f:5.1%} {m}", flush=True))
+        print(json.dumps(rep, indent=1, default=str) if a.json else DBN.render(rep))
+        sys.exit(0 if rep["status"] in ("quoted", "sampled") else 2 if rep["status"] == "blocked" else 1)
     from strata.data.providers import access as A
     rep = A.alpaca_matrix(progress=lambda f, m: print(f"\r  {f:5.1%} {m:60s}", end="", flush=True), symbol=a.symbol.upper())
     print("\r" + " " * 80 + "\r", end="")
     print(json.dumps(rep, indent=1, default=str) if a.json else A.render(rep))
     sys.exit(0 if rep["verified"] else 2 if rep["status"] == "blocked" else 1)
+
+
+def cmd_hires(a):
+    """Re-execute a stored trade-bar backtest on the provider's individual trades and print the comparison.
+    Exit code 2 when it cannot be run (no key: BLOCKED), 0 otherwise."""
+    from strata.engine import hires as H
+    settings = {k: v for k, v in {"exit_policy": a.policy, "latency_seconds": a.latency, "conditions": a.conditions, "min_size": a.min_size, "fill_model": a.fill_model,
+                                  "participation": a.participation, "open_delay_seconds": a.open_delay, "max_leg_gap_seconds": a.max_leg_gap}.items() if v is not None}
+    t0, last = time.time(), [0.0]
+
+    def prog(frac, msg):
+        if time.time() - last[0] >= a.every:
+            last[0] = time.time()
+            print(f"{time.time() - t0:6.0f}s {frac:6.1%} {msg}", flush=True)
+    try:
+        rep = H.run_for(a.run, settings=settings, progress=prog)
+    except FileNotFoundError:
+        sys.exit(f"no stored result for run {a.run!r}")
+    if rep["status"] in ("blocked", "not_applicable"):
+        print(rep["reason"])
+        sys.exit(2 if rep["status"] == "blocked" else 0)
+    sm = rep["summary"]
+    print(f"run {a.run}: {sm['positions']} positions, policy {rep['settings']['exit_policy']}, prints allowed: {rep['settings']['conditions']}, latency {rep['settings']['latency_seconds']:g} s; {rep.get('requests')} requests, {rep.get('pages')} pages")
+    print(f"  by status: {sm['by_status']}")
+    print(f"  minute bars {sm['bar_pnl_repriced']:+,.2f}  |  individual trades {sm['tick_pnl_repriced']:+,.2f}  |  difference {sm['difference']:+,.2f}  (the {sm['repriced']} positions executed in both)")
+    for k, lab in (("entry_seconds_after_decision", "entry: seconds from decision to fill"), ("exit_seconds_after_decision", "exit: seconds from decision to fill"),
+                   ("entry_price_worse_pct", "entry price against the order, % of the bar price"), ("exit_price_worse_pct", "exit price against the order, % of the bar price"), ("per_position_difference", "result per position, $")):
+        v = sm.get(k)
+        if v:
+            print(f"  {lab}: median {v['median']:g}, mean {v['mean']:g}, 5th to 95th percentile {v['p05']:g} to {v['p95']:g} (n {v['n']})")
+    print("  prints used: " + ", ".join(f"{k} x{v['count']}" for k, v in sm["conditions_of_prints_used"].items()))
+    if sm["exit_reason_changed"]:
+        print(f"  exit reason changed for {sm['exit_reason_changed']} position(s): " + ", ".join(f"{x['date']} {x['bar']} -> {x['tick']}" for x in sm["exit_reason_changes"][:8]))
+    print(sm["text"])
 
 
 def cmd_usecase(a):
@@ -471,6 +521,7 @@ def main(argv=None):
     p = sub.add_parser("bench", help="time realistic research workloads on a reproducible fixture and record the result")
     p.add_argument("--quick", action="store_true", help="a smaller fixture (for a fast sanity run; not comparable with the baseline)")
     p.add_argument("--real", action="store_true", help="also time read-only workloads on the real data directory")
+    p.add_argument("--dataset", action="store_true", help="time research on the stored option history itself (full-period backtests, a 100-configuration sweep, replay loading); read-only")
     p.add_argument("--check", action="store_true", help="exit non-zero if a workload is slower than its baseline tolerance")
     p.add_argument("--update-baseline", action="store_true")
     p.add_argument("--json", action="store_true")
@@ -490,11 +541,26 @@ def main(argv=None):
     p.add_argument("--force", action="store_true", help="download again what is already stored")
     p.add_argument("--every", type=float, default=15.0, help="seconds between progress lines")
     p.set_defaults(fn=cmd_download)
-    p = sub.add_parser("access", help="test what the stored provider key can really retrieve: expired SPY option contracts across 2024-2026 (exit 2 = blocked, no key)")
-    p.add_argument("provider", nargs="?", default="alpaca", choices=["alpaca"])
+    p = sub.add_parser("access", help="test what the stored provider key can really retrieve. alpaca: expired SPY option contracts across 2024-2026. databento: free metadata and the exact price of a small bid/ask sample; "
+                                      "it downloads that sample only with --budget (exit 2 = blocked, no key)")
+    p.add_argument("provider", nargs="?", default="alpaca", choices=["alpaca", "databento"])
     p.add_argument("--symbol", default="SPY")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--budget", type=float, default=0.0, help="databento: dollars this run may spend. Without it nothing billable is requested; the run stops at the provider's own quote")
+    p.add_argument("--sessions", type=int, default=20, help="databento: sessions in the representative sample")
     p.set_defaults(fn=cmd_access)
+    p = sub.add_parser("hires", help="re-execute a stored trade-bar backtest on the provider's individual trades: the same decisions, filled on the first eligible print after them (exit 2 = no key)")
+    p.add_argument("run", help="the run id of a backtest priced from trade prints")
+    p.add_argument("--policy", choices=["decision_clock", "resting_orders"], default="decision_clock", help="decision_clock: the backtest's own exit decisions; resting_orders: target as a limit and stop as a stop from the fill")
+    p.add_argument("--latency", type=float, default=None, help="seconds from a decision to the moment the order can be filled (default: the run's own)")
+    p.add_argument("--conditions", choices=["single_leg", "single_leg_and_book", "all_in_sequence"], default=None)
+    p.add_argument("--min-size", type=int, default=None)
+    p.add_argument("--fill-model", choices=["first_print", "size_limited"], default=None)
+    p.add_argument("--participation", type=float, default=None)
+    p.add_argument("--open-delay", type=float, default=None)
+    p.add_argument("--max-leg-gap", type=float, default=None)
+    p.add_argument("--every", type=float, default=15.0)
+    p.set_defaults(fn=cmd_hires)
     p = sub.add_parser("usecase", help="the 0DTE-calls-after-a-down-day strategy on stored observations: coverage, engine result and an independent recomputation (exit 1 if the two disagree)")
     p.add_argument("--symbol", default="SPY")
     p.add_argument("--json", action="store_true")

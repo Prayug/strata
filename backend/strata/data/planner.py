@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import ast
 import math
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import polars as pl
@@ -130,10 +130,18 @@ def _tree_needs(node: CondNode | None) -> dict:
     return {"seconds": sec, "warmup": warm, "vix": vix, "minutes": minutes}
 
 
-def hold_sessions(strat: StrategyConfig) -> int:
+def leg_days(leg: LegSpec, asof: date | None = None) -> int:
+    """Days to the expiration a leg aims at. A leg that names an exact expiration date has no fixed number: it is counted
+    from `asof` (the first session of the run), which is the longest it can be."""
+    if leg.expiration is not None:
+        return max(0, (leg.expiration - asof).days) if asof is not None else 0
+    return leg.dte
+
+
+def hold_sessions(strat: StrategyConfig, asof: date | None = None) -> int:
     """Sessions after the entry session during which the position can still be open."""
     ex = strat.exits
-    dte = max((l.dte for l in strat.legs if l.kind == "option"), default=0)
+    dte = max((leg_days(l, asof) for l in strat.legs if l.kind == "option"), default=0)
     h = dte  # until expiration unless something closes it earlier
     if ex.time_exit.enabled and ex.time_exit.dte_lte is None:
         h = 0
@@ -186,7 +194,7 @@ def requirements(kind: str, cfg: dict, mode: str) -> dict:
     if n["seconds"] < 86400 and not n["minutes"]:
         why.append("an entry rule reads intraday prices")
     ex = st.exits
-    hold = hold_sessions(st)
+    hold = hold_sessions(st, c.start)
     intraday_exit = bool((ex.time_exit.enabled and cal.parse_hhmm(ex.time_exit.time) < 955) or ex.underlying.enabled or nx["seconds"] < 86400 or (ex.max_hold.enabled and ex.max_hold.minutes))
     entries = [x.strip().lower() for l in walk_leaves(st.entry.conditions) if l.type == "entry_times" for x in str((l.params or {}).get("times", "")).replace(";", ",").split(",") if x.strip()]
     clock = "intraday" if (n["minutes"] or n["seconds"] < 86400) else "close" if entries == ["close"] else "open" if entries in (["open"], []) else "intraday"
@@ -213,8 +221,10 @@ def requirements(kind: str, cfg: dict, mode: str) -> dict:
     opt = None
     if mode != "study":
         opt = {"obs": {"historical": "quote", "trades": "trade", "modeled": None}.get(mode), "clock": clock, "entry_minutes": n["minutes"], "hold_sessions": hold, "intraday_exit": intraday_exit,
-               "legs": [l.model_dump(mode="json") for l in st.legs if l.kind == "option"], "min_dte": min((l.dte for l in st.legs if l.kind == "option"), default=None),
-               "max_dte": max((max(l.dte, l.dte_max or 0) for l in st.legs if l.kind == "option"), default=None)}
+               "legs": [l.model_dump(mode="json") for l in st.legs if l.kind == "option"],
+               # a leg with an exact expiration date is 0DTE only on that date itself: over a run it is counted from the last and the first session
+               "min_dte": min((leg_days(l, c.end) for l in st.legs if l.kind == "option"), default=None),
+               "max_dte": max((max(leg_days(l, c.start), l.dte_max or 0) for l in st.legs if l.kind == "option"), default=None)}
     aux = _aux(st.symbol, syms, n["vix"] or nx["vix"] or mode == "modeled", vol)
     for s_ in cross_intraday & set(aux):
         aux[s_]["seconds"] = min(sec, 300)
@@ -471,9 +481,20 @@ def expiration_index(store: MarketStore, key: DatasetKey) -> dict[str, list[int]
     return out
 
 
-def _dte_ok(dtes: list[int], leg: dict) -> bool:
+def _dte_ok(dtes: list[int], leg: dict, d: date | None = None) -> bool:
+    """Is one of the expirations listed on session d (given as days to expiration) one the leg can use?"""
     from strata.engine.selection import _choose_expiration
-    return _choose_expiration(np.asarray(dtes, np.int64), 0, LegSpec.model_validate(leg)) is not None if dtes else False
+    if not dtes:
+        return False
+    on = leg.get("expiration")
+    if on:  # an exact date: that expiration or none
+        on = date.fromisoformat(on) if isinstance(on, str) else on
+        return d is not None and (on - d).days in set(int(x) for x in dtes)
+    if d is None:  # only the distances are known: no date, so no calendar to say whether the market was open on it
+        return _choose_expiration(np.asarray(dtes, np.int64), 0, LegSpec.model_validate(leg), dated=False) is not None
+    from strata.engine.market import day_num
+    today = int(day_num(d))
+    return _choose_expiration(np.asarray(dtes, np.int64) + today, today, LegSpec.model_validate(leg)) is not None
 
 
 def quote_coverage(store: MarketStore, req: dict, signals: list[dict], provider: str | None = None) -> dict:
@@ -512,7 +533,7 @@ def quote_coverage(store: MarketStore, req: dict, signals: list[dict], provider:
             bad.setdefault("the entry session's option quotes are only partially downloaded", []).append(d)
             need_more.add(d)
             continue
-        if not all(_dte_ok(exps.get(d.isoformat(), []), leg) for leg in opt["legs"]):
+        if not all(_dte_ok(exps.get(d.isoformat(), []), leg, d) for leg in opt["legs"]):
             bad.setdefault("the stored chain has no expiration the legs can use on the entry session", []).append(d)
             continue
         later = [x for x in (cal.next_trading_day(d, k) for k in range(1, hold + 1)) if x <= last_completed_session()]
@@ -590,16 +611,24 @@ def leg_targets(legs: list[dict], price: float, vol: float | None, step: float) 
             out[l["id"]] = (price * (1 + v / 100) if call else price * (1 - v / 100), 3)
         elif m == "fixed":
             out[l["id"]] = (v, 0)
-        elif m == "delta":
-            tgt = abs(v) if abs(v) <= 1 else abs(v) / 100
-            T = max((l["dte"] + 0.3) / 365.0, 0.25 / 365.0)
+        elif m in ("delta", "premium"):
+            # where the requested delta or premium should sit, from a volatility level known before the session. It only
+            # centres the band of strikes that is downloaded: the engine then picks by the delta or premium of observed
+            # prints, and a selection that ends on the edge of the band widens it. The band grows with the distance from
+            # the money, because that distance is what a wrong volatility guess (the smile is not flat) gets wrong.
+            T = max((_leg_days(l) + 0.3) / 365.0, 0.25 / 365.0)
             sig = vol or 0.2
-            ks = np.arange(atm - 60 * step, atm + 60 * step + step / 2, step)
+            span = max(60, int(math.ceil(5 * sig * math.sqrt(T) * price / step)))
+            ks = np.arange(max(step, atm - span * step), atm + span * step + step / 2, step)
             g = bs_greeks_vec(np.full(ks.size, price), ks, np.full(ks.size, T), 0.04, 0.0, np.full(ks.size, sig), np.full(ks.size, call))
-            k = float(ks[int(np.nanargmin(np.abs(np.abs(g[:, 1]) - tgt)))])
-            out[l["id"]] = (k, 6)  # the engine picks by the delta implied by observed prints inside this band
-        elif m == "premium":
-            out[l["id"]] = (atm + (8 * step if call else -8 * step), 12)
+            if m == "delta":
+                tgt = abs(v) if abs(v) <= 1 else abs(v) / 100
+                k = float(ks[int(np.nanargmin(np.abs(np.abs(g[:, 1]) - tgt)))])
+                base = 6
+            else:
+                k = float(ks[int(np.nanargmin(np.abs(g[:, 0] - v)))])
+                base = 12
+            out[l["id"]] = (k, max(base, int(math.ceil(0.5 * abs(k - atm) / step))))
         else:  # leg_offset
             ref = out.get(l["strike"].get("ref_leg") or "", (atm, 3))
             unit = l["strike"].get("unit", "points")
@@ -608,13 +637,28 @@ def leg_targets(legs: list[dict], price: float, vol: float | None, step: float) 
     return out
 
 
+def _leg_days(leg: dict, d: date | None = None) -> int:
+    """Days to the expiration a leg aims at: from its exact date when it names one, else its days-to-expiration."""
+    e = leg.get("expiration")
+    if e and d is not None:
+        return max(0, ((date.fromisoformat(e) if isinstance(e, str) else e) - d).days)
+    return int(leg.get("dte") or 0)
+
+
 def _pick_expiration(avail: list[date], d: date, leg: dict) -> date | None:
     from strata.engine.selection import _choose_expiration
     if not avail:
         return None
-    arr = np.array(sorted({(e - d).days for e in avail if e >= d}), np.int64)
-    e = _choose_expiration(arr, 0, LegSpec.model_validate(leg))
-    return None if e is None else d + timedelta(days=int(e))
+    on = leg.get("expiration")
+    if on:  # an exact date: that expiration or none
+        on = date.fromisoformat(on) if isinstance(on, str) else on
+        return on if on >= d and on in set(avail) else None
+    from strata.engine.market import day_num, from_day_num
+    # real dates, not offsets: the engine counts the days to a contract's effective expiration (a date on which the market
+    # is closed expires the session before), and what is fetched has to be what the engine will choose
+    arr = np.array(sorted({int(day_num(e)) for e in avail if e >= d}), np.int64)
+    e = _choose_expiration(arr, int(day_num(d)), LegSpec.model_validate(leg))
+    return None if e is None else from_day_num(int(e))
 
 
 def trade_contracts(source: S.OptionBarSource, client, store: MarketStore, sym: str, legs: list[dict], sig: dict, hold: int, widen: int = 0) -> tuple[dict[date, list[S.Contract]], list[str]]:
@@ -632,16 +676,31 @@ def trade_contracts(source: S.OptionBarSource, client, store: MarketStore, sym: 
         prior = vd.filter(pl.col("date") < d)
         vix = float(prior["close"][-1]) / 100 if prior.height else None
     step0 = S.STRIKE_STEP.get(sym, 1.0)
-    targets = leg_targets(legs, price, vix, step0)
+    # an exact expiration date fixes the time to expiry on each signal's session: delta and premium targets are centred with it
+    dated = [{**l, "dte": _leg_days(l, d)} if l.get("expiration") else l for l in legs]
+    targets = leg_targets(dated, price, vix, step0)
     wanted: dict[date, list[S.Contract]] = {}
     sessions = [d] + [cal.next_trading_day(d, k) for k in range(1, hold + 1)]
     for leg in legs:
         k0, n = targets[leg["id"]]
         n = n * (1 + int(widen)) if leg["strike"]["method"] != "fixed" else n  # adaptive discovery: a wider band when a selection hit the edge of the last one
-        lo, hi = k0 - n * step0 - 1e-6, k0 + n * step0 + 1e-6
+        # the provider is asked what is LISTED around the target, and the n listed strikes either side of it are kept: far
+        # expirations are listed five or ten points apart, where "n points either side" would hold one strike or none
+        reach = max(n * step0, 0.02 * price)
+        lo, hi = k0 - reach - 1e-6, k0 + reach + 1e-6
         dte = int(leg["dte"])
-        exact = leg.get("dte_mode") == "exact" or dte == 0
-        e_lo, e_hi = (d + timedelta(days=dte), d + timedelta(days=dte)) if exact else (d + timedelta(days=max(0, (leg.get("dte_min") or dte) - 6)), d + timedelta(days=(leg.get("dte_max") or dte) + 6))
+        on = leg.get("expiration")
+        on = date.fromisoformat(on) if isinstance(on, str) else on
+        exact = on is not None or leg.get("dte_mode") == "exact" or dte == 0
+        if on is not None:
+            if on < d:
+                notes.append(f"{d}: the {on} expiration had already expired on this session")
+                continue
+            e_lo = e_hi = on
+        else:
+            from strata.engine.selection import dte_tolerance
+            tol = dte_tolerance(dte)  # the same distance the engine accepts on selectively stored data: what is fetched is what can be traded
+            e_lo, e_hi = (d + timedelta(days=dte), d + timedelta(days=dte)) if exact else (d + timedelta(days=max(0, (leg.get("dte_min") or dte) - tol)), d + timedelta(days=(leg.get("dte_max") or dte) + tol))
         try:
             cs = source.list_contracts(client, sym, d, e_lo, e_hi, lo, hi, (leg["right"],))
         except S.SourceError as e:
@@ -649,9 +708,13 @@ def trade_contracts(source: S.OptionBarSource, client, store: MarketStore, sym: 
             continue
         exp = _pick_expiration(sorted({c.expiration for c in cs}), d, leg)
         if exp is None:
-            notes.append(f"{d}: no {'exact ' if exact else ''}{dte}DTE {leg['right']} expiration is listed for {sym}")
+            notes.append(f"{d}: no {leg['right']} contract expiring on {on} is listed for {sym} in the strike range asked for" if on is not None else f"{d}: no {'exact ' if exact else ''}{dte}DTE {leg['right']} expiration is listed for {sym}")
             continue
         chosen = [c for c in cs if c.expiration == exp]
+        grid = sorted({c.strike for c in chosen})
+        keep = ({min(grid, key=lambda k: abs(k - k0))} if n == 0 and grid else  # a fixed strike: that strike
+                set([k for k in grid if k <= k0 + 1e-9][-(n + 1):]) | set([k for k in grid if k > k0 + 1e-9][:n]))
+        chosen = [c for c in chosen if c.strike in keep]
         for s_ in sessions:
             if s_ <= exp:
                 cur = wanted.setdefault(s_, [])
@@ -717,10 +780,276 @@ def acquire_trades(store: MarketStore, req: dict, signals: list[dict], source_na
     return rep
 
 
-def trade_coverage(store: MarketStore, req: dict, signals: list[dict], provider: str | None = None) -> dict:
-    """Contract-level coverage of stored option trade bars for each signal: does the index
-    hold, for the entry session, a contract of the right expiration and type with a strike
-    around the price at the signal - and did it trade?"""
+# Why a qualifying signal can or cannot be traded on stored TRADE observations, in the order the checks are made.
+READY = ("trades",)
+STATUS_TEXT = {
+    "trades": "the contract is stored, it printed inside the entry window, and the exit window is covered",
+    "exit_uncertain": "the entry can be priced, but no observation is stored near the planned exit (or on a later session of the holding period)",
+    "stale": "the contract is stored but did not trade inside the entry window: no print recent enough to fill at",
+    "contract": "the strike the strategy needs is outside the strikes stored for the session",
+    "expiration": "option data is stored for the session, but not an expiration the strategy can use",
+    "no_contract": "no contract with the required expiration was listed that day",
+    "partial": "the provider holds only part of the session",
+    "missing": "no option trade data is stored for the session",
+}
+
+
+def signal_readiness(store: MarketStore, cfg: BacktestConfig | dict, signals: list[dict], provider: str | None = None) -> dict:
+    """For every qualifying signal: can THIS strategy be entered and exited on the stored option trade observations?
+
+    A session that merely has some option data is not a session the strategy can trade. Each signal is taken through the
+    checks the engine itself makes, with the engine's own functions and the run's own execution settings:
+
+      the session      is it stored at all, and does the provider hold it whole
+      the expiration   the one the leg would choose among those stored (never a later one for a 0DTE leg); where an
+                       end-of-day chain is stored it also says whether such an expiration was listed at all
+      the contract     `select_contracts` on the chain as it stood at each tick of the entry window: only contracts that
+                       had printed, only prints younger than `max_trade_age_seconds`, the strike rule of each leg
+      the entry        a fill exists within `max_fill_delay_minutes` of the signal, never from a print made before the
+                       order could have used it
+      the exit         a print of the selected contract near the planned exit, and stored observations for it on every
+                       later session of the holding period
+
+    The result is what the stored data supports, not a promise: a run can still take fewer trades (capital, position
+    limits). It cannot take more. Nothing is downloaded and nothing is modelled."""
+    from strata.engine.market import DayChain, UnderlyingSeries, day_num, expand_trade_bars, from_day_num
+    from strata.engine.selection import _choose_expiration, dte_tolerance, select_contracts
+    cfg = BacktestConfig.model_validate(cfg) if isinstance(cfg, dict) else cfg
+    strat = cfg.strategies[0]
+    sym = strat.symbol
+    legs = [l for l in strat.legs if l.kind == "option"]
+    ex = cfg.execution
+    max_age = int(ex.max_trade_age_seconds)
+    step = max(60, int(ex.signal_interval_minutes) * 60)
+    wait = float(ex.max_fill_delay_minutes) * 60
+    hold = hold_sessions(strat, cfg.start)
+    ds = store.option_dataset(sym, "trade", provider)
+    complete = bool(store.descriptor(ds).get("complete_chain")) if ds is not None else False  # every contract of each session, not a band of them
+    counts = {k: 0 for k in STATUS_TEXT}
+    out: dict = {"observation": "trade prints", "dataset": ds.id if ds else None, "signals": len(signals), "rows": [], "counts": counts, "ready": 0,
+                 "settings": {"max_trade_age_seconds": max_age, "max_fill_delay_minutes": float(ex.max_fill_delay_minutes), "signal_interval_minutes": int(ex.signal_interval_minutes),
+                              "latency_seconds": float(ex.latency_seconds), "hold_sessions": hold}}
+    if not signals:
+        return out
+    today = _today()
+    sources = []
+    for src in S.option_bar_sources(store):
+        try:
+            if src.available()[0]:
+                a, b = src.bars_window(today)
+                sources.append((src.name, src.label, a, b))
+        except Exception:  # noqa: BLE001
+            continue
+
+    def fetchable(d: date) -> dict | None:
+        return next(({"source": n, "label": lab} for n, lab, a, b in sources if a <= d <= b), None)
+
+    # which expirations were LISTED is only known where an end-of-day chain is stored
+    listed: dict[str, list[int]] = {}
+    eod = next((k for k in store.datasets(sym) if k.dtype == "options" and k.obs == "quote" and k.res == "EOD"), None)
+    if eod is not None:
+        try:
+            listed = expiration_index(store, eod)
+        except Exception:  # noqa: BLE001
+            listed = {}
+    leg_dicts = [l.model_dump(mode="json") for l in legs]
+
+    def unlisted(d: date) -> bool:
+        x = listed.get(d.isoformat())
+        return x is not None and not all(_dte_ok(x, l, d) for l in leg_dicts)
+
+    idx = store.option_bar_index(sym, dataset=ds) if ds is not None else pl.DataFrame()
+    by_day: dict[date, pl.DataFrame] = {k[0]: v for k, v in idx.partition_by("date", as_dict=True).items()} if not idx.is_empty() else {}
+    part = {k: (v.get("reason") or STATUS_TEXT["partial"]) for k, v in store.session_states(ds).items() if v.get("status") == "partial"} if ds is not None else {}
+    live = sorted({s["date"] for s in signals if s["date"] in by_day and s["date"].isoformat() not in part})
+    ser = None
+    if live:
+        b = store.read_best_bars(sym, live[0] - timedelta(days=7), live[-1])
+        ser = UnderlyingSeries(b) if not b.is_empty() else None
+    hhmm = lambda t: datetime.fromtimestamp(int(t), cal.ET).strftime("%H:%M")
+    name = lambda k, r, e: f"{k:g}{r} {e.isoformat()}"
+
+    def row(sig, status, detail, **kw):
+        d = sig["date"]
+        counts[status] += 1
+        r = {"date": d.isoformat(), "time": hhmm(sig["t"]) if sig.get("t") else None, "status": status, "detail": detail,
+             "downloadable": fetchable(d) if status in ("missing", "contract", "expiration") or kw.get("missing_later") else None, **kw}
+        out["rows"].append(r)
+
+    for sig in signals:
+        d = sig["date"]
+        iso = d.isoformat()
+        day = by_day.get(d)
+        if iso in part:
+            row(sig, "partial", part[iso])
+            continue
+        if day is None:
+            if unlisted(d):
+                row(sig, "no_contract", STATUS_TEXT["no_contract"])
+            else:
+                row(sig, "missing", STATUS_TEXT["missing"])
+            continue
+        today_n = int(day_num(d))
+        traded = day.filter(pl.col("status") == "ok")
+        need_exp, miss, far = set(), None, False
+        for leg in legs:
+            rr = traded.filter(pl.col("right") == leg.right)
+            exps = np.array(sorted({int(day_num(e)) for e in rr["expiration"].to_list()}), np.int64)
+            e = _choose_expiration(exps, today_n, leg) if exps.size else None
+            if e is not None and leg.expiration is None and leg.dte_mode != "exact" and leg.dte != 0 and abs(int(e) - today_n - leg.dte) > dte_tolerance(leg.dte):
+                e, far = None, True  # the nearest STORED expiration is too far from the one asked for to be the nearest LISTED one
+            if e is None:
+                miss = leg
+                break
+            need_exp.add(from_day_num(int(e)))
+        if miss is not None:
+            exact = miss.dte_mode == "exact" or miss.dte == 0
+            kind_ = "call" if miss.right == "C" else "put"
+            if miss.expiration is not None and miss.expiration < d:
+                row(sig, "no_contract", f"the {miss.expiration} {kind_} expiration asked for had already expired on this session")
+            elif unlisted(d):
+                row(sig, "no_contract", STATUS_TEXT["no_contract"])
+            else:
+                have_e = sorted(set(traded.filter(pl.col("right") == miss.right)["expiration"].to_list()))
+                have = sorted({(e - d).days for e in have_e})
+                if miss.expiration is not None:
+                    row(sig, "expiration", f"the {miss.expiration} {kind_} expiration asked for is not stored for the session (stored: {', '.join(e.isoformat() for e in have_e[:8]) or 'none'})")
+                elif far:
+                    row(sig, "expiration", f"no {kind_} expiration within {dte_tolerance(miss.dte)} days of {miss.dte}DTE is stored for the session (stored: {', '.join(str(x) + 'DTE' for x in have[:8]) or 'none'})")
+                else:
+                    row(sig, "expiration", f"no {'exact ' if exact else ''}{miss.dte}DTE {kind_} expiration is stored for the session (stored: {', '.join(str(x) + 'DTE' for x in have[:8]) or 'none'})")
+            continue
+        o, c = cal.session_bounds(d)
+        t_open, t_close = int(o.timestamp()), int(c.timestamp())
+        sig_t = int(sig.get("t") or t_open)
+        ready = sig_t + float(ex.latency_seconds)
+        ticks, t = [], sig_t
+        while t <= t_close:
+            ticks.append(t)
+            if t - sig_t >= wait:
+                break
+            t += step
+        bars = store.read_option_bars(sym, d, dataset=ds)
+        bars = bars.filter(pl.col("expiration").is_in(sorted(need_exp))) if bars is not None else pl.DataFrame()
+        entry, why = None, ""
+        if ser is not None and not bars.is_empty():
+            last_tick = datetime.fromtimestamp(ticks[-1], timezone.utc)
+            early = bars.filter(pl.col("ts") < last_tick)
+            df, _stats = expand_trade_bars(early, ticks, ser, d) if not early.is_empty() else (pl.DataFrame(), {})
+            if not df.is_empty():
+                ch = DayChain(df, cfg.capital.risk_free_rate)
+                ch.kind, ch.complete = "trades", complete
+                for tk in ticks:
+                    if tk < ready:
+                        continue
+                    si = ch.snapshot_at(tk)
+                    if si < 0 or tk - int(ch.snap_ts[si]) > max_age:
+                        continue
+                    spot = ser.price_at(tk, d)
+                    sel, why, _det = select_contracts(ch, si, list(strat.legs), float(spot), d, max_age)
+                    if sel is not None:
+                        entry = (tk, [(x.leg.right, float(x.strike), from_day_num(int(x.expiration)), int(tk - ch.quote_ts[x.row])) for x in sel if x.row >= 0])
+                        break
+        if entry is None:
+            # the engine's reason is read against what is STORED for the session, so that a contract that exists in the store
+            # but had not printed yet is not reported as missing from it
+            price = float(sig.get("price") or 0.0)
+            outside = None
+            for leg in legs:
+                if leg.strike.method != "atm_offset":
+                    continue
+                ks = sorted(set(traded.filter((pl.col("right") == leg.right) & pl.col("expiration").is_in(sorted(need_exp)))["strike"].to_list()))
+                if ks and price:
+                    half = (float(np.median(np.diff(ks))) if len(ks) > 1 else 1.0) / 2 + 1e-9
+                    if not (ks[0] - half <= price <= ks[-1] + half):
+                        outside = (ks[0], ks[-1], price)
+            if outside is not None:
+                row(sig, "contract", f"the underlying was at {outside[2]:.2f} at the signal; the strikes stored for the session run from {outside[0]:g} to {outside[1]:g}")
+            elif "beyond the stored strike range" in why or "outside the stored strike range" in why:
+                # the engine refused to pass the outermost stored strike off as the one asked for: the strike is missing, not stale
+                row(sig, "contract", why.split(": ", 1)[-1])
+            else:
+                row(sig, "stale", (f"no usable trade print between {hhmm(ticks[0])} and {hhmm(ticks[-1])} ({why})" if why else
+                                   f"none of the contracts of the required expiration had traded by {hhmm(ticks[-1])}"), window=[hhmm(ticks[0]), hhmm(ticks[-1])])
+            continue
+        tk, picked = entry
+        # ---- the exit: a print of each selected contract near the planned exit, and the contract stored on later sessions
+        xe = strat.exits
+        planned = None
+        if hold == 0:
+            if xe.time_exit.enabled:
+                planned = min(t_close, t_open + (cal.parse_hhmm(xe.time_exit.time) - 570) * 60)
+            elif xe.max_hold.enabled and xe.max_hold.minutes:
+                planned = min(t_close, tk + int(xe.max_hold.minutes) * 60)
+        problems, missing_later, gap_max = [], [], 0
+        for right, k, e, _age in picked:
+            cb = bars.filter((pl.col("right") == right) & ((pl.col("strike") - k).abs() < 1e-6) & (pl.col("expiration") == e)).sort("ts")
+            ends = (cb["ts"].dt.epoch("s").to_numpy().astype(np.int64) + 60) if not cb.is_empty() else np.array([], np.int64)
+            after = ends[ends > tk]
+            if planned is not None:
+                if not ((ends > planned - max_age) & (ends <= t_close)).any():
+                    problems.append(f"the {name(k, right, e)} has no print within {max_age // 60} min before the planned exit at {hhmm(planned)} or after it")
+            elif hold == 0 and e > d and not after.size:
+                problems.append(f"the {name(k, right, e)} did not trade again that session after the entry")
+            horizon = planned if planned is not None else t_close
+            seq = np.concatenate([[tk], after[after <= horizon], [horizon]])
+            gap_max = max(gap_max, int(np.diff(seq).max() // 60) if seq.size > 1 else 0)
+            if hold > 0:
+                occ = S.occ_symbol(sym, e, right, k)
+                for j in range(1, hold + 1):
+                    s2 = cal.next_trading_day(d, j)
+                    if s2 > e:
+                        break
+                    d2 = by_day.get(s2)
+                    ok2 = d2 is not None and s2.isoformat() not in part and not d2.filter((pl.col("occ") == occ) & (pl.col("status") == "ok")).is_empty()
+                    if not ok2 and s2 <= today:
+                        missing_later.append(s2.isoformat())
+        if missing_later:
+            problems.append(f"no stored observations for the position on {', '.join(sorted(set(missing_later))[:4])}" + (f" and {len(set(missing_later)) - 4} more" if len(set(missing_later)) > 4 else ""))
+        info = {"entry": {"time": hhmm(tk), "contracts": [name(k, r, e) for r, k, e, _ in picked], "print_age_seconds": max((a for *_x, a in picked), default=0)},
+                "exit": {"planned": hhmm(planned) if planned is not None else ("expiration" if hold == 0 else f"up to {hold} session(s) later"), "longest_gap_minutes": gap_max}}
+        if problems:
+            row(sig, "exit_uncertain", "; ".join(problems), missing_later=sorted(set(missing_later)) or None, **info)
+        else:
+            row(sig, "trades", STATUS_TEXT["trades"], **info)
+    out["ready"] = counts["trades"]
+    out["entry_ready"] = counts["trades"] + counts["exit_uncertain"]
+    out["fetchable"] = sum(1 for r in out["rows"] if r.get("downloadable"))
+    return out
+
+
+def unpriced_signals(store: MarketStore, cfg: BacktestConfig | dict, signals: list[dict], provider: str | None = None) -> list[dict]:
+    """The signals the stored observations do not fully price: the only ones a provider needs to be asked about.
+
+    A signal counts as priced when the engine's own selection, with the run's execution settings, finds the contract it
+    asked for with a print inside the entry window and the exit window covered (`signal_readiness` status "trades").
+    Everything else (a contract or an expiration that is not stored, a stale print, an uncovered exit, a session held in
+    part or not at all) goes to the acquisition step, which decides what can actually be fetched."""
+    rd = signal_readiness(store, cfg, signals, provider)
+    ready = {r["date"] for r in rd["rows"] if r["status"] in READY}
+    return [s for s in signals if s["date"].isoformat() not in ready]
+
+
+def trade_coverage(store: MarketStore, req: dict, signals: list[dict], provider: str | None = None, cfg: BacktestConfig | dict | None = None) -> dict:
+    """Coverage of stored option trade bars for each signal.
+
+    With the run's configuration (`cfg`) this is `signal_readiness`: the engine's own selection and execution settings
+    applied to each signal's entry window and exit. Without one it is the older, coarser check: does the index hold, for
+    the entry session, a contract of the right expiration and type with a strike around the price at the signal, and did it trade?"""
+    if cfg is not None:
+        rd = signal_readiness(store, cfg, signals, provider)
+        bad: dict[str, list[date]] = {}
+        for r in rd["rows"]:
+            if r["status"] not in ("trades", "exit_uncertain"):
+                bad.setdefault(STATUS_TEXT[r["status"]], []).append(date.fromisoformat(r["date"]))
+        ds0 = store.option_dataset(req["symbol"], "trade", provider)
+        return {"observation": "trade prints", "dataset": rd["dataset"], "signals": len(signals), "executable": rd["entry_ready"], "fully_covered": rd["ready"],
+                "exit_uncertain": rd["counts"]["exit_uncertain"], "fetchable": rd.get("fetchable", 0), "readiness": rd["counts"],
+                "issues": ([{"reason": "no option trade data is stored for " + req["symbol"], "signals": len(signals), "kind": "no_dataset", "sample": [s_["date"].isoformat() for s_ in signals[-6:]]}] if ds0 is None and signals else
+                           [{"reason": k, "signals": len(v), "kind": "trades", "first": min(v).isoformat(), "last": max(v).isoformat(), "sample": [x.isoformat() for x in sorted(v)[-6:]]} for k, v in bad.items()]),
+                # the sessions a wider strike range could still price: the pipeline fetches that range for them before it reports
+                "outside_stored_strikes": [r["date"] for r in rd["rows"] if r["status"] == "contract" and r.get("downloadable")],
+                "contract_sessions_stored": store.option_bar_index(req["symbol"], dataset=ds0).height if ds0 is not None else 0}
     sym, opt = req["symbol"], req["options"]
     ds = store.option_dataset(sym, "trade", provider)
     out = {"observation": "trade prints", "dataset": ds.id if ds else None, "signals": len(signals), "executable": 0, "issues": []}

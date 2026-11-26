@@ -14,6 +14,7 @@ limits stated next to every number.
 
 ## Contents
 - [Quick start](#quick-start)
+- [What V7 adds](#what-v7-adds)
 - [What V6 adds](#what-v6-adds)
 - [What V5 adds](#what-v5-adds)
 - [What V4 adds](#what-v4-adds)
@@ -77,6 +78,79 @@ main path through each; *Advanced* adds the specialist tools. The calculations a
    option contract's own prints underneath; press `?` for the keyboard shortcuts.
 5. **Market Explorer**, **Strategy Builder**, **Backtests** and **Data** remain for working
    by hand. Everything the lab runs appears there too.
+
+## What V7 adds
+V7 adds no architecture. V6 ended with real history on disk, now 89.1 million one-minute option trade bars for SPY,
+QQQ and IWM (718 sessions each, 2024-01-18 to 2026-11-25). V7 is about working on it: asking in sentences,
+seeing what the data can and cannot price, checking fills, and saying plainly what was not measured. The full
+record, with every figure and the acceptance runs, is [docs/V7_REPORT.md](docs/V7_REPORT.md).
+
+**What was measured, and what is still blocked**
+
+| | Status on 2026-11-26 |
+| --- | --- |
+| Strategies and comparisons from sentences, on the stored history | run through the application for all three symbols (the report's acceptance section) |
+| Sentences nobody tuned the readers on | **about one in two read correctly.** On 34 sealed sentences the built-in readers got 16 right and answered a different question without saying so on 9; with a small local model cross-checking, 2 or 3 |
+| Execution on individual trades | measured on Alpaca's trade tape: the first print after each decision moves results a few percent either way |
+| Historical bid/ask | **BLOCKED: no Databento key.** The adapter and its cost check exist and have never run against the live service |
+| Hosted language models | **BLOCKED: no key.** Only two local models (Ollama) were measured |
+| An edge | none found. No tested configuration is distinguishable from zero once the number tried is counted |
+
+**The desk.** The lab is one screen: a command line, the reading of the sentence as a ticket (what was said,
+what was assumed, what could not be represented, and any open question with one-click answers), the stages on
+one line, a workbench (overview, tear sheet, trades, replay, fills, execution check, statistics) and the log.
+
+**From one sentence**
+- *"Buy ATM SPY 0DTE calls at the open after a 1% down day, exit at 3:55 PM Eastern or when SPY has risen 1%"*
+  compiles to a strategy whose rule can be read as an expression. New in the language: minutes held after the
+  fill, several entries a session, partial exits, another symbol's own levels (`QQQ.opening_range_high(30)`),
+  exact expiration dates. A clause inside an exit statement is an exit and is never also an entry condition.
+- *"Compare entry times from 9:30 to 11:00 in 15-minute increments, prior-day declines from 0.5% to 3%, 0DTE versus
+  1DTE, and several profit targets"* is one bounded grid (252 configurations; more than 300 is refused whole, never
+  trimmed). It is read as a map: every cell with its trades, coverage, earlier and later halves, the most stable
+  region beside the highest cell, and the best cell's p-value after counting the cells.
+- *"How often does SPY's first 9:30 candle predict its overall day?"* is two directions and how often they agree:
+  the whole session (which contains the candle) and the rest of it (which is all that was still unknown).
+- *"no I meant 6:30a, PST"* is a correction: a value on its own replaces the one thing it can replace, and when
+  it could replace two, nothing is changed and both are named.
+
+**What a run can be held to**
+- **Readiness per signal.** A session with some option data is not a session the strategy can trade. Each signal
+  is taken through the engine's own checks (expiration stored, contract stored, a print inside the entry window,
+  the exit covered); what is missing is fetched for those sessions only, and a leg is filled with the contract it
+  asked for or not at all.
+- **Every fill against its stored bar.** The Fills tab and its CSV list each fill with the print it used and the
+  bar that print came from, read back from the store.
+- **The first print after the decision.** `Execution` (or `strata hires`) fills the same decisions on Alpaca's
+  individual trades, with latency, trade conditions, size and two exit policies. A print is still not a quote.
+- **Replay on stored observations.** The underlying's stored candles and one contract's stored trade bars, the
+  trade over them, a cursor through both, and "only what was known". A minute without a print has no bar.
+- **The tear sheet** puts first what decides whether the rest means anything: trades taken, what could be
+  priced, net after costs, the interval on the average and its p-value after the search, drawdown, concentration,
+  worse fills, and the same position without the signal. It also checks the account's own net result against the
+  sum of its trades and says so when they differ.
+- **Forward validation is incremental.** The account is stored after every sealed session and an evaluation runs
+  only the sessions since; a revision of stored data produces a reconciliation record and changes nothing sealed.
+
+**Data.** The collector continues a downloaded archive with the same contracts (verified from an empty
+directory: bar for bar identical to the archive) and collects sessions it missed. The stored strike range follows a
+gap at the open and nothing later. Historical bid/ask needs a Databento key: `Data > Readiness > Historical bid
+and ask` runs the free checks, asks Databento for the price of a small sample, and downloads it only under a
+budget you type.
+
+**A local model.** With Ollama selected in Settings, a small model reads the request through a form of typed
+fields (it writes no expression and has no field for a price or a result), and its reading is compared with the
+built-in one: a difference is asked before anything runs. Nothing leaves the machine.
+
+```bash
+backend/.venv/bin/strata bench --dataset       # each workload in a fresh process on the stored history
+backend/.venv/bin/strata hires <run id>        # the same decisions on individual trades
+backend/.venv/bin/strata access databento      # free checks, then the price of a sample (exit 2 = no key)
+```
+
+On the stored history a full-period single-leg backtest (718 sessions) takes about 9 seconds, 100 configurations
+36 seconds, a replay session 0.15 seconds (`benchmarks/dataset_latest.json`; the report has the table and what
+was changed to get there).
 
 ## What V6 adds
 V6 adds no data framework. It answers one question, on real observations: **can the strategy this
@@ -826,7 +900,7 @@ alongside builder runs. JSON `BacktestConfig` files work the same way.
 
 ## Testing & validation
 ```bash
-cd backend && .venv/bin/python -m pytest          # 482 tests (12 opt-in live ones skip), a few minutes, no network
+cd backend && .venv/bin/python -m pytest          # 610 tests (12 opt-in live ones skip), a few minutes, no network
 cd backend && .venv/bin/strata validate           # fourteen steps on real observations, ~15 seconds
 cd backend && .venv/bin/strata bench --check      # performance against the recorded baseline
 cd backend && STRATA_LIVE=1 .venv/bin/python -m pytest tests/test_live.py -rs   # opt-in, per provider
@@ -875,6 +949,18 @@ frozen holder yields, two real processes, standby in the web application, creden
 sides of a container boundary). The browser suite gained six tests: coverage before profitability,
 data readiness and the provider's state, the forward ledger, the two-step ML study, the standby
 page, and a key stored where this copy cannot read it.
+
+V7 adds 128 tests in thirteen files (`tests/test_v7_*.py`): per-signal readiness and on-demand expansion without
+substitution (partial sessions, missing expirations and strikes, gaps, stale prints, multi-day positions, a strike
+the first fetch did not reach, a contract dated on a day the market was closed); the collector on a provider that keeps expired contracts; the Databento adapter
+and its cost arithmetic against a recorded transport; execution on individual prints (latency, conditions, size,
+leg timing, which of target and stop came first); experiments (expansion by arithmetic, the bound, shared signal
+scans, stability, the earlier/later split); the engine additions and their equality with the previous engine; the
+form planner for local models and the cross-check; exit clauses and the other reader fixes; the replay, the tear
+sheet and the fills ledger; incremental forward validation against a continuous run; and the questions typed into
+the running application that it had answered wrongly. The sealed sentences of `strata/ai/evalset_v7.py` are held by
+hash: a test fails if one is edited. The browser suite gained four tests (28 in all): the desk, a grid from one
+sentence, replay and collector, and the first-candle question with its correction.
 
 **`strata validate`** starts from an empty data directory and uses free, keyless sources only:
 
@@ -930,6 +1016,9 @@ backend/strata/
                nl_graph (the composing reader), agent_v5 (graph, memory and registry follow-ups),
                V6: intent (one schema and seven stages for every request), evalset (150 written
                requests with their expected readings)
+               V7: nl_experiment (a grid from one sentence), planner_form (the form a small local
+               model fills in), evalset_v7 + eval_v7 (development sentences and the sealed ones,
+               compared by where the rule fires on stored sessions)
   core/        calendar, Black-Scholes / American pricing, causal indicators
                V6: instance (one machine at a time opens a data folder: the lease, standby, the claim protocol)
   data/        store (datasets, manifests), migrate, catalog, planner (requirements, coverage,
@@ -938,9 +1027,12 @@ backend/strata/
                the provider marketplace, cost estimates and V6 budget table, access = what an
                account's key actually returns), V6: readiness (the five capabilities and the
                data check before a run), quality (volume artefacts)
+               V7: providers/databento (OPRA bid/ask sampled each minute: free checks, a priced
+               sample, a budget), planner.signal_readiness (the engine's own checks per signal)
   engine/      models, market (point-in-time data, trade-print chains), expr (rule language),
                sequence (ordered stages), scan (signals only), rules, selection, execution,
                margin, portfolio, engine (event loop)
+               V7: hires (the same decisions on individual trades)
   research/    pipeline (the seven stages), study, stats, discovery, explain_day, views
                (calendar, observations, comparison), report (HTML / Markdown / CSV)
                V4: robust (dependence-aware statistics), ledger (trials and holdouts), features
@@ -951,15 +1043,18 @@ backend/strata/
                (cross-notebook trials and holdouts), memory (findings), ml (optional), forward
                (frozen experiments), signals (saved signal lists)
                V6: usecase (the original question on stored observations)
+               V7: experiment (bounded grids, shared signal scans, stability), performance (the
+               tear sheet, the fills ledger, the baseline), replay (stored bars, levels, a trade
+               over them), obscompare (quotes against trade prints)
   audit/       V6: reference (an independent simulator that shares no code with the engine),
                bars (missing minutes, early closes, DST, volume artefacts, mixed feeds, two feeds against
                each other), options (stored option bars against the calendar, against the provider's
                individual trades, and one provider against another)
   collector/   the background market-data collector
   backup.py    V6: `strata backup` / `strata restore`
-  bench.py     the `strata bench` command
+  bench.py     the `strata bench` command; V7: bench_real.py (`strata bench --dataset`, on the stored history)
   analytics/ · optimize/ · portfolio/
-  api/         FastAPI app, research_api, v4_api, v5_api, v6_api, ide (strategy IDE: compact form, section
+  api/         FastAPI app, research_api, v4_api, v5_api, v6_api, v7_api, ide (strategy IDE: compact form, section
                edits, debugger), launch (jobs + caching), settings (credential stores), notify, db
   validate.py  the `strata validate` command
 backend/tests/ unit suite, test_live.py (opt-in), test_reproducibility.py, e2e_seed.py
@@ -968,20 +1063,33 @@ frontend/src/  pages/lab (research workspace, Canvas, Research and Graph views),
                Registry), pages/research (Sensitivity, Encyclopedia), pages/data (Collector,
                Marketplace, bulk import, Readiness), pages/builder, pages/results …
                pages/lab/Coverage.tsx: the coverage block, stage rail, data check, fills, budget
-benchmarks/    baseline.json, history.jsonl (backend), frontend.jsonl (browser render times)
+               V7 pages/lab: Ticket (the reading under the command line), Experiment (the grid),
+               Performance (tear sheet, fills, execution check), ReplayView
+benchmarks/    baseline.json, history.jsonl (backend), frontend.jsonl (browser render times),
+               dataset_latest.json + dataset_history.jsonl (the stored history, V7)
+docs/          V7_REPORT.md and v7_evidence/ (what was measured, file by file)
 frontend/e2e/  browser tests            .github/workflows/ci.yml
 scripts/       setup.sh · dev.sh · init_db.sh · docker-entrypoint.sh
 ```
 
 ## Known limitations
-- **The strategy this project started from has not been backtested.** One of its 105 qualifying
-  sessions can be priced by the engine on stored observations and one more by the reference
-  simulator. Everything else waits on intraday option prices that are not stored: see
-  [What would close the gap](#what-would-close-the-gap). No key-gated provider has been reached
-  from this installation, so their coverage is what they publish, not what was measured.
-- **The reader is right about three times in four on wording it has not seen**, and before the
-  V6 guards one answer in five was wrong without saying so (the held-out first run). Read the
-  "How I read this" card; the Interpretation panel is editable for a reason.
+- **The strategy this project started from can be run on 5 of its 105 qualifying sessions**, the ones
+  since 2024-01-18, where intraday option trade prices are stored. Five trades say nothing about
+  it. Everything earlier waits on intraday option prices no free source holds: see
+  [What is still out of reach](#what-is-still-out-of-reach). Alpaca is the only key-gated provider
+  reached from this installation; the others' coverage is what they publish, not what was measured.
+- **The reader is right about one time in two on harder wording it has not seen** (V7: 16 of 34
+  sealed sentences with several conditions, a second symbol, time limits; 9 of the 34 answered
+  with a different question and nothing flagged), and about three times in four on V6's simpler
+  held-out set. A local model cross-checking the reading brings the silent ones down to 2 or 3 of
+  34 by asking. Read the ticket under the command line before relying on a run.
+- **No figure includes the bid/ask spread.** Every option result is on trade prints. The quote
+  comparison is built and blocked on a Databento key; what was measured instead is the first
+  individual print after each decision.
+- **A grid does not fetch what it is missing.** Each cell reports the signals the stored data could
+  not price. Run the single strategy to fetch them, then the grid again.
+- **Far expirations are thin.** A 30- or 90-day leg often has no print near the entry or the exit;
+  runs report those sessions as not priced. Deep in-the-money weeklies rarely print at all.
 - **The reference simulator is a second opinion, not a second engine.** It covers option
   positions on one underlying with the exit rules in its docstring. Agreement with it is evidence
   for those cases only.
@@ -1012,17 +1120,19 @@ scripts/       setup.sh · dev.sh · init_db.sh · docker-entrypoint.sh
   and minute, the close differs on 45% of them. Alpaca's bars reproduce from its own trade records
   and are used first; no third source was available to settle which is closer to the tape.
 - **Language models.** Cancellation is checked between requests, not in the middle of one.
-  Gemini uses JSON mode without a schema. Small local models can be unreliable at structured
-  output; what happens then is the fallback setting.
+  Gemini uses JSON mode without a schema. No hosted model has been measured on V7's tools (no
+  key). A small local model fails the full planner; it is given a form of typed fields instead
+  and used as a second reader, which costs several seconds a request and asks about some
+  readings that were right (5 or 6 of 34).
 - **The reader composes, but it is still a reader.** Questions are built from subjects, time
   spans and predicates it knows; a phrase outside them is reported as not understood, and the
   graph can be written directly or proposed by a configured language model. The seven Hypothesis
   Lab families remain as shortcuts.
 - **The one worked example found no edge.** The session above is a faithful record: the pattern
   is "suggestive" at best and does not survive option costs. V5 was built to say that plainly.
-- **Forward validation needs time and a running collector.** An experiment frozen today has no
-  forward evidence until sessions are collected after it; option prices for a past session often
-  cannot be fetched later.
+- **Forward validation needs time.** An experiment frozen today has no forward evidence until
+  sessions exist after it. With Alpaca as the source a session missed by the collector is
+  collected later (expired contracts stay available); with Yahoo it usually cannot be.
 - **Staged exits, ATR exits and hedges are simulated at the engine's tick**, on the bars and
   option prices stored. On end-of-day option data only close-to-close behaviour can be priced.
 - **The ML page predicts the underlying's outcome.** It is not an option-profit model, and on the
@@ -1038,8 +1148,9 @@ scripts/       setup.sh · dev.sh · init_db.sh · docker-entrypoint.sh
 - **The registry knows what Strata ran, not what you read elsewhere.** A new notebook's final
   period on dates other notebooks already evaluated is reported as not independent, but the
   registry cannot know what was learned outside the application.
-- **The collector needs a machine that is awake** at the close; a laptop that sleeps will miss
-  sessions and will say so.
+- **The collector needs a machine that is awake** to collect. With Alpaca as its source the next
+  cycle picks up every session since the last stored one; with Yahoo a laptop that sleeps through
+  the close misses that session for good, and the collector says so.
 - **Free intraday underlying history is short** (about a month of 1-minute bars from Yahoo), so
   intraday rules have small samples until more history is loaded. Sessions without fine enough
   bars are excluded and counted, not treated as "no signal".

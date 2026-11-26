@@ -140,7 +140,8 @@ class Position:
         return d, g, th, v
 
     def front_dte(self, today: int) -> int:
-        exps = [l.exp for l in self.legs if l.is_open and l.kind == "option"]
+        from strata.engine.selection import effective_expiration  # a contract dated on a closed day expires the session before
+        exps = [effective_expiration(l.exp) for l in self.legs if l.is_open and l.kind == "option"]
         return (min(exps) - today) if exps else 0
 
     def margin_legs(self) -> list[MLeg]:

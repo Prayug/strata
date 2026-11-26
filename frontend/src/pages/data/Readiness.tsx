@@ -218,6 +218,45 @@ function Bars() {
   );
 }
 
+/** Databento's OPRA quotes: what is needed, what a check found, and what a sample would cost. Nothing billable is asked for
+    without a budget typed here, and never more than it. */
+function Quotes({ onJob }: { onJob: (id: string) => void }) {
+  const q = useQuery({ queryKey: ["databento-access"], queryFn: () => api.get<any>("/api/data/access/databento"), retry: false });
+  const [budget, setBudget] = useState("");
+  const run = useMutation({ mutationFn: (b: number) => api.post<{ id: string }>("/api/data/access/databento", { budget_usd: b, sessions: 20, symbol: "SPY" }), onSuccess: (r) => onJob(r.id), onError: (e: any) => toast.error(e.message) });
+  const d = q.data;
+  if (!d) return <div className="text-[13px] dim">Loading…</div>;
+  const blocked = !d.key_stored;
+  const quote = (d.stages || []).find((x: any) => x.stage === "quote");
+  return (
+    <div className="flex flex-col gap-3" data-testid="databento-access">
+      <div className="flex flex-wrap items-center gap-2 text-[13px]">
+        <span className={cn("inline-flex h-6 items-center border px-2 text-[11.5px] font-medium uppercase tracking-wide", blocked ? "border-warn/50 text-warn" : d.verified ? "border-up/50 text-up" : "border-line-2 text-fg-2")}>{blocked ? "blocked: no key" : d.verified ? "verified with your key" : d.status === "not_run" ? "key stored, not checked" : String(d.status).replace(/_/g, " ")}</span>
+        <span className="soft">Databento, OPRA consolidated quotes sampled each minute ({d.documented?.schema || "cbbo-1m"}).</span>
+        {d.spent_usd > 0 && <span className="num dim">spent so far through Strata: ${Number(d.spent_usd).toFixed(2)}</span>}
+      </div>
+      {d.unverified && <div className="text-xs text-warn">{d.unverified}</div>}
+      {blocked ? (
+        <ol className="flex list-decimal flex-col gap-1 pl-5 text-[13px] soft">{(d.how || []).map((h: string, i: number) => <li key={i}>{h}</li>)}</ol>
+      ) : (
+        <>
+          {(d.stages || []).length > 0 && <div className="flex flex-col gap-1 text-[12.5px]">{d.stages.map((x: any) => <div key={x.stage} className="flex gap-2"><span className={x.ok ? "text-up" : "text-warn"}>{x.ok ? "✓" : "–"}</span><span className="w-24 shrink-0 dim">{x.stage}</span><span className="soft">{x.detail}</span></div>)}</div>}
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn sm" disabled={run.isPending} onClick={() => run.mutate(0)} data-testid="databento-free">{run.isPending ? <Loader2 className="animate-spin" /> : <Play />}Run the free checks</button>
+            <span className="text-xs dim">metadata only: the key, the dataset, its date range and the provider's own price for a small sample</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
+            <label className="flex items-center gap-1.5 text-xs dim">Budget for the sample, in dollars<input className="field !h-7 !w-24" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" aria-label="Budget in dollars" /></label>
+            <button className="btn sm" disabled={run.isPending || !(Number(budget) > 0)} onClick={() => run.mutate(Number(budget))} data-testid="databento-sample">Download the sample within this budget</button>
+            <span className="text-xs dim">{quote ? `the provider quoted: ${quote.detail}` : "run the free checks first to see the quoted price"}. Nothing is requested unless the budget covers the quote.</span>
+          </div>
+        </>
+      )}
+      {(d.notes || []).length > 0 && <div className="flex flex-col gap-1 text-xs dim">{d.notes.map((n: string, i: number) => <div key={i}>· {n}</div>)}</div>}
+    </div>
+  );
+}
+
 export function Readiness({ onJob }: { onJob: (id: string) => void }) {
   return (
     <div className="lab mx-auto flex max-w-[1180px] flex-col gap-4 px-2 pb-10 pt-3" data-testid="readiness-page">
@@ -227,6 +266,7 @@ export function Readiness({ onJob }: { onJob: (id: string) => void }) {
       </div>
       <Section title="Kinds of research, by symbol and period"><Capabilities /></Section>
       <Section title="Access to expired-contract history" sub="the free route to intraday option prices"><Access onJob={onJob} /></Section>
+      <Section title="Historical bid and ask quotes" sub="the only observation that says what an order could have been filled at"><Quotes onJob={onJob} /></Section>
       <Section title="The original question, on stored observations" sub="signal from the daily record, fills from stored option prices"><UseCase onJob={onJob} /></Section>
       <Section title="Underlying intraday bars" sub="what is stored, and what is wrong with it" open={false}><Bars /></Section>
       <div className="flex flex-wrap gap-2 text-[13px]">

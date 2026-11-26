@@ -8,17 +8,23 @@ import json
 from datetime import date
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-class StrikeSel(BaseModel):
+class Strict(BaseModel):
+    """Every configuration object refuses a field it does not know. A misspelt or invented field (`pct` for `value`) used to
+    be dropped without a word and the default silently took its place: a 15% stop became the default 50%."""
+    model_config = ConfigDict(extra="forbid")
+
+
+class StrikeSel(Strict):
     method: Literal["delta", "premium", "pct_otm", "atm_offset", "fixed", "leg_offset"] = "delta"
     value: float = 0.30
     unit: Literal["points", "strikes", "pct"] = "points"
     ref_leg: Optional[str] = None
 
 
-class LegSpec(BaseModel):
+class LegSpec(Strict):
     id: str
     side: Literal["buy", "sell"]
     kind: Literal["option", "stock"] = "option"
@@ -28,6 +34,7 @@ class LegSpec(BaseModel):
     dte_min: Optional[int] = None
     dte_max: Optional[int] = None
     dte_mode: Literal["nearest", "at_least", "at_most", "exact"] = "nearest"  # dte 0 with "nearest" is always exact
+    expiration: Optional[date] = None  # an exact expiration date: that contract or none (overrides the days-to-expiration fields)
     strike: StrikeSel = StrikeSel()
     iv_min: Optional[float] = None  # percent, e.g. 12 = 12%
     iv_max: Optional[float] = None
@@ -43,7 +50,7 @@ class LegSpec(BaseModel):
         return 1 if self.side == "buy" else -1
 
 
-class CondNode(BaseModel):
+class CondNode(Strict):
     id: str = ""
     kind: Literal["group", "cond"] = "group"
     op: Literal["and", "or"] = "and"
@@ -54,7 +61,7 @@ class CondNode(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
-class SeqStage(BaseModel):
+class SeqStage(Strict):
     """One step of an event sequence. Stages must happen in order, each on a later
     evaluation tick than the one before; the entry signal fires when the last one happens."""
     name: str
@@ -64,7 +71,7 @@ class SeqStage(BaseModel):
     text: str = ""
 
 
-class AddRule(BaseModel):
+class AddRule(Strict):
     """Scale into an open position: when `when` holds for the first lot, open another lot."""
     when: str  # rule expression evaluated against the FIRST lot (entry.*, position.*, group.*, stage state)
     quantity: int = Field(1, ge=1)  # units added each time
@@ -73,7 +80,7 @@ class AddRule(BaseModel):
     text: str = ""
 
 
-class EntrySystem(BaseModel):
+class EntrySystem(Strict):
     """One of several independent ways into a position. At every signal tick the systems are
     tried in the order listed and the first whose conditions hold fires; the strategy's own
     condition tree (when it has rules) must hold as well, as a shared filter. A system may
@@ -86,7 +93,7 @@ class EntrySystem(BaseModel):
     text: str = ""
 
 
-class EntryRules(BaseModel):
+class EntryRules(Strict):
     conditions: CondNode = CondNode()
     sequence: list[SeqStage] = Field(default_factory=list)
     adds: list[AddRule] = Field(default_factory=list)
@@ -99,38 +106,38 @@ class EntryRules(BaseModel):
     max_debit: Optional[float] = None
 
 
-class Threshold(BaseModel):
+class Threshold(Strict):
     enabled: bool = False
     mode: Literal["pct", "dollars"] = "pct"
     value: float = 50.0
 
 
-class TrailingStop(BaseModel):
+class TrailingStop(Strict):
     enabled: bool = False
     mode: Literal["pct", "dollars"] = "pct"
     activate: float = 25.0
     trail: float = 15.0
 
 
-class TimeExit(BaseModel):
+class TimeExit(Strict):
     enabled: bool = False
     time: str = "15:45"
     dte_lte: Optional[int] = 0  # only on sessions where the front leg DTE <= this (None = every day)
 
 
-class DteExit(BaseModel):
+class DteExit(Strict):
     enabled: bool = False
     dte: int = 1
     time: str = "09:45"
 
 
-class MaxHold(BaseModel):
+class MaxHold(Strict):
     enabled: bool = False
     minutes: Optional[int] = None
     days: Optional[int] = None
 
 
-class UnderlyingExit(BaseModel):
+class UnderlyingExit(Strict):
     """Exits on the UNDERLYING's price. "For" and "against" follow the sign of the position's
     delta at entry (where a delta is unknown or vanishing, the sign of the legs themselves: long
     calls and short puts are bullish). A position is neutral only when its bullish and bearish
@@ -154,7 +161,7 @@ class UnderlyingExit(BaseModel):
         return self.enabled and (self.target_atr is not None or self.stop_atr is not None or self.trail_atr is not None)
 
 
-class ExitStage(BaseModel):
+class ExitStage(Strict):
     """A partial exit. Stages are ordered and each fires at most once per position; a later
     stage cannot fire before an earlier one. `close_pct` is a share of the contracts the
     position was OPENED with (rounded down, at least one). Full-exit rules are checked first
@@ -176,26 +183,26 @@ class ExitStage(BaseModel):
         return self
 
 
-class GreekExit(BaseModel):
+class GreekExit(Strict):
     enabled: bool = False
     max_abs_delta: Optional[float] = None  # share-equivalents per unit
     short_leg_delta: Optional[float] = None  # abs delta of any short leg
 
 
-class LegRule(BaseModel):
+class LegRule(Strict):
     target: str  # leg id or group name
     stop_pct: Optional[float] = None  # short leg: close when price >= entry*(1+x/100); long: <= entry*(1-x/100)
     target_pct: Optional[float] = None
 
 
-class RollRule(BaseModel):
+class RollRule(Strict):
     enabled: bool = False
     trigger: Literal["dte", "short_delta", "loss_pct", "profit_pct"] = "dte"
     value: float = 1.0
     max_rolls: int = 3
 
 
-class ExitRules(BaseModel):
+class ExitRules(Strict):
     profit_target: Threshold = Threshold(enabled=True, mode="pct", value=50)
     stop_loss: Threshold = Threshold(enabled=True, mode="pct", value=200)
     trailing_stop: TrailingStop = TrailingStop()
@@ -211,7 +218,7 @@ class ExitRules(BaseModel):
     trigger_price: Literal["close_price", "mid"] = "close_price"
 
 
-class Sizing(BaseModel):
+class Sizing(Strict):
     """fixed: `contracts`. risk_pct / bp_pct: `pct` of equity over the position's maximum loss
     / buying-power requirement per unit. expr: `expr` is a rule expression evaluated at the
     fill, floored to a whole number of units (below one, the entry is skipped and reported).
@@ -227,7 +234,7 @@ class Sizing(BaseModel):
     atr_period: int = Field(14, ge=2, le=100)
 
 
-class DeltaHedge(BaseModel):
+class DeltaHedge(Strict):
     """Hold shares of the underlying against the position's option delta. At every tick that
     is `rebalance_minutes` or more after the last hedge trade (and at the entry), the share
     count is moved to minus the position's current delta when the two differ by more than
@@ -238,7 +245,7 @@ class DeltaHedge(BaseModel):
     band: float = Field(5.0, ge=0)
 
 
-class RegimeSettings(BaseModel):
+class RegimeSettings(Strict):
     vix_low: float = 15.0
     vix_high: float = 25.0
     trend_fast: int = 50
@@ -248,7 +255,7 @@ class RegimeSettings(BaseModel):
 _SYMBOL = re.compile(r"[A-Za-z0-9^][A-Za-z0-9^=_-]{0,15}(?:\.[A-Za-z0-9]{1,6})?")
 
 
-class StrategyConfig(BaseModel):
+class StrategyConfig(Strict):
     name: str = "Untitled strategy"
     symbol: str = "SPY"
     legs: list[LegSpec]
@@ -372,7 +379,7 @@ class StrategyConfig(BaseModel):
         return out - {self.symbol}
 
 
-class Execution(BaseModel):
+class Execution(Strict):
     fill_model: Literal["conservative", "midpoint", "custom"] = "conservative"
     custom_fraction: float = Field(0.5, ge=0.0, le=1.0)
     slippage_per_contract: float = 0.0  # $ per share added against you on every option fill
@@ -406,7 +413,7 @@ class Execution(BaseModel):
     physical_settlement: Literal["close_next_open", "intrinsic"] = "close_next_open"
 
 
-class Capital(BaseModel):
+class Capital(Strict):
     initial_capital: float = Field(100_000.0, gt=0)
     margin_model: Literal["regt", "cash"] = "regt"
     max_bp_usage_pct: float = Field(100.0, gt=0, le=100.0)
@@ -417,7 +424,7 @@ class Capital(BaseModel):
     liquidate_on_margin_call: bool = True
 
 
-class Pricing(BaseModel):
+class Pricing(Strict):
     """historical = observed option bid/ask QUOTES. trades = observed option TRADE prints
     (no bid/ask exists; fills use the last print that is still recent, plus an explicit
     slippage assumption). modeled = real underlying prices with THEORETICAL option premiums
@@ -436,13 +443,13 @@ class Pricing(BaseModel):
     strike_step: Optional[float] = None
 
 
-class DataSelection(BaseModel):
+class DataSelection(Strict):
     """Which stored datasets a run reads. Left empty, the engine resolves one option
     dataset per symbol for the pricing mode and reports its choice in the result."""
     options_provider: Optional[str] = None  # e.g. "github_eod", "alpaca", "yahoo_options"
 
 
-class BacktestConfig(BaseModel):
+class BacktestConfig(Strict):
     strategies: list[StrategyConfig]
     start: date
     end: date

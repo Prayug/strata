@@ -64,6 +64,14 @@ class DraftAdd(BaseModel):
     max_adds: int = 1
 
 
+class DraftPartial(BaseModel):
+    """Close part of the position when a level is reached; the rest stays open under the other exit rules."""
+    premium_pct: Optional[float] = None  # the position is up this % of the premium paid (or received)
+    underlying_pct: Optional[float] = None  # the underlying has moved this % in the position's favour
+    fraction: float = 0.5  # the share of the contracts the position was opened with
+    text: str = ""
+
+
 class DraftCosts(BaseModel):
     """Execution-cost assumptions the user asked for (None = engine defaults)."""
     preset: Optional[Literal["conservative", "none"]] = None
@@ -129,8 +137,11 @@ class Draft(BaseModel):
     exit_time: Optional[str] = None  # New York "HH:MM" or "close"
     exit_time_stated: Optional[str] = None
     hold_sessions: Optional[int] = None
+    hold_minutes: Optional[int] = None  # close this many minutes after the entry (a clock exit relative to the fill, not to the session)
     exit_weekday: Optional[str] = None
     hold_to_expiration: bool = False
+    max_entries: Optional[int] = None  # entries allowed per session (None: one)
+    partials: list[DraftPartial] = Field(default_factory=list)  # partial exits, in order
     # ---- market study
     study: Optional[DraftStudy] = None
     # ---- scope
@@ -308,7 +319,7 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
         # a rule that reads the clock, or a move measured from the session's own open, can only become true during the
         # session: assuming "enter at the open" for it would produce a strategy that can never trade
         intraday_rule = any(X.needs_intraday(c.expr) or _during_session(c.expr) for c in d.conditions) or bool(d.sequence)
-        same_day = bool(d.exit_time) and not d.hold_sessions and not d.exit_weekday
+        same_day = (bool(d.exit_time) or bool(d.hold_minutes)) and not d.hold_sessions and not d.exit_weekday
         multi_day = bool(d.hold_sessions or d.exit_weekday or d.hold_to_expiration)
         short_premium = d.structure in ("short_put", "short_call", "bull_put_spread", "bear_call_spread", "iron_condor", "iron_butterfly", "short_strangle", "short_straddle", "covered_call")
         # ---- expiration
@@ -402,6 +413,19 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
             exits["max_hold"] = {"enabled": True, "days": d.hold_sessions}
             add("Holding period", f"{d.hold_sessions} session(s), exiting at the same time of day", field="hold_sessions")
             any_exit = True
+        if d.hold_minutes:
+            exits["max_hold"] = {"enabled": True, "minutes": int(d.hold_minutes)}
+            add("Holding period", f"{int(d.hold_minutes)} minutes after the entry fill (or the close, whichever comes first)", field="hold_minutes")
+            any_exit = True
+        if d.partials:
+            stages = []
+            for i, p_ in enumerate(d.partials):
+                trig = {"profit_pct": p_.premium_pct} if p_.premium_pct is not None else {"underlying_for_pct": p_.underlying_pct}
+                stages.append({"name": f"partial{i + 1}", **trig, "close_pct": round(max(1.0, min(100.0, p_.fraction * 100)), 4)})
+                what = f"the premium is up {p_.premium_pct:g}% (option return)" if p_.premium_pct is not None else f"{d.symbol} has moved {p_.underlying_pct:g}% in the position's favour (underlying move)"
+                add("Partial exit", f"Close {p_.fraction * 100:g}% of the contracts when {what}; the rest stays open under the other exit rules", field="partials")
+            exits["stages"] = stages
+            any_exit = True
         if d.exit_weekday:
             k = WEEKDAYS.index(d.exit_weekday)
             last = " or is_last_session_of_week" if k == 4 else ""
@@ -423,7 +447,11 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
         elif d.hold_to_expiration:
             add("Exit", "Hold until expiration (settled per the contract)", field="hold_to_expiration")
         elif not d.hold_sessions and not d.exit_weekday:
-            if dte == 0:
+            if dte == 0 and d.hold_minutes:
+                exits["time_exit"] = {"enabled": True, "time": "15:55", "dte_lte": None}  # a same-day contract is never carried into its expiration
+            elif d.hold_minutes:
+                pass
+            elif dte == 0:
                 exits["time_exit"] = {"enabled": True, "time": "15:55", "dte_lte": None}
                 assume("exit_time", "15:55", "0DTE positions are closed five minutes before the bell so they are not exercised")
                 add("End-of-day exit", "15:55 ET (before the 0DTE contracts expire)", "assumed", "exit_time")
@@ -436,9 +464,18 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
             try:
                 legs = build_legs(d.structure, dte, strike, width or 5.0, max(1, d.quantity))
                 tree = _cond_tree(Draft(**{**d.model_dump(), "entry_time": entry_time}))
+                te = exits.get("time_exit") or {}
+                if te.get("enabled") and te.get("dte_lte") is None and entry_time is None:
+                    # an entry that waits for an event has no clock of its own. Taken at or after the time everything is closed
+                    # it would be closed at once, or (after a same-day contract's last exit) carried into expiration: measured on
+                    # stored data, 9 of 263 trades of one strategy did exactly that and lost more than the other 254 made
+                    m_ = cal.parse_hhmm(te["time"]) - 1
+                    tree["children"].append({"id": "lw", "kind": "cond", "type": "time_window", "params": {"start": "09:30", "end": f"{m_ // 60:02d}:{m_ % 60:02d}"}})
+                    assume("last_entry", te["time"], f"no position is opened at or after {te['time']}, the time every position is closed")
+                    add("Last entry", f"before {te['time']} ET, the time every position is closed", "assumed", "exit_time")
                 strategy = StrategyConfig.model_validate({
                     "name": d.title or "AI strategy", "symbol": d.symbol, "legs": legs,
-                    "entry": {"conditions": tree, "max_entries_per_day": 1, "max_open_positions": 1 if same_day or dte == 0 else 5,
+                    "entry": {"conditions": tree, "max_entries_per_day": max(1, int(d.max_entries or 1)), "max_open_positions": max(1, int(d.max_entries or 1)) if same_day or dte == 0 else 5,
                               "sequence": [{"name": s_.name, "when": s_.expr, "text": s_.text, "within_minutes": s_.within_minutes} for s_ in d.sequence],
                               "adds": [{"when": a_.expr, "text": a_.text, "quantity": a_.quantity, "max_adds": a_.max_adds} for a_ in d.adds]},
                     "exits": exits, "sizing": {"method": "fixed", "contracts": 1},

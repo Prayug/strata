@@ -163,6 +163,10 @@ from strata.api.v6_api import router as v6_router  # noqa: E402
 
 app.include_router(v6_router)
 
+from strata.api.v7_api import router as v7_router  # noqa: E402
+
+app.include_router(v7_router)
+
 
 def J(o) -> JSONResponse:
     return JSONResponse(content=json.loads(dumps(o)))

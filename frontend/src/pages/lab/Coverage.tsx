@@ -8,11 +8,16 @@ import { Tip } from "@/components/ui";
 import { cn } from "@/lib/format";
 import { Callout, Section } from "./bits";
 
-type Counts = { quotes?: number; trades?: number; partial?: number; eod?: number; no_contract?: number; missing?: number };
+type Counts = { quotes?: number; trades?: number; eod?: number; exit_uncertain?: number; stale?: number; contract?: number; expiration?: number; partial?: number; no_contract?: number; missing?: number };
+/** Every check passed on stored observations: the contract the strategy would select, a usable print at entry, the exit window. */
+export const PRICED = ["quotes", "trades", "eod"];
 export interface DataCheck {
   symbol?: string; signal_sessions: number; priced: number; priced_pct?: number | null; counts: Counts; first?: string; last?: string; intraday?: boolean; text?: string;
   contract_existence?: { known_sessions: number; unknown_sessions: number; no_contract: number; note?: string } | null;
-  alternatives?: Alt[]; sessions?: { date: string; status: string; stored: string[] }[]; budget?: Budget | null; blocking?: boolean;
+  alternatives?: Alt[]; budget?: Budget | null; blocking?: boolean; potential?: number; fetchable?: number;
+  sessions?: { date: string; status: string; stored: string[]; time?: string | null; detail?: string | null; downloadable?: { source: string; label: string } | null;
+    entry?: { time: string; contracts: string[]; print_age_seconds: number } | null; exit?: { planned: string; longest_gap_minutes: number } | null }[];
+  settings?: { max_trade_age_seconds?: number; max_fill_delay_minutes?: number; signal_interval_minutes?: number; latency_seconds?: number; hold_sessions?: number };
 }
 export interface Alt { id: string; label: string; detail?: string; available?: boolean; warning?: boolean; cost?: number }
 export interface Budget {
@@ -22,9 +27,13 @@ export interface Budget {
 
 const PARTS: { key: keyof Counts; label: string; cls: string; help: string }[] = [
   { key: "quotes", label: "priced on bid/ask quotes", cls: "bg-up", help: "Entry and exit can be taken from stored bid/ask quotes." },
-  { key: "trades", label: "priced on trade prints", cls: "bg-info", help: "Entry and exit can be taken from prices at which the contract actually traded. No bid/ask exists for these, so the spread is unknown." },
+  { key: "trades", label: "priced on trade prints", cls: "bg-info", help: "The contract this strategy would select is stored, it traded inside the entry window, and a print exists near the planned exit. No bid/ask exists for these, so the spread is unknown." },
   { key: "eod", label: "priced on end-of-day quotes", cls: "bg-up/55", help: "End-of-day bid/ask only. Enough for a position entered and exited at the close; never used for an intraday entry." },
-  { key: "partial", label: "observed for part of the session", cls: "bg-warn", help: "Option prices are stored for part of the session only, so the engine does not run it." },
+  { key: "exit_uncertain", label: "entry priced, exit not observed", cls: "bg-info/45", help: "The entry can be priced, but no observation is stored near the planned exit, or the contract is not stored on a later session of the holding period. A run would defer the exit or settle the contract at expiration, and flags the trade." },
+  { key: "stale", label: "no trade at the entry", cls: "bg-warn", help: "The contract is stored, but it did not trade inside the entry window: no print recent enough to fill at. An older or a later print is not used." },
+  { key: "contract", label: "strike not stored", cls: "bg-warn/65", help: "The strike this strategy needs is outside the strikes stored for the session, typically after the underlying opened far from the previous close. A neighbouring strike is not substituted." },
+  { key: "expiration", label: "expiration not stored", cls: "bg-warn/45", help: "Option data is stored for the session, but not an expiration this strategy can use. A different expiration is not substituted." },
+  { key: "partial", label: "session held only in part", cls: "bg-warn/30", help: "The provider holds option prices for part of the session only, so the engine does not run it." },
   { key: "missing", label: "no option prices stored", cls: "bg-down/75", help: "The rule fired, and nothing is stored that could price the option. Not tested; not counted as a win, a loss or 'no signal'." },
   { key: "no_contract", label: "no such contract was listed", cls: "bg-faint/60", help: "No contract with the required expiration was listed that day. No data source can make this session testable." },
 ];
@@ -33,7 +42,7 @@ const pct = (a: number, b: number) => (b > 0 ? (a / b) * 100 : 0);
 const fmtPct = (x: number) => (x === 0 ? "0%" : x < 0.1 ? "<0.1%" : x < 10 ? `${x.toFixed(1)}%` : `${Math.round(x)}%`);
 
 /** The fraction itself. `n` of `of`, as large as anything else on the page. */
-export function CoverageHero({ n, of, counts, first, last, what = "qualifying sessions can be priced on stored option observations", onOpen, className, testid = "coverage" }:
+export function CoverageHero({ n, of, counts, first, last, what = "qualifying sessions pass every check on stored option observations", onOpen, className, testid = "coverage" }:
   { n: number; of: number; counts?: Counts; first?: string; last?: string; what?: string; onOpen?: () => void; className?: string; testid?: string }) {
   const p = pct(n, of);
   const tone = of === 0 ? "none" : p < 20 ? "bad" : p < 80 ? "warn" : "good";
@@ -82,7 +91,7 @@ export function ResultCoverage({ cov, mode, onOpen, className, always }: { cov: 
   const issues: any[] = cov?.options?.issues || [];
   return (
     <div className={className}>
-      <CoverageHero n={n} of={of} what={mode === "modeled" ? "qualifying sessions were priced, with THEORETICAL premiums" : "qualifying sessions could be priced on observed option prices"} onOpen={onOpen} testid="result-coverage" />
+      <CoverageHero n={n} of={of} what={mode === "modeled" ? "qualifying sessions were priced, with THEORETICAL premiums" : "qualifying sessions were executed on observed option prices"} onOpen={onOpen} testid="result-coverage" />
       {issues.length > 0 && n < of && <div className="mt-1.5 px-1 text-xs dim">{issues.slice(0, 3).map((x) => `${x.signals.toLocaleString()} not tested: ${x.reason}`).join(" · ")}</div>}
     </div>
   );
@@ -175,19 +184,21 @@ export function BudgetTable({ b, pricedNow, of }: { b: Budget; pricedNow?: numbe
   );
 }
 
-const WHY: Record<string, string> = { missing: "no option prices stored", no_contract: "no such contract was listed", partial: "part of the session only", quotes: "bid/ask quotes", trades: "trade prints", eod: "end-of-day quotes" };
+const WHY: Record<string, string> = { missing: "no option prices stored", no_contract: "no such contract was listed", partial: "session held only in part", quotes: "bid/ask quotes", trades: "trade prints", eod: "end-of-day quotes",
+  exit_uncertain: "entry priced, exit not observed", stale: "no trade at the entry", contract: "strike not stored", expiration: "expiration not stored" };
+const TONE: Record<string, string> = { missing: "text-down", no_contract: "dim", partial: "text-warn", stale: "text-warn", contract: "text-warn", expiration: "text-warn", exit_uncertain: "text-info" };
 
 /** The right-hand view of a data check: the fraction, every session and what is stored for it, what a budget would reach. */
 export function DataCheckView({ check, onPick, busy }: { check: DataCheck; onPick: (a: Alt) => void; busy?: boolean }) {
   const nav = useNavigate();
   const [show, setShow] = useState<string>("untested");
-  const rows = (check.sessions || []).filter((s) => show === "all" || (show === "untested" ? ["missing", "no_contract", "partial"].includes(s.status) : !["missing", "no_contract", "partial"].includes(s.status)));
+  const rows = (check.sessions || []).filter((s) => show === "all" || (show === "untested" ? !PRICED.includes(s.status) : PRICED.includes(s.status)));
   const byYear: Record<string, { n: number; ok: number }> = {};
   for (const s of check.sessions || []) {
     const y = s.date.slice(0, 4);
     byYear[y] = byYear[y] || { n: 0, ok: 0 };
     byYear[y].n += 1;
-    if (!["missing", "no_contract", "partial"].includes(s.status)) byYear[y].ok += 1;
+    if (PRICED.includes(s.status)) byYear[y].ok += 1;
   }
   const years = Object.keys(byYear).sort();
   const maxN = Math.max(1, ...years.map((y) => byYear[y].n));
@@ -216,23 +227,28 @@ export function DataCheckView({ check, onPick, busy }: { check: DataCheck; onPic
         </Section>
       )}
       <Section title="Every session the rule fired on" sub={`${(check.sessions || []).length.toLocaleString()} listed`} right={
-        <div className="flex gap-1">{[["untested", "Not testable"], ["priced", "Priced"], ["all", "All"]].map(([k, l]) => <button key={k} className={cn("btn quiet sm", show === k && "!bg-bg-3 !text-fg")} onClick={() => setShow(k)}>{l}</button>)}</div>}>
+        <div className="flex gap-1">{[["untested", "Not priced"], ["priced", "Pass every check"], ["all", "All"]].map(([k, l]) => <button key={k} className={cn("btn quiet sm", show === k && "!bg-bg-3 !text-fg")} onClick={() => setShow(k)}>{l}</button>)}</div>}>
         <div className="max-h-[360px] overflow-auto rounded-lg border border-line">
           <table className="t" data-testid="session-list">
-            <thead><tr><th>Session</th><th>Status</th><th>Stored for it</th></tr></thead>
+            <thead><tr><th>Session</th><th>Signal</th><th>Status</th><th>What was checked</th><th>Can be fetched</th></tr></thead>
             <tbody>
-              {rows.length === 0 && <tr><td colSpan={3} className="dim">None.</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={5} className="dim">None.</td></tr>}
               {[...rows].reverse().map((s) => (
-                <tr key={s.date}>
+                <tr key={s.date} data-status={s.status}>
                   <td className="num">{s.date}</td>
-                  <td><span className={cn("inline-flex items-center gap-1.5", ["missing"].includes(s.status) ? "text-down" : s.status === "partial" ? "text-warn" : s.status === "no_contract" ? "dim" : "text-up")}><span className={cn("size-1.5 rounded-full", PARTS.find((x) => x.key === s.status)?.cls || "bg-faint")} />{WHY[s.status] || s.status}</span></td>
-                  <td className="dim">{(s.stored || []).join(", ") || "nothing"}</td>
+                  <td className="num dim">{s.time || "—"}</td>
+                  <td><span className={cn("inline-flex items-center gap-1.5", TONE[s.status] || "text-up")}><span className={cn("size-1.5 rounded-full", PARTS.find((x) => x.key === s.status)?.cls || "bg-faint")} />{WHY[s.status] || s.status}</span></td>
+                  <td><div className="w-[380px] whitespace-normal text-xs soft">
+                    {s.entry ? <><span className="num text-fg">{s.entry.contracts.join(" + ")}</span> entered {s.entry.time}{s.entry.print_age_seconds ? `, print ${Math.round(s.entry.print_age_seconds / 60)} min old` : ""}{s.exit ? `; exit ${s.exit.planned}, longest gap between prints ${s.exit.longest_gap_minutes} min` : ""}{s.status !== "trades" && s.detail ? `. ${s.detail}` : ""}</>
+                      : (s.detail || (s.stored || []).join(", ") || "nothing stored")}
+                  </div></td>
+                  <td className="text-xs">{s.downloadable ? <span className="text-info">{s.downloadable.label}</span> : <span className="text-faint">—</span>}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <div className="mt-2 text-xs dim">A session that could not be priced is not tested. It is never counted as a win, a loss or "no signal", and no price is invented for it.</div>
+        <div className="mt-2 text-xs dim">Each signal is taken through the engine's own contract selection{check.settings?.max_trade_age_seconds ? `: a print older than ${Math.round(check.settings.max_trade_age_seconds / 60)} minutes is not a fill, and an order waits ${check.settings.max_fill_delay_minutes} minutes` : ""}. Passing every check is still not a trade: a run confirms it. A session that could not be priced is not tested; it is never counted as a win, a loss or "no signal", and no price is invented for it.</div>
       </Section>
       {check.budget && <Section title="What a data budget would reach" sub="for these sessions only"><BudgetTable b={check.budget} pricedNow={check.priced} of={check.signal_sessions} /></Section>}
       {(check.alternatives || []).length > 0 && <Section title="Ways to get an answer" sub="the strategy is never changed to fit the data"><Alternatives alts={check.alternatives!} busy={busy} onPick={onPick} /></Section>}

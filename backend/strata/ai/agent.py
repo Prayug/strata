@@ -160,10 +160,22 @@ class GraphArgs(_Strict):
     unsupported: list[str] = Field(default_factory=list, max_length=12)
 
 
+class DimArg(_Strict):
+    field: Literal["symbol", "dte", "entry_time", "exit_minutes", "strike", "premium_target", "premium_stop", "underlying_target", "prev_decline"]
+    values: list = Field(min_length=2, max_length=30)
+    assumed: bool = False  # true when the user named the setting but not the values ("several profit targets")
+
+
+class ExperimentArgs(_Strict):
+    draft: Optional[dict] = None  # the base strategy when the sentence describes one; null to use the current draft
+    dims: list[DimArg] = Field(min_length=1, max_length=5)
+    notes: list[str] = Field(default_factory=list, max_length=8)
+
+
 # name -> (argument schema, ends the turn)
 TOOLS: dict[str, tuple[type[BaseModel], bool]] = {
     "list_datasets": (NoArgs, False), "check_coverage": (CoverageArgs, False), "lookup_functions": (LookupArgs, False), "validate_expression": (ValidateArgs, False), "get_results": (NoArgs, False),
-    "propose": (ProposeArgs, True), "sweep": (SweepArgs, True), "investigate": (InvestigateArgs, True), "discover": (DiscoverArgs, True), "show_trades": (ShowTradesArgs, True),
+    "propose": (ProposeArgs, True), "experiment": (ExperimentArgs, True), "sweep": (SweepArgs, True), "investigate": (InvestigateArgs, True), "discover": (DiscoverArgs, True), "show_trades": (ShowTradesArgs, True),
     "out_of_sample": (NoArgs, True), "robustness": (NoArgs, True), "breakdown": (BreakdownArgs, True), "timing": (NoArgs, True), "skipped_signals": (NoArgs, True), "export_report": (NoArgs, True),
     "answer": (AnswerArgs, True), "research_graph": (GraphArgs, True),
 }
@@ -189,6 +201,10 @@ DRAFT_GUIDE = """Draft fields (omit or null anything the user did not say - the 
   underlying_target_pct / underlying_stop_pct: exit when THE UNDERLYING moves this % for / against the position from the entry price
   premium_target_pct / premium_stop_pct: exit on a % gain / loss OF THE OPTION PREMIUM (100 = doubles). Never confuse the two; if the user's words do not say which, leave both null and add nothing - the server asks.
   exit_time_stated: the user's words for a clock exit; hold_sessions: N trading days; exit_weekday: "Fri"; hold_to_expiration: bool
+  hold_minutes: N   close N minutes after the entry ("sell after 45 minutes", "exit each after 20 minutes"). Not a clock time.
+  max_entries: N   entries allowed per session ("up to three times a day"); omit for one
+  partials: [{"premium_pct": 25, "fraction": 0.5}]   close part of the position ("sell half when the premium is up 25%"); "underlying_pct" instead of "premium_pct" when the level is a move of the underlying
+  another symbol's levels: QQQ.opening_range_high(30), IWM.consecutive_bearish_candles("5m"), QQQ.sma(20)   ("... with QQQ confirmation": the other symbol shows the same move)
   costs: {"preset": "conservative"|"none"|null, "commission_per_contract": $, "slippage_per_contract": $ per share, "slippage_pct": % of the trade print}   only if the user mentioned costs
   mode: "trades" if the user asked for option TRADE prices, "historical" for bid/ask quotes, "modeled" ONLY if they explicitly asked for theoretical premiums, "study" for the underlying only; else null
   study: {"target": {"kind":"pct","value":1}, "stop": {...}|null, "reference": "entry"|"open"|"prev_close", "measure": "touch"|"close", "direction": "up"|"down"|null,
@@ -215,6 +231,14 @@ Read-only tools (the result is returned to you, then you reply again):
 Final tools (each ends your turn):
   propose {{"draft": <Draft>, "compare": <bool>}}   a new request, or the FULL updated draft when the user changes the current one (compare=true if they asked to compare)
   sweep {{"field": "prev_ret|target|stop|dte|entry_time|premium_target|premium_stop|delta|slippage|gap|vix|hold_sessions", "values": [...]}}   run the current draft for up to {MAX_VARIANTS} values
+  experiment {{"draft": <Draft>|null, "dims": [{{"field": "...", "values": [...], "assumed": false}}, ...], "notes": [...]}}
+      ONE strategy over a grid: use it whenever the user lists several values for one or more settings ("compare exits after 15, 30, 60 and 120 minutes",
+      "entry times from 9:30 to 11:00 every 15 minutes and 0DTE versus 1DTE", "run it on SPY, QQQ and IWM"). "draft" is the strategy the sentence describes with ONE
+      value of each varied setting, or null when the sentence names no strategy (the current draft is then used). Fields and their values:
+        symbol ["SPY","QQQ"] | dte [0,1,7] | entry_time ["09:30","10:00"] (New York, 24h) | exit_minutes [15,30,"close"] (minutes held after entry; "close" = to the close)
+        strike [["atm",0],["pct_otm",1],["delta",0.3]] | premium_target [25,50] | premium_stop [10,20] (% of the option premium) | underlying_target [0.5,1] (% move of the underlying)
+        prev_decline [1,1.5,2] (the previous session fell at least this %)
+      Write every value out (expand "from 1% to 4% in half-percent steps" yourself). If the user named a setting but no values ("several profit targets"), choose a small sensible list and set "assumed": true.
   investigate {{"question": "...", "hypothesis": "...", "method": "...", "measure": "...", "variants": [{{"label": "...", "draft": <Draft>}}, ...]}}
       a research question that needs several related configurations compared (2-8 variants), e.g. "does it tend to reverse after large down days" -> one study per threshold
   discover {{"hypothesis": "...", "symbol": "SPY"}}   open-ended exploration of a hypothesis over a parameter grid ("investigate mean reversion after large declines")
@@ -360,6 +384,67 @@ def llm_interpret(llm: LLM, text: str, current: Draft | None, history: list[dict
                 repair("discover supports hypotheses about what follows large declines, large gains or opening gaps; use investigate with explicit variants for anything else")
                 continue
             return {"action": "discover", "spec": spec}
+        elif tool == "experiment":
+            from strata.ai import nl_experiment as NX
+            if args.draft is not None:
+                base, errs = draft_problems(args.draft, text.strip())
+                if errs:
+                    repair(errs)
+                    continue
+                src = "sentence"
+            elif current is not None and current.kind == "options":
+                base, src = current.model_copy(deep=True), "current"
+            else:
+                return {"action": "experiment_needs_base", "dims": [{"field": d.field, "values": list(d.values), "text": "", "assumed": d.assumed} for d in args.dims], "configs": 0, "notes": list(args.notes),
+                        "fields": {d.field: NX.FIELDS[d.field] for d in args.dims}, "base_from": None, "remainder": "",
+                        "question": "Which strategy should these be compared on? Describe the signal and the position, and the comparison is applied to it."}
+            dims, bad = [], []
+            for dm in args.dims:
+                vals = []
+                for v in dm.values:
+                    try:
+                        if dm.field == "strike":
+                            m_, x_ = (v[0], v[1]) if isinstance(v, (list, tuple)) and len(v) == 2 else (v.get("method"), v.get("value")) if isinstance(v, dict) else (None, None)
+                            m_ = {"atm_offset": "atm", "otm": "pct_otm"}.get(str(m_), str(m_))
+                            if m_ not in ("atm", "pct_otm", "delta"):
+                                raise ValueError("a strike is [\"atm\", 0], [\"pct_otm\", percent] or [\"delta\", 0.3]")
+                            vals.append((m_, float(x_) / 100 if (m_ == "delta" and float(x_) > 1) else float(x_)))
+                        elif dm.field == "symbol":
+                            vals.append(str(v).upper())
+                        elif dm.field == "dte":
+                            vals.append(int(v))
+                        elif dm.field == "entry_time":
+                            t = "09:30" if str(v).lower() in ("open", "the open") else str(v)
+                            if not re.fullmatch(r"\d{1,2}:\d{2}", t):
+                                raise ValueError("an entry time is New York time as HH:MM, e.g. \"10:15\"")
+                            hh, mm = (int(x) for x in t.split(":"))
+                            vals.append("open" if (hh, mm) == (9, 30) else f"{hh:02d}:{mm:02d}")
+                        elif dm.field == "exit_minutes":
+                            vals.append("close" if str(v).lower() in ("close", "the close", "eod") else int(float(v)))
+                        else:
+                            vals.append(abs(float(v)))
+                    except (TypeError, ValueError, AttributeError, IndexError) as e:
+                        bad.append(f"dims.{dm.field}: {v!r} is not a valid value ({e})")
+                vals = list(dict.fromkeys(vals))
+                if len(vals) < 2 and not bad:
+                    bad.append(f"dims.{dm.field}: an experiment varies a setting over at least two different values")
+                dims.append({"field": dm.field, "values": vals, "text": "", "assumed": bool(dm.assumed)})
+            if len({d["field"] for d in dims}) != len(dims):
+                bad.append("each setting may appear once in dims")
+            if bad:
+                repair(bad[:6])
+                continue
+            n = 1
+            for d_ in dims:
+                n *= len(d_["values"])
+            for d_ in dims:  # the base carries the first value of every varied setting, exactly as the built-in reader's plan does
+                if d_["field"] == "prev_decline" and not any("previous_session.return_pct" in c.expr for c in base.conditions):
+                    base = NX.apply(base, "prev_decline", d_["values"][0])
+            out = {"action": "experiment", "draft": base, "dims": dims, "configs": n, "notes": list(args.notes) + [f"The values of \"{NX.FIELDS[d_['field']]}\" were not in the request: the model chose them." for d_ in dims if d_["assumed"]],
+                   "remainder": "", "base_from": src, "fields": {d_["field"]: NX.FIELDS[d_["field"]] for d_ in dims}}
+            if n > NX.MAX_CONFIGS:
+                out["too_many"] = f"{n:,} combinations is more than the {NX.MAX_CONFIGS} one experiment may run. Narrow a range or drop a setting; nothing was trimmed for you."
+            return out
         elif tool == "sweep":
             return {"action": "sweep", "field": args.field, "values": list(args.values)[:MAX_VARIANTS]}
         elif tool == "show_trades":
@@ -388,6 +473,79 @@ def llm_interpret(llm: LLM, text: str, current: Draft | None, history: list[dict
     raise LLMError("the model did not reach a decision")
 
 
+def _open_reading(r: dict, text: str, store: MarketStore, default_symbol: str = "SPY") -> bool:
+    """Did this reading leave part of the sentence unplaced? True for a sentence that was not understood, a draft with an
+    unsupported part or an unanswered essential question, a strategy that does not compile, and a reading in which a size or
+    a clock time of the sentence has no place (the same check every interpretation goes through)."""
+    from strata.ai import intent as I
+    act = r.get("action")
+    if act in ("unknown", "failed", None):
+        return True
+    d = r.get("draft")
+    if d is None:
+        return False  # a conversational action or a plan: it was recognised as what it is
+    if d.unsupported or any(q.get("essential") and q.get("answered") is None for q in (d.questions or [])):
+        return True
+    try:
+        if d.kind == "options" and (compile_draft(d, store).get("errors") or d.structure is None):
+            return True
+        it = I.from_route(r, text, store, default_symbol) if act in ("new", "modify", "derive") else {"checks": []}
+    except Exception:  # noqa: BLE001
+        return True
+    return any(not c["ok"] for c in it.get("checks") or [])
+
+
+CHECKED = {"symbol": "underlying", "structure": "position", "dte": "days to expiration", "strike": "strike", "width": "spread width", "quantity": "contracts", "entry_time": "entry time", "weekdays": "weekdays",
+           "conditions": "entry conditions", "sequence": "ordered entry events", "adds": "scale-in rules", "exit_conditions": "exit conditions", "underlying_target_pct": "underlying target",
+           "underlying_stop_pct": "underlying stop", "premium_target_pct": "premium target", "premium_stop_pct": "premium stop", "exit_time": "exit time", "hold_sessions": "sessions held",
+           "hold_minutes": "minutes held", "exit_weekday": "exit weekday", "hold_to_expiration": "held to expiration", "max_entries": "entries a session", "partials": "partial exits", "start": "from", "end": "to"}
+
+
+def _reading_of(d: Draft) -> dict:
+    """The parts of a draft that decide what runs, in a form two readers can be compared in (wording and spacing do not count)."""
+    sq = lambda e: re.sub(r"\s+", "", e).replace("return_pct(1)", "previous_session.return_pct")  # two spellings of the previous session's close-to-close move
+    x = {k: getattr(d, k) for k in CHECKED}
+    x["strike"] = (d.strike.method, round(float(d.strike.value), 6)) if d.strike is not None else ("atm", 0.0)
+    x["conditions"] = sorted(sq(c.expr) for c in d.conditions)
+    x["sequence"] = [sq(c.expr) for c in d.sequence]
+    x["adds"] = sorted((sq(a.expr), a.quantity) for a in d.adds)
+    x["exit_conditions"] = sorted(sq(c.expr) for c in d.exit_conditions)
+    x["max_entries"] = int(d.max_entries or 1)
+    x["partials"] = [(p.premium_pct, p.underlying_pct, round(float(p.fraction), 4)) for p in d.partials]
+    x["weekdays"] = sorted(d.weekdays or [])
+    return x
+
+
+def reading_difference(r0: dict, r1: dict) -> list[dict] | None:
+    """Where two readings of one sentence differ: [{field, label, a, b}]. None when they are not the same kind of thing at all."""
+    a0, a1 = r0.get("action"), r1.get("action")
+    kind = lambda a: "strategy" if a in ("new", "modify", "derive") else a
+    if kind(a0) != kind(a1):
+        return None
+    out: list[dict] = []
+    if a0 == "experiment":
+        v = lambda r: {x["field"]: sorted(str(tuple(y) if isinstance(y, list) else y) for y in x["values"]) for x in r["dims"]}
+        d0, d1 = v(r0), v(r1)
+        for f in sorted(set(d0) | set(d1)):
+            if d0.get(f) != d1.get(f):
+                out.append({"field": f"compare.{f}", "label": f"values compared for {f.replace('_', ' ')}", "a": ", ".join(d0.get(f) or ["not compared"]), "b": ", ".join(d1.get(f) or ["not compared"])})
+    if r0.get("draft") is None or r1.get("draft") is None:
+        return out
+    x0, x1 = _reading_of(r0["draft"]), _reading_of(r1["draft"])
+    if a0 == "experiment":
+        # a setting the comparison varies has no single value in the base: whatever one reader left there is not a difference
+        varied = {x["field"] for r in (r0, r1) for x in r["dims"]}
+        own = {"exit_minutes": ("hold_minutes", "exit_time"), "dte": ("dte",), "strike": ("strike",), "entry_time": ("entry_time",), "premium_target": ("premium_target_pct",), "premium_stop": ("premium_stop_pct",),
+               "underlying_target": ("underlying_target_pct",), "symbol": ("symbol",)}
+        for f in varied:
+            for k in own.get(f, ()):
+                x0[k] = x1[k] = None
+        if "prev_decline" in varied:
+            x0["conditions"], x1["conditions"] = ([e for e in x["conditions"] if "previous_session.return_pct" not in e] for x in (x0, x1))
+    show = lambda v: "none" if v in (None, [], "") else (", ".join(map(str, v)) if isinstance(v, (list, tuple)) else str(v))
+    return out + [{"field": k, "label": CHECKED[k], "a": show(x0[k]), "b": show(x1[k])} for k in CHECKED if x0[k] != x1[k]]
+
+
 def _is_edit(cur: Draft, new: Draft) -> bool:
     """A proposal counts as an edit of the current draft when it keeps the same kind of question."""
     return cur.kind == new.kind and (cur.kind == "study" or cur.structure == new.structure or bool(set(c.expr for c in cur.conditions) & set(c.expr for c in new.conditions)) or cur.entry_time == new.entry_time)
@@ -410,6 +568,12 @@ def _measured_note(budget: dict | None = None) -> str:
         return (f"Alpaca's free account was measured with the key stored here on {str(m['run_at'])[:10]} ({m['with_observations']} of {m['contract_sessions']} expired contract-sessions returned trade bars). "
                 "None of the other key-gated or paid routes has been run from this installation: their coverage is what the provider publishes.")
     return "None of the key-gated routes has been run from this installation: their coverage is what the provider publishes."
+
+
+def NXL(field: str, v) -> str:
+    """One value of an experiment's setting, as it is shown."""
+    from strata.ai import nl_experiment as NX
+    return NX.label(field, tuple(v) if isinstance(v, list) else v)
 
 
 class Agent(ResearchV5):
@@ -499,6 +663,19 @@ class Agent(ResearchV5):
         return {"run": r.get("label"), "mode": r.get("mode"), "facts": {f["label"]: f["shown"] for f in facts}}
 
     # ---- interpretation
+    @staticmethod
+    def planner(llm) -> str:
+        """How this model is asked: "tools" (the full planner) or "form" (typed fields a small model can fill)."""
+        from strata.api.settings import get_setting
+        p = str(get_setting("llm.planner") or "auto")
+        return p if p in ("tools", "form") else ("form" if getattr(llm, "provider", "") == "ollama" else "tools")
+
+    def _model_reading(self, llm, text: str, current: Draft | None, sid, version, known: list[str], default_symbol: str) -> dict:
+        if self.planner(llm) == "form":
+            from strata.ai.planner_form import form_interpret
+            return form_interpret(llm, text, current, self.store, known, default_symbol)
+        return llm_interpret(llm, text, current, self._history(sid)[:-1] if sid else [], self.store, lambda: self._results_facts(version))
+
     def interpret(self, sid: str, text: str, current: Draft | None, version: dict | None, last_field: str | None) -> tuple[dict, str, str | None]:
         known = sorted(self.store.stored_symbols())
         from strata.api.settings import get_setting
@@ -507,9 +684,34 @@ class Agent(ResearchV5):
         note = None
         if err:
             note = f"The configured language model is unavailable ({err}), so the built-in interpreter read this request."
+        mode = str(get_setting("llm.mode") or "auto")
+        local = getattr(llm, "provider", "") == "ollama"
+        assist = llm is not None and mode == "assist"
+        # with a local model, both readers read and have to agree. Measured on sentences neither had seen (docs/V7_REPORT.md):
+        # the built-in readers alone answered a different question without saying so 9 times in 34, cross-checked 2 or 3 times;
+        # "assist" (the model only for what the readers flag) left that number where it was
+        if llm is not None and (mode == "check" or (mode == "auto" and local)):
+            return self._cross_checked(llm, sid, text, current, version, last_field, known, default_symbol)
+        if assist:
+            # the built-in readers go first. A model is asked only about a sentence they could not place completely, and its
+            # reading replaces theirs only when it compiles and leaves nothing of the sentence unplaced. A small local model is
+            # a second opinion on the hard sentences, not the reader of the easy ones.
+            r0 = self._rules(text, current, known, last_field, default_symbol)
+            if not _open_reading(r0, text, self.store, default_symbol):
+                return r0, "built-in rules", None
+            try:
+                r1 = self._model_reading(llm, text, current, sid, version, known, default_symbol)
+            except LLMError as e:
+                return r0, "built-in rules", f"The built-in interpreter could not place part of this request, and the language model ({llm.name}) did not return a usable reading either ({str(e)[:160]})."
+            if _open_reading(r1, text, self.store, default_symbol):
+                return r0, "built-in rules", f"The built-in interpreter could not place part of this request. The language model ({llm.name}) was asked as well; its reading left something open too, so it was not used."
+            return r1, llm.name, f"The built-in interpreter could not place part of this request, so the language model ({llm.name}) read it. Its reading compiles and accounts for every size and time in the sentence; check it below."
         if llm is not None:
             try:
-                r = llm_interpret(llm, text, current, self._history(sid)[:-1], self.store, lambda: self._results_facts(version))
+                r = self._model_reading(llm, text, current, sid, version, known, default_symbol)
+                if r.get("action") == "unknown" and self.planner(llm) == "form":
+                    # the form holds strategies and comparisons. A command or a question ("show the losing trades") is not one of them
+                    return self._rules(text, current, known, last_field, default_symbol), "built-in rules", None
                 return r, llm.name, None
             except LLMError as e:
                 fb = str(get_setting("llm.fallback") or "rules")
@@ -519,7 +721,66 @@ class Agent(ResearchV5):
                         + (" - it understands fewer phrasings, so check the interpretation below before relying on it." if is_complex(text) else "."))
         return self._rules(text, current, known, last_field, default_symbol), "built-in rules", note
 
+    def _cross_checked(self, llm, sid, text: str, current: Draft | None, version, last_field, known: list[str], default_symbol: str) -> tuple[dict, str, str | None]:
+        """Two readers, and nothing runs on a point they disagree about.
+
+        The built-in readers and the language model read the sentence independently. The same reading from both is used. Where
+        they differ, the built-in reading is shown with a question that names every difference and offers the model's reading
+        as the other answer, so a part one reader dropped or misread is asked about instead of being run. A command or a
+        question ("show the losing trades") is not a reading of a strategy and is not sent to the model."""
+        r0 = self._rules(text, current, known, last_field, default_symbol)
+        if r0.get("action") not in ("new", "modify", "derive", "experiment", "unknown", "experiment_needs_base"):
+            return r0, "built-in rules", None
+        try:
+            r1 = self._model_reading(llm, text, current, sid, version, known, default_symbol)
+        except LLMError as e:
+            return r0, "built-in rules", f"The language model ({llm.name}) did not return a reading to check this against ({str(e)[:140]}): it is the built-in interpreter's alone."
+        if r0.get("action") in ("unknown", "experiment_needs_base"):
+            if r1.get("action") in ("new", "modify", "derive", "experiment") and not _open_reading(r1, text, self.store, default_symbol):
+                return r1, llm.name, f"The built-in interpreter could not read this request, so the language model ({llm.name}) read it alone. No second reader confirmed it: check it below."
+            return r0, "built-in rules", None
+        diff = reading_difference(r0, r1)
+        if diff == []:
+            return r0, f"built-in rules, confirmed by {llm.name}", None
+        d = r0.get("draft")
+        if diff is None or d is None:
+            what = {"new": "a strategy", "modify": "a change to the current strategy", "derive": "a strategy", "experiment": "a comparison of several settings", "unknown": "something it could not read"}
+            msg = f"The language model ({llm.name}) read this request as {what.get(r1.get('action'), 'something else')}, the built-in interpreter as {what.get(r0.get('action'), 'something else')}."
+            if d is not None:
+                d.questions = list(d.questions) + [{"id": "reading", "essential": True, "text": msg + " Is the interpretation below what you meant?", "default": 0,
+                                                    "options": [{"label": "Yes, as shown", "patch": {}, "detail": "the built-in interpreter's reading"}]}]
+            return r0, "built-in rules", msg + " The built-in reading is shown; nothing runs on it until you confirm."
+        other = r1["draft"].model_dump(mode="json")
+        lines = "; ".join(f"{x['label']}: {x['a']} or {x['b']}" for x in diff[:6])
+        patch = {x["field"]: other.get(x["field"]) for x in diff if not x["field"].startswith("compare.")}
+        opts = [{"label": "As shown", "patch": {}, "detail": "the built-in interpreter's reading: " + "; ".join(f"{x['label']} {x['a']}" for x in diff[:6])}]
+        if patch and r0.get("action") != "experiment":
+            opts.append({"label": f"The other reading ({llm.name})", "patch": patch, "detail": "; ".join(f"{x['label']} {x['b']}" for x in diff[:6])})
+        d.questions = list(d.questions) + [{"id": "reading", "essential": True, "default": 0, "options": opts,
+                                            "text": f"Two readings of this request differ ({lines}). Which did you mean?"}]
+        return r0, "built-in rules", f"The language model ({llm.name}) read this differently: {lines}. Nothing runs until you choose."
+
     def _rules(self, text: str, current: Draft | None, known: list[str], last_field: str | None, default_symbol: str) -> dict:
+        """The built-in readers, with corrections of the current reading taken first.
+
+        "no I meant 6:30a, PST": a value on its own after a correcting lead-in replaces the one thing it can replace. Anything
+        else goes through the readers as it was typed ("no stop loss" removes the stop, as it always did); if none of them can
+        place it, the words after the lead-in are read as the request, and if that fails too the reply says so in terms of
+        what was typed instead of listing example prompts."""
+        fixed = NL.correction(text) if current is not None else None
+        if fixed:
+            rc = NL.bare_correction(fixed, current, list(dict.fromkeys(NL.TICKERS + [s for s in known if s.isupper()])))
+            if rc is not None:
+                return rc
+        r = self._readers(text, current, known, last_field, default_symbol)
+        if fixed and r.get("action") == "unknown":
+            r2 = self._readers(fixed, current, known, last_field, default_symbol)
+            if r2.get("action") != "unknown":
+                return r2
+            return NL.unplaced_correction(fixed) or r
+        return r
+
+    def _readers(self, text: str, current: Draft | None, known: list[str], last_field: str | None, default_symbol: str) -> dict:
         tick = list(dict.fromkeys(NL.TICKERS + [s for s in known if s.isupper()]))
         low = text.lower().strip()
         # "challenge the results with worse execution assumptions" is about fills, so the execution ladder is checked first
@@ -528,6 +789,30 @@ class Agent(ResearchV5):
         if re.search(r"\bchallenge\b|play devil'?s advocate|what could be wrong|poke holes|how could this be misleading|red[- ]team|be skeptical|critique this", low):
             return {"action": "challenge"}
         sid = getattr(self._tl, "sid", None)
+        # "how often does the first candle predict the day": two directions and how often they agree, measured directly. Only
+        # "does the first N-minute candle predict the REST of the session" stays with the hypothesis lab below, which tests
+        # that one outcome with thresholds, an exploration period and a holdout.
+        fc = RS.first_candle(text)
+        if fc and (fc["scope"] == "both" or not fc["stated"] or re.match(
+                r"(?:so\s+|and\s+|ok(?:ay)?,?\s+)?(?:how (?:often|frequently|reliabl\w+|accurate\w*|many times|much of the time)|what (?:percent\w*|share|fraction|proportion)|in what (?:percent\w*|share|fraction))\b", low)):
+            return {"action": "investigate", "plan": RS.first_candle_plan(text, RS._sym(text, tick, default_symbol), fc)}
+        # one sentence that varies settings over lists of values is a bounded experiment. A single list on the current strategy
+        # ("compare 0DTE, 1DTE and 7DTE") stays the older, lighter comparison of separately stored runs.
+        try:
+            from strata.ai import nl_experiment as NX
+            ex = NX.read(text, current if (current is not None and current.kind == "options") else None, tick, default_symbol)
+        except Exception:  # noqa: BLE001  (a reader that fails on a sentence has not read it: the other readers still get it)
+            ex = None
+        if ex is not None:
+            light = len(ex["dims"]) == 1 and ex.get("base_from") == "current" and ex["dims"][0]["field"] in ("dte", "entry_time", "premium_target", "premium_stop") and not ex["dims"][0]["assumed"]
+            if not light:
+                return ex
+        # "a 30% premium target versus a 15% premium stop" is ONE bracket (which is hit first), not two things to compare
+        mb = re.search(r"(\d+(?:\.\d+)?)\s*%\s*(?:premium\s+|option\s+)?(?:profit\s+)?target\s+(?:versus|vs\.?|against|and|with|or)\s+(?:an?\s+)?(\d+(?:\.\d+)?)\s*%\s*(?:premium\s+|option\s+)?stop", low)
+        if mb and current is not None and current.kind == "options" and re.search(r"premium|option|profit target", low):
+            d2 = current.model_copy(deep=True)
+            d2.premium_target_pct, d2.premium_stop_pct = float(mb.group(1)), float(mb.group(2))
+            return {"action": "modify", "draft": d2, "changed": ["premium_target_pct", "premium_stop_pct"], "compare": True}
         v5 = self.v5_route(sid, text, known, tick, default_symbol, current is not None)
         if v5:
             return v5
@@ -577,6 +862,15 @@ class Agent(ResearchV5):
             d = enrich(text, tick, default_symbol)
             if graph is not None and prefer_graph(text, graph, {"action": "new", "draft": d}):
                 return {"action": "graph", "graph": graph}
+            # "How often does the first candle predict the day?" was once read as a study with no condition and no outcome, and
+            # answered with the share of ALL sessions that closed higher: a number for a question nobody asked. A frequency
+            # needs an event to count. When the readers found none, and nothing they could flag either, that is said.
+            st_ = d.study
+            if (d.kind == "study" and not d.conditions and not d.sequence and not d.unsupported and not d.questions and (st_ is None or (st_.target is None and st_.stop is None))
+                    and re.search(r"how (?:often|frequent\w*|many times|reliabl\w+|likely)|what (?:percent\w*|share|fraction|proportion)|probabilit|\bodds\b|\bchances?\b", low)):
+                return {"action": "clarify", "text": "I could not find anything to count in that question. A frequency needs an event (\"rises 1% from the open\", \"closes above its open\") and usually a condition "
+                                                     "(\"after a 3% down day\", \"when the first 15 minutes were up\"), and I could read neither, so nothing was run. "
+                                                     "For example: \"How often does SPY close above its open after a 2% down day?\""}
             return {"action": "new", "draft": d, "sweep": r.get("sweep")}
         if current is not None and r["action"] in ("modify", "unknown"):
             base = r["draft"] if r["action"] == "modify" else current
@@ -765,6 +1059,43 @@ class Agent(ResearchV5):
             txt += " " + note
         return [db.add_message(sid, "assistant", kind, {"text": txt, "version_id": version["id"], "field": field, "what": what, "runs": runs, "skipped": skipped, "interpreter": interp, "finalized": False, **(extra or {})})]
 
+    def _experiment(self, sid: str, plan: dict, interp: str, note: str | None, version: dict | None) -> list[dict]:
+        """A bounded experiment as ONE job: the grid is compiled here (so that what cannot run is said before anything starts)
+        and every configuration is recorded as a trial of this research session."""
+        from strata.ai import nl_experiment as NX
+        from strata.research import experiment as EXP
+        if plan.get("too_many"):
+            return [self._say(sid, plan["too_many"], "text", interpreter=interp)]
+        base: Draft = plan["draft"]
+        open_q = [q for q in (base.questions or []) if q.get("essential") and q.get("answered") is None]
+        if open_q or base.structure is None:
+            return [self._say(sid, "The comparison is clear, the strategy it applies to is not: " + (open_q[0]["text"] if open_q else "which option position should it trade?"), "text", interpreter=interp)]
+        payload = EXP.build(plan, self.store)
+        if not payload["configs"]:
+            why = "; ".join(f"{e['label']}: {e['error']}" for e in payload["errors"][:3]) or "no configuration could be built"
+            return [self._say(sid, f"None of the {plan['configs']} configurations can run: {why}", "error", interpreter=interp)]
+        n = len(payload["configs"])
+        title = f"Experiment: {base.title or base.symbol} - {n} configurations"[:120]
+        rid = db.create_run("experiment", title, {"title": title, "dims": payload["dims"], "base": payload["base"], "configurations": n}, None, None, None, {}, None, False)
+        self.jobs.submit(rid, "experiment", {"payload": payload})
+        try:
+            LG.record(sid, base.symbol, [{"kind": "experiment", "key": LG.config_key({"strategies": c["config"]["strategies"], "execution": c["config"]["execution"], "pricing": "trades"}), "label": c["label"], "run_id": rid,
+                                          "start": c["config"]["start"], "end": c["config"]["end"]} for c in payload["configs"]])
+        except Exception:  # noqa: BLE001  (bookkeeping must never block a run)
+            pass
+        self._trials(sid, n)
+        compiled = compile_draft(base, self.store, self._spot(base.symbol))
+        dims_txt = "; ".join(f"{NX.FIELDS[d['field']]}: {', '.join(NX.label(d['field'], tuple(v) if isinstance(v, list) else v) for v in d['values'])}" + (" (assumed)" if d["assumed"] else "") for d in payload["dims"])
+        txt = (f"Running {n} configurations of one strategy on stored option trade observations. Varied: {dims_txt}. "
+               + (" ".join(payload["notes"]) + " " if payload["notes"] else "")
+               + (f"{len(payload['errors'])} combination(s) cannot be built and are left out ({payload['errors'][0]['error'][:120]}). " if payload["errors"] else "")
+               + "Every configuration counts as a trial; the result is read as a map of how the outcome depends on the settings, not as a search for the best cell.")
+        if note:
+            txt += " " + note
+        return [db.add_message(sid, "assistant", "experiment", {"text": txt.strip(), "version_id": version["id"] if version else None, "runs": [{"run_id": rid, "label": title, "mode": "trades"}], "interpreter": interp, "finalized": False,
+                                                              "dims": payload["dims"], "configurations": n, "notes": payload["notes"], "skipped": payload["errors"], "base": payload["base"], "items": compiled["items"],
+                                                              "assumptions": compiled["assumptions"], "base_from": plan.get("base_from")})]
+
     def _mode_of(self, version: dict, d: Draft) -> str | None:
         """Keep variants in the mode the current version actually ran in."""
         for r in reversed(self._done_runs(version)):
@@ -841,7 +1172,7 @@ class Agent(ResearchV5):
         s, _, _ = self._state(sid)
         v = db.add_version(sid, None, ("Investigation: " + plan["question"])[:80], first.model_dump(mode="json"))
         db.update_session(sid, title=(plan["question"][:70] if not s["state"].get("current") else None), state={**s["state"], "current": v["id"]})
-        pub = {k: plan.get(k) for k in ("question", "hypothesis", "method", "measure", "checks", "interpretation_notes", "symbol")}
+        pub = {k: plan.get(k) for k in ("question", "hypothesis", "method", "measure", "checks", "interpretation_notes", "symbol", "kind", "pairs") if k in plan or k not in ("kind", "pairs")}
         pub["variants"] = [{"label": lb, "items": compile_draft(d, self.store, self._spot(d.symbol))["items"], "kind": d.kind} for lb, d, _ in variants]
         out = self._variants(sid, v, variants, "investigation", "the research question", interp, note, kind="investigation", extra={"plan": pub})
         if out and out[0]["kind"] == "investigation":
@@ -1260,12 +1591,19 @@ class Agent(ResearchV5):
         pc = self._check_for(cur)
         if pc is None:
             return [self._say(sid, "That needs an option strategy in this conversation: a market study uses no option prices, so none of its sessions is untested for that reason.")]
-        why = {"missing": "no intraday option prices are stored for the session", "no_contract": "no contract with the required expiration was listed that day", "partial": "option prices are stored for part of the session only"}
-        rows = [{"date": s_["date"], "reason": why[s_["status"]], "status": s_["status"], "stored": s_["stored"]} for s_ in pc["sessions"] if s_["status"] in why]
+        why = {"missing": "no intraday option prices are stored for the session", "no_contract": "no contract with the required expiration was listed that day", "partial": "option prices are stored for part of the session only",
+               "expiration": "the expiration the strategy needs is not stored for the session", "contract": "the strike the strategy needs is outside the strikes stored for the session",
+               "stale": "the contract is stored but did not trade inside the entry window", "exit_uncertain": "the entry can be priced, but no observation is stored near the planned exit"}
+        keys = ("missing", "no_contract", "partial", "expiration", "contract", "stale", "exit_uncertain")
+        rows = [{"date": s_["date"], "reason": s_.get("detail") if s_["status"] in ("stale", "contract", "expiration", "partial", "exit_uncertain") and s_.get("detail") else why[s_["status"]], "status": s_["status"], "stored": s_["stored"],
+                 "downloadable": (s_.get("downloadable") or {}).get("label")} for s_ in pc["sessions"] if s_["status"] in why]
         n, c = pc["signal_sessions"], pc["counts"]
-        un = c["missing"] + c["no_contract"] + c["partial"]
-        txt = (f"{un:,} of the {n:,} qualifying sessions could not be tested ({pc['priced']:,} could). " + "; ".join(f"{c[k]:,}: {why[k]}" for k in ("missing", "no_contract", "partial") if c[k]) + ". "
-               + ("Sessions with no listed contract cannot be tested with any data. " if c["no_contract"] else "") + "None of them is counted as a win, a loss or 'no signal'."
+        un = sum(c.get(k, 0) for k in keys)
+        txt = (f"{un:,} of the {n:,} qualifying sessions did not pass every check on stored observations ({pc['priced']:,} did). " + "; ".join(f"{c[k]:,}: {why[k]}" for k in keys if c.get(k)) + ". "
+               + ("Sessions with no listed contract cannot be tested with any data. " if c["no_contract"] else "")
+               + (f"{c['exit_uncertain']:,} of them would still trade, with the exit deferred or the contract settled at expiration, and are flagged. " if c.get("exit_uncertain") else "")
+               + (f"{pc['fetchable']:,} can be downloaded at no cost; running the strategy fetches them. " if pc.get("fetchable") else "")
+               + "None of them is counted as a win, a loss or 'no signal'."
                + (f" The list shows the most recent {len(rows)}." if un > len(rows) else ""))
         return [db.add_message(sid, "assistant", "result", {"view": "untested", "version_id": version["id"], "text": txt, "explanation_source": "deterministic",
                                                             "untested": {"rows": rows, "count": un, "of": n, "priced": pc["priced"], "counts": c, "contract_existence": pc.get("contract_existence"), "first": pc.get("first"), "last": pc.get("last")}})]
@@ -1361,6 +1699,11 @@ class Agent(ResearchV5):
             if r.get("sweep"):
                 _, v2, d2 = self._state(sid)
                 out += self._sweep(sid, v2, d2, r["sweep"]["field"], r["sweep"]["values"], interp, None)
+        elif act == "experiment_needs_base":
+            dims = "; ".join(f"{r['fields'][d['field']]}: {', '.join(NXL(d['field'], v) for v in d['values'][:8])}" for d in r["dims"])
+            out.append(self._say(sid, f"I read this as a comparison ({dims}), but it names no strategy and this conversation has none yet. {r['question']}", "text", interpreter=interp, experiment_dims=r["dims"]))
+        elif act == "experiment":
+            out += self._experiment(sid, r, interp, note, version)
         elif act == "hypothesis":
             out += self._hypothesis(sid, r["plan"], interp, note)
         elif act == "graph":
@@ -1444,6 +1787,10 @@ class Agent(ResearchV5):
                 out.append(self._say(sid, "I can only quote numbers the engine has calculated, and that reply would have included others. Ask me to run or compare something and I will report the measured result.", interpreter=interp))
             else:
                 out.append(self._say(sid, r["text"], interpreter=interp))
+        elif act == "clarify":
+            # the reader's own words about what it could not place (a correction that fits two things, a question with nothing
+            # to count): composed from the request and the current reading, never a result
+            out.append(self._say(sid, r["text"], interpreter=interp))
         else:
             out.append(self._say(sid, HELP + (f"\n\n{note}" if note else "")))
         self._attach_intent(out, r, text, cur)
@@ -1574,7 +1921,7 @@ class Agent(ResearchV5):
             c = m["content"] if isinstance(m["content"], dict) else {}
             if m["kind"] == "graph" and not c.get("finalized") and self._advance_graph_message(sid, m):
                 continue
-            if m["kind"] not in ("plan", "sweep", "run", "investigation", "discovery", "hypothesis", "stress", "challenge", "graph") or c.get("finalized") or not c.get("runs"):
+            if m["kind"] not in ("plan", "sweep", "run", "investigation", "discovery", "hypothesis", "stress", "challenge", "graph", "experiment") or c.get("finalized") or not c.get("runs"):
                 continue
             refs = list(c.get("compare_with") or []) + list(c["runs"])
             runs = {r["run_id"]: db.get_run(r["run_id"]) for r in refs}
@@ -1586,6 +1933,17 @@ class Agent(ResearchV5):
                 continue
             if m["kind"] in ("hypothesis", "stress", "challenge"):
                 out.append(db.add_message(sid, "assistant", "result", self._finalize_analysis(m["kind"], c, runs[c["runs"][0]["run_id"]], m["id"])))
+                db.update_message(m["id"], {**c, "finalized": True})
+                continue
+            if m["kind"] == "experiment":
+                run = runs[c["runs"][0]["run_id"]]
+                if run["status"] != "done":
+                    body = {"view": "failed", "text": "The experiment did not finish: " + ((run.get("error") or run.get("message") or run["status"]).split("\n")[0][:300])}
+                else:
+                    sm = run.get("summary") or {}
+                    body = {"view": "experiment", "mode": "trades", "run_id": run["id"], "label": c["runs"][0]["label"], "text": sm.get("text") or "", "summary": {k: sm.get(k) for k in ("configurations", "with_trades", "best", "profitable_pct", "seconds")},
+                            "dims": c.get("dims"), "caveats": ["Results are filled at trade prints: the bid/ask spread is not in them.", "Every configuration is a trial: the best cell of a grid is not evidence of an edge."]}
+                out.append(db.add_message(sid, "assistant", "result", {"source_message": m["id"], "version_id": c.get("version_id"), "failed": [], **body}))
                 db.update_message(m["id"], {**c, "finalized": True})
                 continue
             entries, failed, decisions = [], [], []

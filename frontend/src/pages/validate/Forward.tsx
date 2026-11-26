@@ -30,6 +30,51 @@ function Compare({ rows }: { rows: [string, React.ReactNode, React.ReactNode][] 
   );
 }
 
+/** The paper account as it is stored: one state per sealed session. Each evaluation starts from the last one and runs only the
+    sessions after it; a state is never rewritten. Reconcile compares sealed sessions with the data as stored now. */
+function Account({ id, strategy }: { id: string; strategy: boolean }) {
+  const q = useQuery({ queryKey: ["forward", id, "account"], queryFn: () => api.get<any>(`/api/forward/${id}/account`), enabled: strategy });
+  const [rec, setRec] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  if (!strategy) return null;
+  const rows: any[] = q.data?.states || [];
+  const last = rows[rows.length - 1];
+  const reconcile = async (force: boolean) => {
+    setBusy(true);
+    try { setRec(await api.post<any>(`/api/forward/${id}/reconcile`, { force })); queryClient.invalidateQueries({ queryKey: ["forward", id] }); } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <Panel title={<span>Paper account, as stored <span className="ml-2 normal-case text-muted">{rows.length} session state{rows.length === 1 ? "" : "s"} · each evaluation continues from the last</span></span>}
+      className="shrink-0" right={<Button variant="outline" disabled={busy || !rows.length} onClick={() => reconcile(false)} data-testid="forward-reconcile"><RefreshCw className={cn(busy && "animate-spin")} />Reconcile with the stored data</Button>}>
+      <div className="p-2 text-xs" data-testid="forward-account">
+        {!rows.length ? <div className="px-1 py-2 text-muted">No session has been sealed yet, so there is no stored account. The first evaluation with a closed forward session creates it.</div> : (
+          <>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 px-1 pb-2 md:grid-cols-4">
+              <div><span className="text-muted">Through </span><span className="num">{last.session}</span></div>
+              <div><span className="text-muted">Cash </span><span className="num">{money(last.cash, 2)}</span></div>
+              <div><span className="text-muted">Realised </span><span className={cn("num", last.realised > 0 ? "text-up" : last.realised < 0 ? "text-down" : "")}>{money(last.realised, 2, true)}</span></div>
+              <div><span className="text-muted">Open positions </span><span className="num">{last.open_positions.length}</span>{last.open_positions.some((p: any) => p.pending_exit) && <span className="text-warn"> · an exit is pending</span>}</div>
+            </div>
+            {last.open_positions.length > 0 && <div className="px-1 pb-2 text-fg-2">Carried into the next session: {last.open_positions.map((p: any) => p.legs.map((l: any) => `${l.qty > 0 ? "+" : ""}${l.qty} ${l.strike}${l.right} @ ${l.entry_price}`).join(" / ")).join("; ")}</div>}
+            <div className="max-h-44 overflow-auto border border-line">
+              <table className="tbl"><thead><tr><th>Session</th><th>Stored</th><th className="r">Cash</th><th className="r">Open</th><th className="r">Closed</th><th>Engine</th><th>State hash</th><th>Data fingerprint</th></tr></thead>
+                <tbody>{[...rows].reverse().map((r) => <tr key={r.session}><td className="num">{r.session}</td><td className="text-muted">{r.origin === "sealed" ? "sealed at evaluation" : "rebuilt from the ledger"}</td><td className="r num">{money(r.cash, 2)}</td><td className="r num">{r.open_positions.length}</td>
+                  <td className="r num">{r.closed_positions ?? "—"}</td><td className="num text-muted">{r.engine_version}</td><td className="num text-muted">{String(r.state_hash).slice(0, 12)}</td><td className="num text-muted">{String(r.data_fingerprint || "").slice(0, 12)}</td></tr>)}</tbody></table>
+            </div>
+          </>
+        )}
+        {rec && (
+          <div className={cn("mt-2 border px-2.5 py-2", rec.revisions_new ? "border-warn/50 bg-warn/[0.06]" : "border-line")} data-testid="forward-reconcile-result">
+            {rec.note ? rec.note : <>Checked {rec.checked} sealed session{rec.checked === 1 ? "" : "s"} against the data stored now: {rec.changed.length === 0 ? "none of them has changed." : `${rec.changed.length} read different data (${rec.changed.slice(0, 6).join(", ")}).`}
+              {rec.changed.length > 0 && (rec.revisions_new ? ` ${rec.revisions_new} revision${rec.revisions_new === 1 ? " was" : "s were"} added to the ledger. The sealed entries and every later decision are unchanged.` : " Re-run on the new data they give the same entries: nothing to record.")}</>}
+            {rec.changed.length === 0 && !rec.note && <button className="ml-2 text-info hover:underline" onClick={() => reconcile(true)}>Replay every sealed session anyway</button>}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 function VersionDialog({ ex, onClose, onCreated }: { ex: any; onClose: () => void; onCreated: (id: string) => void }) {
   const [text, setText] = useState(() => JSON.stringify(ex.config, null, 2));
   const [err, setErr] = useState<string | null>(null);
@@ -154,6 +199,7 @@ function Detail({ id }: { id: string }) {
             </Panel>
           </div>
 
+          <Account id={id} strategy={ex.kind === "strategy"} />
           {ex.kind === "strategy" && (rep.trades || []).length > 0 && (
             <Panel title={`Simulated forward fills (${rep.trades.length})`} bodyClass="overflow-auto max-h-[300px]" className="shrink-0">
               <table className="tbl"><thead><tr><th>Session</th><th>Contract</th><th className="r">Entry</th><th className="r">Exit</th><th>Price evidence</th><th>Exit reason</th><th className="r">P&L</th></tr></thead>
@@ -217,7 +263,8 @@ function Freeze({ onCreated }: { onCreated: (id: string) => void }) {
   const runs = useQuery({ queryKey: ["runs", "freezable"], queryFn: () => api.get<any[]>("/api/backtests?kind=backtest,graph&limit=150"), staleTime: 5_000 });
   const [rid, setRid] = useState("");
   const [busy, setBusy] = useState(false);
-  const list = (runs.data || []).filter((r) => r.status === "done");
+  // a run that stopped because the data could not cover it has no result to freeze: it is not offered
+  const list = (runs.data || []).filter((r) => r.status === "done" && r.summary?.outcome !== "needs_decision");
   const go = async () => {
     setBusy(true);
     try { const ex = await api.post<any>("/api/forward", { run_id: rid }); toast.success(`Frozen. The first session that counts is ${ex.first_session}.`); onCreated(ex.id); } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }

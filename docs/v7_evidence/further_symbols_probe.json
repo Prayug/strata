@@ -1,0 +1,265 @@
+[
+ {
+  "symbol": "DIA",
+  "previous_close": 495.8,
+  "expirations_within_7_days": [
+   3
+  ],
+  "expirations_within_45_days": 7,
+  "weekdays_listed": [
+   "Fri",
+   "Thu"
+  ],
+  "strike_step_near_the_money": 1.0,
+  "contracts_3pct_7days": 64,
+  "traded": 56,
+  "without_trades": 8,
+  "bars_one_session": 2090,
+  "median_bars_per_traded_contract": 34.5,
+  "requests": 1,
+  "pages": 1,
+  "early_session": "2024-01-19",
+  "early_close": 374.81,
+  "early_contracts_listed": 30,
+  "early_contracts_traded": 30,
+  "early_bars": 1432,
+  "early_source": [
+   "Alpaca /v2/options/contracts"
+  ],
+  "stock_bars_first_week_2016": 1949,
+  "stock_feed": "sip",
+  "daily_sessions_since_2024_01_18": 718,
+  "est_bars_per_year": 526680,
+  "est_mb_per_year": 8.0,
+  "seconds": 2.4
+ },
+ {
+  "symbol": "AAPL",
+  "previous_close": 349.08,
+  "expirations_within_7_days": [
+   1,
+   3,
+   6
+  ],
+  "expirations_within_45_days": 12,
+  "weekdays_listed": [
+   "Fri",
+   "Mon",
+   "Thu",
+   "Wed"
+  ],
+  "strike_step_near_the_money": 2.5,
+  "contracts_3pct_7days": 48,
+  "traded": 48,
+  "without_trades": 0,
+  "bars_one_session": 9081,
+  "median_bars_per_traded_contract": 160.0,
+  "requests": 1,
+  "pages": 1,
+  "early_session": "2024-01-19",
+  "early_close": 188.63,
+  "early_contracts_listed": 8,
+  "early_contracts_traded": 8,
+  "early_bars": 2813,
+  "early_source": [
+   "Alpaca /v2/options/contracts"
+  ],
+  "stock_bars_first_week_2016": 1950,
+  "stock_feed": "sip",
+  "daily_sessions_since_2024_01_18": 718,
+  "est_bars_per_year": 2288412,
+  "est_mb_per_year": 34.0,
+  "seconds": 2.6
+ },
+ {
+  "symbol": "NVDA",
+  "previous_close": 165.05,
+  "expirations_within_7_days": [
+   1,
+   3,
+   6
+  ],
+  "expirations_within_45_days": 12,
+  "weekdays_listed": [
+   "Fri",
+   "Mon",
+   "Thu",
+   "Wed"
+  ],
+  "strike_step_near_the_money": 2.5,
+  "contracts_3pct_7days": 24,
+  "traded": 24,
+  "without_trades": 0,
+  "bars_one_session": 6262,
+  "median_bars_per_traded_contract": 260.0,
+  "requests": 1,
+  "pages": 1,
+  "early_session": "2024-01-19",
+  "early_close": 57.11,
+  "early_contracts_listed": 0,
+  "early_contracts_traded": 0,
+  "early_bars": 0,
+  "early_source": [],
+  "stock_bars_first_week_2016": 1950,
+  "stock_feed": "sip",
+  "daily_sessions_since_2024_01_18": 718,
+  "est_bars_per_year": 1578024,
+  "est_mb_per_year": 24.0,
+  "seconds": 2.0
+ },
+ {
+  "symbol": "TSLA",
+  "previous_close": 385.46,
+  "expirations_within_7_days": [
+   1,
+   3,
+   6
+  ],
+  "expirations_within_45_days": 12,
+  "weekdays_listed": [
+   "Fri",
+   "Mon",
+   "Thu",
+   "Wed"
+  ],
+  "strike_step_near_the_money": 2.5,
+  "contracts_3pct_7days": 54,
+  "traded": 54,
+  "without_trades": 0,
+  "bars_one_session": 12184,
+  "median_bars_per_traded_contract": 237.0,
+  "requests": 1,
+  "pages": 2,
+  "early_session": "2024-01-19",
+  "early_close": 211.88,
+  "early_contracts_listed": 10,
+  "early_contracts_traded": 10,
+  "early_bars": 2846,
+  "early_source": [
+   "Alpaca /v2/options/contracts"
+  ],
+  "stock_bars_first_week_2016": 1947,
+  "stock_feed": "sip",
+  "daily_sessions_since_2024_01_18": 718,
+  "est_bars_per_year": 3070368,
+  "est_mb_per_year": 46.0,
+  "seconds": 2.9
+ },
+ {
+  "symbol": "MSFT",
+  "previous_close": 492.5,
+  "expirations_within_7_days": [
+   1,
+   3,
+   6
+  ],
+  "expirations_within_45_days": 12,
+  "weekdays_listed": [
+   "Fri",
+   "Mon",
+   "Thu",
+   "Wed"
+  ],
+  "strike_step_near_the_money": 2.5,
+  "contracts_3pct_7days": 66,
+  "traded": 66,
+  "without_trades": 0,
+  "bars_one_session": 6913,
+  "median_bars_per_traded_contract": 50.5,
+  "requests": 1,
+  "pages": 1,
+  "early_session": "2024-01-19",
+  "early_close": 393.87,
+  "early_contracts_listed": 16,
+  "early_contracts_traded": 16,
+  "early_bars": 3019,
+  "early_source": [
+   "Alpaca /v2/options/contracts"
+  ],
+  "stock_bars_first_week_2016": 1950,
+  "stock_feed": "sip",
+  "daily_sessions_since_2024_01_18": 718,
+  "est_bars_per_year": 1742076,
+  "est_mb_per_year": 26.0,
+  "seconds": 2.6
+ },
+ {
+  "symbol": "META",
+  "previous_close": 597.6,
+  "expirations_within_7_days": [
+   1,
+   3,
+   6
+  ],
+  "expirations_within_45_days": 12,
+  "weekdays_listed": [
+   "Fri",
+   "Mon",
+   "Thu",
+   "Wed"
+  ],
+  "strike_step_near_the_money": 2.5,
+  "contracts_3pct_7days": 90,
+  "traded": 90,
+  "without_trades": 0,
+  "bars_one_session": 8773,
+  "median_bars_per_traded_contract": 59.0,
+  "requests": 1,
+  "pages": 1,
+  "early_session": "2024-01-19",
+  "early_close": 376.13,
+  "early_contracts_listed": 12,
+  "early_contracts_traded": 12,
+  "early_bars": 1350,
+  "early_source": [
+   "Alpaca /v2/options/contracts"
+  ],
+  "stock_bars_first_week_2016": 1950,
+  "stock_feed": "sip",
+  "daily_sessions_since_2024_01_18": 718,
+  "est_bars_per_year": 2210796,
+  "est_mb_per_year": 33.0,
+  "seconds": 2.5
+ },
+ {
+  "symbol": "SPY",
+  "previous_close": 722.29,
+  "expirations_within_7_days": [
+   0,
+   1,
+   3,
+   6,
+   7
+  ],
+  "expirations_within_45_days": 17,
+  "weekdays_listed": [
+   "Fri",
+   "Mon",
+   "Thu",
+   "Tue",
+   "Wed"
+  ],
+  "strike_step_near_the_money": 1.0,
+  "contracts_3pct_7days": 430,
+  "traded": 428,
+  "without_trades": 2,
+  "bars_one_session": 73545,
+  "median_bars_per_traded_contract": 138.0,
+  "requests": 5,
+  "pages": 10,
+  "early_session": "2024-01-19",
+  "early_close": 476.49,
+  "early_contracts_listed": 120,
+  "early_contracts_traded": 120,
+  "early_bars": 20656,
+  "early_source": [
+   "Alpaca /v2/options/contracts"
+  ],
+  "stock_bars_first_week_2016": 1950,
+  "stock_feed": "sip",
+  "daily_sessions_since_2024_01_18": 718,
+  "est_bars_per_year": 18533340,
+  "est_mb_per_year": 278.0,
+  "seconds": 6.7
+ }
+]

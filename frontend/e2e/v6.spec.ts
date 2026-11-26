@@ -74,7 +74,7 @@ test("coverage comes before profitability, in the plan, the result, the report a
   await expect(fills).toContainText("none observed"); // no bid/ask is shown for a print
   await expect(fills).toContainText("Nothing here is modelled");
   await ask(page, "Show exactly which historical sessions could not be tested.");
-  await expect(page.getByTestId("result-untested")).toContainText("1 of the 2 qualifying sessions could not be tested");
+  await expect(page.getByTestId("result-untested")).toContainText("1 of the 2 qualifying sessions did not pass every check on stored observations");
   await expect(page.getByTestId("untested-list").locator("tbody tr")).toHaveCount(1);
   await ask(page, "Estimate what it would cost to acquire the missing observations.");
   await expect(page.getByTestId("result-cost")).toContainText("priced by what is stored now");
@@ -85,7 +85,10 @@ test("coverage comes before profitability, in the plan, the result, the report a
   await ask(page, "Compare 0DTE and 7DTE calls.");
   await idle(page);
   const sweep = page.getByTestId("result-sweep").last();
-  await expect(sweep).toContainText("Coverage first");
+  // the fixture stores same-day contracts only. Since V7 a 7DTE leg is never filled with the 0DTE contract that happens to be
+  // stored, so that variant does not run, and the comparison says so instead of comparing a strategy with a substitute for it
+  await expect(sweep).toContainText("Only one of the 2 variants could be run");
+  await expect(sweep).toContainText("not an expiration the strategy can use");
   await expect(sweep.locator("thead")).toContainText("Rule fired");
   await expect(sweep.locator("thead")).toContainText("Priced");
   expect(errors).toEqual([]);
@@ -138,7 +141,7 @@ test("data readiness is counted from the stored files, and a blocked provider sa
 test("a frozen experiment is dated by the clock, counts from the next session, and keeps a sealed ledger", async ({ page, request }) => {
   await page.goto("/forward");
   const runs = await (await request.get("/api/backtests?kind=backtest,graph&limit=20")).json(); // what the page offers to freeze
-  const run = runs.find((x: any) => x.status === "done");
+  const run = runs.find((x: any) => x.status === "done" && x.summary?.outcome !== "needs_decision"); // a run the data could not cover has nothing to freeze, and the page does not offer it
   expect(run).toBeTruthy();
   await page.getByTestId("forward").locator("select").selectOption(run.id);
   await page.getByTestId("forward-freeze").click();

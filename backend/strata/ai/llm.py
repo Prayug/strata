@@ -62,6 +62,14 @@ def _retries() -> int:
         return 2
 
 
+def _ollama_context() -> int:
+    """Context window asked of a local model, in tokens (Settings: llm.ollama.context_tokens)."""
+    try:
+        return max(2048, min(131072, int(get_setting("llm.ollama.context_tokens") or 12288)))
+    except (TypeError, ValueError):
+        return 12288
+
+
 def record_usage(llm: "LLM", input_tokens, output_tokens) -> None:
     """Token usage of one call. Failing to record must never fail the call."""
     llm.last_usage = {"input_tokens": int(input_tokens or 0), "output_tokens": int(output_tokens or 0)}
@@ -204,11 +212,16 @@ class OpenAICompat(LLM):
 class Ollama(LLM):
     provider = "ollama"
 
-    def __init__(self, url: str, model: str, timeout: float | None = None):
+    def __init__(self, url: str, model: str, timeout: float | None = None, context_tokens: int | None = None):
         self.url, self.model, self.timeout = url.rstrip("/"), model, timeout or _timeout(180)
+        self.context_tokens = int(context_tokens or _ollama_context())
 
     def _call(self, system, messages, max_tokens, fmt):
-        body = {"model": self.model, "stream": False, "messages": [{"role": "system", "content": system}] + messages, "options": {"temperature": 0, "num_predict": max_tokens}}
+        # the context is stated on every call. Left to the server it is the model's maximum (128k tokens for several current
+        # models), which makes a 6 GB model occupy over 13 GB and answer in minutes on a 16 GB machine; one fixed size also
+        # keeps the server from reloading the model between calls
+        body = {"model": self.model, "stream": False, "messages": [{"role": "system", "content": system}] + messages,
+                "options": {"temperature": 0, "num_predict": max_tokens, "num_ctx": self.context_tokens}}
         if fmt is not None:
             body["format"] = fmt
         j = _http("POST", f"{self.url}/api/chat", headers={}, body=body, timeout=self.timeout, provider="Ollama", retries=0, cancel=self.cancel)
@@ -414,8 +427,9 @@ def build(provider: str) -> LLM:
 def active() -> LLM | None:
     """The model the AI Lab should use, or None for the offline interpreter.
 
-    'auto' picks the first cloud provider with a key. A local Ollama model is only used when
-    selected explicitly, since small local models interpret less reliably than the offline rules.
+    'auto' picks the first cloud provider with a key. A local Ollama model is only used when selected explicitly: it adds
+    several seconds to every request and holds gigabytes of memory while loaded, which is the user's choice to make. Once
+    selected it reads beside the built-in readers, not instead of them (see `Agent.interpret`).
     """
     choice = str(get_setting("llm.provider") or "auto")
     if choice == "offline":

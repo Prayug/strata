@@ -94,6 +94,68 @@ export function SweepView({ c, onOpen, onPin, pinned }: { c: any; onOpen: (id: s
 
 const LEVEL: Record<string, [string, string]> = { supported: ["holds up", "text-up border-up/40 bg-up/10"], mixed: ["mixed evidence", "text-warn border-warn/40 bg-warn/10"], none: ["no edge found", "text-fg-2 border-line-2 bg-bg-2"], insufficient: ["too few observations", "text-warn border-warn/40 bg-warn/10"] };
 
+/** Two directions and how often they agreed. One strip per candle length on a shared percent axis: a filled marker for the
+    whole session, a ring for the rest of it, each with its 95% interval, and a dashed line where unrelated directions would
+    sit. A marker whose interval reaches the dashed line is not distinguishable from it. */
+function Agreement({ rows, onOpen }: { rows: any[]; onOpen: (id: string) => void }) {
+  const mins = Array.from(new Set(rows.map((r) => r.minutes as number))).sort((a, b) => a - b);
+  const nums = rows.flatMap((r) => [r.ci95?.[0], r.ci95?.[1], r.if_unrelated]).filter((v) => typeof v === "number") as number[];
+  const lo = Math.min(0.45, Math.floor(Math.min(...nums) * 20) / 20), hi = Math.max(0.6, Math.ceil(Math.max(...nums) * 20) / 20);
+  const x = (v: number) => `${Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100))}%`;
+  const ticks: number[] = [];
+  for (let t = lo; t <= hi + 1e-9; t += 0.05) ticks.push(Math.round(t * 100) / 100);
+  const has = (scope: string) => rows.some((r) => r.scope === scope);
+  const grid = { gridTemplateColumns: `104px minmax(180px, 1fr)${has("day") ? " 132px" : ""}${has("rest") ? " 132px" : ""}` };
+  const cell = (r: any | undefined) => r && (
+    <button className="group text-right leading-tight" onClick={() => onOpen(r.up.run_id)}
+      title={`Up candle: this happened on ${pp(r.up.probability)} of ${r.up.n.toLocaleString()} sessions (${pp(r.up.all_sessions)} of all sessions; adjusted p ${pv(r.up.adjusted_p_value)}).\nDown candle: ${pp(r.down.probability)} of ${r.down.n.toLocaleString()} (${pp(r.down.all_sessions)} of all sessions; adjusted p ${pv(r.down.adjusted_p_value)}).\nOpens the up-candle study.`}>
+      <div className={cn("num text-[15px] font-medium group-hover:underline", !r.distinguishable && "text-fg-2")}>{pp(r.agreement)}</div>
+      <div className="num text-[11px] text-faint">{pp(r.ci95?.[0])} – {pp(r.ci95?.[1])}</div>
+    </button>
+  );
+  return (
+    <div className="card px-4 py-3.5" data-testid="agreement">
+      <div className="eyebrow mb-1">How often the two directions matched</div>
+      <div className="mb-2.5 flex flex-wrap items-center gap-x-5 gap-y-1 text-[11.5px] dim">
+        {has("day") && <span className="flex items-center gap-1.5"><span className="inline-block size-2.5 rounded-full bg-accent" />whole session, open to close (contains the candle)</span>}
+        {has("rest") && <span className="flex items-center gap-1.5"><span className="inline-block size-2.5 rounded-full border-2 border-fg bg-bg-1" />rest of the session, after the candle</span>}
+        <span className="flex items-center gap-1.5"><span className="inline-block h-3 border-l border-dashed border-fg-2" />if the directions were unrelated</span>
+      </div>
+      <div className="grid items-end gap-x-4 border-b border-line pb-1 text-[10.5px] uppercase tracking-[0.06em] text-muted" style={grid}>
+        <span>First candle</span>
+        <span className="relative h-4 normal-case tracking-normal">{ticks.map((t) => <span key={t} className="num absolute -translate-x-1/2 text-faint" style={{ left: x(t) }}>{(t * 100).toFixed(0)}%</span>)}</span>
+        {has("day") && <span className="text-right">Whole session</span>}
+        {has("rest") && <span className="text-right">Rest of session</span>}
+      </div>
+      {mins.map((m) => {
+        const day = rows.find((r) => r.minutes === m && r.scope === "day"), rest = rows.find((r) => r.minutes === m && r.scope === "rest");
+        const un = [day?.if_unrelated, rest?.if_unrelated].filter((v) => typeof v === "number") as number[];
+        const any = day || rest;
+        return (
+          <div key={m} className="grid items-center gap-x-4 border-b border-line/60 py-1.5 last:border-b-0" style={grid} data-testid={`agreement-${m}`}>
+            <div className="leading-tight"><div className="text-[13px] font-medium">{m} minute{m === 1 ? "" : "s"}</div><div className="num text-[11px] text-faint">{any.sessions.toLocaleString()} sessions</div></div>
+            <div className="relative h-9">
+              {ticks.map((t) => <span key={t} className="absolute inset-y-0 border-l border-line/50" style={{ left: x(t) }} />)}
+              {un.length > 0 && <span className="absolute inset-y-0 border-l border-dashed border-fg-2" style={{ left: x(un.reduce((a, b) => a + b, 0) / un.length) }} />}
+              {day && <>
+                <span className="absolute top-[9px] h-[3px] -translate-y-1/2 rounded-full bg-accent/45" style={{ left: x(day.ci95[0]), right: `calc(100% - ${x(day.ci95[1])})` }} />
+                <span className="absolute top-[9px] size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent" style={{ left: x(day.agreement) }} />
+              </>}
+              {rest && <>
+                <span className="absolute top-[26px] h-[3px] -translate-y-1/2 rounded-full bg-fg/30" style={{ left: x(rest.ci95[0]), right: `calc(100% - ${x(rest.ci95[1])})` }} />
+                <span className="absolute top-[26px] size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-fg bg-bg-1" style={{ left: x(rest.agreement) }} />
+              </>}
+            </div>
+            {has("day") && <div className="text-right">{cell(day)}</div>}
+            {has("rest") && <div className="text-right">{cell(rest)}</div>}
+          </div>
+        );
+      })}
+      <div className="mt-2 text-[11.5px] dim">A lighter figure is one where the two studies behind it (up candles, down candles) do not both differ from all other sessions once every comparison here is counted. Intervals are 95%. Hover a figure for the up and down halves.</div>
+    </div>
+  );
+}
+
 export function InvestigationView({ c, onOpen, onPin, pinned }: { c: any; onOpen: (id: string) => void; onPin: (id: string) => void; pinned: string[] }) {
   const rep = c.report || {};
   const plan = c.plan || {};
@@ -115,7 +177,11 @@ export function InvestigationView({ c, onOpen, onPin, pinned }: { c: any; onOpen
         {rep.comparisons > 1 && <div className="mt-3 text-xs dim">{rep.comparisons} variants were compared{rep.trials > rep.comparisons ? `, ${rep.trials} configurations in this notebook so far` : ""}; p-values are adjusted for that.</div>}
       </div>
       {c.compatibility?.warning && <Callout tone="warn" title="Not like for like">{c.compatibility.warning}</Callout>}
-      {c.table?.rows?.length > 0 && <div className="card px-3 py-3"><VariantChart table={c.table} onOpen={onOpen} /></div>}
+      {(rep.agreement || []).length > 0 && <Agreement rows={rep.agreement} onOpen={onOpen} />}
+      {(plan.interpretation_notes || []).length > 0 && (rep.agreement || []).length > 0 && (
+        <ul className="-mt-1 flex flex-col gap-1 text-[12.5px] dim" data-testid="investigation-notes">{plan.interpretation_notes.map((n: string, i: number) => <li key={i}>· {n}</li>)}</ul>
+      )}
+      {c.table?.rows?.length > 0 && !(rep.agreement || []).length && <div className="card px-3 py-3"><VariantChart table={c.table} onOpen={onOpen} /></div>}
       {(rep.rows || []).length > 0 && (
         <div className="card overflow-x-auto">
           <table className="t">

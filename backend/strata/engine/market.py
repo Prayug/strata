@@ -19,7 +19,7 @@ import polars as pl
 
 from strata.core import calendar as cal
 from strata.core import indicators as ind
-from strata.core.pricing import bs_greeks_vec, implied_vol_vec
+from strata.core.pricing import bs_greeks_scalar, bs_greeks_serial, bs_greeks_vec, implied_vol_scalar, implied_vol_serial, implied_vol_vec
 from strata.data.derived import constant_maturity_iv
 from strata.data.store import MarketStore
 
@@ -90,11 +90,14 @@ class DayChain:
         self.quote_ts = df["_q"].to_numpy()[order].astype(np.int64)
         self.under = df["underlying_price"].to_numpy()[order].astype(float) if "underlying_price" in df.columns else np.full(len(order), np.nan)
         self.mid = (self.bid + self.ask) / 2
-        self.iv = df["iv"].to_numpy()[order].astype(float)
-        self.delta = df["delta"].to_numpy()[order].astype(float)
-        self.gamma = df["gamma"].to_numpy()[order].astype(float)
-        self.theta = df["theta"].to_numpy()[order].astype(float)
-        self.vega = df["vega"].to_numpy()[order].astype(float)
+        # implied volatility and greeks: what the provider gave, and for the rest a column that works itself out for the rows
+        # that are read (see _LazyGreek). A chain built from trade bars has none of them and several hundred thousand rows a
+        # session; a run reads a few hundred.
+        self._iv = df["iv"].to_numpy()[order].astype(float)
+        self._delta = df["delta"].to_numpy()[order].astype(float)
+        self._gamma = df["gamma"].to_numpy()[order].astype(float)
+        self._theta = df["theta"].to_numpy()[order].astype(float)
+        self._vega = df["vega"].to_numpy()[order].astype(float)
         self.r = r
         self.kind = "quotes"  # "trades" when built from trade bars (set by the engine)
         self.contract_stats: dict = {}  # trade bars: per-contract session statistics (reporting only)
@@ -102,27 +105,60 @@ class DayChain:
         self.snap_ts, self.snap_start = np.unique(self.ts, return_index=True)
         self.snap_end = np.r_[self.snap_start[1:], len(self.ts)]
         self.greeks_computed = False
-        self._fill_missing_greeks()
+        # rows whose implied volatility and delta the provider supplied need nothing; the others are worked out when read
+        self._filled = np.isfinite(self._iv) & np.isfinite(self._delta)
+        self._unfilled = int(self._filled.size - self._filled.sum())  # rows still to work out: read on every access, so it is a count and not a scan
+        self._exp_close: dict[int, int] = {}
+        self.iv, self.delta, self.gamma, self.theta, self.vega = (_LazyGreek(self, n) for n in ("_iv", "_delta", "_gamma", "_theta", "_vega"))
 
-    def _fill_missing_greeks(self):
-        """Compute IV/Greeks from observed mid quotes where the provider omitted them."""
-        need_iv = ~np.isfinite(self.iv)
-        need_g = ~np.isfinite(self.delta)
-        if not need_iv.any() and not need_g.any():
+    def _fill_missing_greeks(self, rows=None):
+        """Compute IV/Greeks from observed mid quotes where the provider omitted them, for `rows` (all rows when None).
+        Row by row the result is what computing the whole chain at once gave: each row depends on nothing but itself."""
+        rows = np.flatnonzero(~self._filled) if rows is None else rows[~self._filled[rows]]
+        if rows.size == 0:
             return
         self.greeks_computed = True
-        T = np.maximum((exp_close_epoch(self.exp) - self.ts) / (365 * 86400.0), 0.0)
-        S = self.under
+        iv, dl = self._iv[rows], self._delta[rows]
+        need_iv, need_g = ~np.isfinite(iv), ~np.isfinite(dl)
+        T = np.maximum((exp_close_epoch(self.exp[rows]) - self.ts[rows]) / (365 * 86400.0), 0.0)
+        S, K, call = self.under[rows], self.strike[rows], self.is_call[rows]
+        small = rows.size < 512  # a few rows: the serial kernels (identical arithmetic, no thread start-up)
         if need_iv.any():
-            ivs = implied_vol_vec(self.mid, S, self.strike, T, self.r, 0.0, self.is_call)
-            self.iv = np.where(need_iv, ivs, self.iv)
+            iv = np.where(need_iv, (implied_vol_serial if small else implied_vol_vec)(self.mid[rows], S, K, T, self.r, 0.0, call), iv)
+            self._iv[rows] = iv
         if need_g.any():
-            sig = np.where(np.isfinite(self.iv), self.iv, 0.0)
-            G = bs_greeks_vec(S, self.strike, T, self.r, 0.0, sig, self.is_call)
-            self.delta = np.where(need_g, G[:, 1], self.delta)
-            self.gamma = np.where(~np.isfinite(self.gamma), G[:, 2], self.gamma)
-            self.theta = np.where(~np.isfinite(self.theta), G[:, 3], self.theta)
-            self.vega = np.where(~np.isfinite(self.vega), G[:, 4], self.vega)
+            sig = np.where(np.isfinite(iv), iv, 0.0)
+            G = (bs_greeks_serial if small else bs_greeks_vec)(S, K, T, self.r, 0.0, sig, call)
+            self._delta[rows] = np.where(need_g, G[:, 1], dl)
+            for name, col in (("_gamma", 2), ("_theta", 3), ("_vega", 4)):
+                cur = getattr(self, name)[rows]
+                getattr(self, name)[rows] = np.where(~np.isfinite(cur), G[:, col], cur)
+        self._filled[rows] = True
+        self._unfilled = int(self._filled.size - self._filled.sum()) if rows.size > 64 else self._unfilled - int(np.unique(rows).size)
+
+    def _fill_row(self, i: int) -> None:
+        """One row, with the scalar kernels the array kernels call for each row: the same arithmetic, without building the
+        arrays. An open position reads its own row at every tick of the session, so this is the path that is taken most."""
+        e = int(self.exp[i])
+        close = self._exp_close.get(e)
+        if close is None:
+            close = self._exp_close[e] = int(exp_close_epoch(self.exp[i:i + 1])[0])
+        T = max((close - int(self.ts[i])) / (365 * 86400.0), 0.0)
+        S, K, call = float(self.under[i]), float(self.strike[i]), bool(self.is_call[i])
+        iv = float(self._iv[i])
+        if not math.isfinite(iv):
+            iv = float(implied_vol_scalar(float(self.mid[i]), S, K, T, self.r, 0.0, call))
+            self._iv[i] = iv
+        if not math.isfinite(self._delta[i]):
+            _p, dl, g, th, v = bs_greeks_scalar(S, K, T, self.r, 0.0, iv if math.isfinite(iv) else 0.0, call)
+            self._delta[i] = dl
+            for name, val in (("_gamma", g), ("_theta", th), ("_vega", v)):
+                col = getattr(self, name)
+                if not math.isfinite(col[i]):
+                    col[i] = val
+        self.greeks_computed = True
+        self._filled[i] = True
+        self._unfilled -= 1
 
     def snapshot_at(self, t: int) -> int:
         """Index of the latest snapshot with ts <= t, or -1."""
@@ -148,6 +184,40 @@ class DayChain:
         }
 
 
+class _LazyGreek:
+    """One of a chain's implied-volatility or greek columns. Reading rows from it first works out the rows that were not
+    supplied, so nothing else in the engine has to know which rows have been computed: `ch.delta[idx]` is always complete."""
+    __slots__ = ("ch", "name")
+
+    def __init__(self, ch: "DayChain", name: str):
+        self.ch, self.name = ch, name
+
+    def __getitem__(self, idx):
+        ch = self.ch
+        if ch._unfilled:
+            if isinstance(idx, (int, np.integer)):
+                if not ch._filled[idx]:
+                    ch._fill_row(int(idx))
+            else:
+                if isinstance(idx, slice):
+                    rows = np.arange(*idx.indices(ch._filled.size))
+                else:
+                    rows = np.atleast_1d(np.asarray(idx))
+                    if rows.dtype == bool:
+                        rows = np.flatnonzero(rows)
+                ch._fill_missing_greeks(rows.astype(np.int64))
+        return getattr(ch, self.name)[idx]
+
+    def __array__(self, dtype=None, copy=None):  # the whole column was asked for
+        if self.ch._unfilled:
+            self.ch._fill_missing_greeks()
+        a = getattr(self.ch, self.name)
+        return a.astype(dtype) if dtype is not None else a
+
+    def __len__(self) -> int:
+        return int(self.ch._filled.size)
+
+
 def _f(x) -> float | None:
     x = float(x)
     return x if math.isfinite(x) else None
@@ -168,33 +238,38 @@ def expand_trade_bars(bars: pl.DataFrame, ticks: list[int], ser: "UnderlyingSeri
     if bars is None or bars.is_empty() or not ticks:
         return pl.DataFrame(), {}
     T = np.asarray(sorted(ticks), np.int64)
-    b = bars.sort(["occ", "ts"]).with_columns((pl.col("ts").dt.epoch("s") + 60).alias("_end"), pl.col("expiration").cast(pl.Int32).alias("_e"))
+    b = bars.sort(["occ", "ts"])
     close_t = int(cal.session_bounds(d)[1].timestamp())
-    cols: dict[str, list] = {k: [] for k in ("ts", "expiration", "strike", "right", "last", "volume", "underlying_price", "quote_ts")}
-    stats: dict[int, dict] = {}
-    for (occ,), g in b.group_by(["occ"], maintain_order=True):
-        end = np.minimum(g["_end"].to_numpy().astype(np.int64), close_t)
-        px = g["close"].to_numpy().astype(float)
-        cum = np.cumsum(g["volume"].fill_null(0).to_numpy().astype(np.int64))
-        idx = np.searchsorted(end, T, side="right") - 1
-        m = idx >= 0
-        if not m.any():
-            continue
-        ii = idx[m]
-        n = int(m.sum())
-        e, k, r = int(g["_e"][0]), float(g["strike"][0]), str(g["right"][0])
-        ui = np.searchsorted(ser.end, end[ii], side="right") - 1
-        und = np.where(ui >= 0, ser.c[np.maximum(ui, 0)], np.nan)
-        cols["ts"].append(T[m])
-        cols["expiration"].append(np.full(n, e, np.int32))
-        cols["strike"].append(np.full(n, k))
-        cols["right"].append(np.full(n, r))
-        cols["last"].append(px[ii])
-        cols["volume"].append(cum[ii])
-        cols["underlying_price"].append(und)
-        cols["quote_ts"].append(end[ii])
-        key = int(contract_key(np.array([e]), np.array([r == "C"]), np.array([k]))[0])
-        stats[key] = {"occ": occ, "bars": int(len(end)), "volume": int(cum[-1]), "first_print": int(end[0]), "last_print": int(end[-1])}
+    # every column once, as arrays in (contract, time) order: the per-contract work below is then a handful of array
+    # operations for the whole session instead of a data-frame slice per contract (measured on SPY: 0.21 s -> 0.02 s a session)
+    occ = b["occ"].to_numpy()
+    end = np.minimum(b["ts"].dt.epoch("s").to_numpy().astype(np.int64) + 60, close_t)
+    px = b["close"].to_numpy().astype(float)
+    vol = b["volume"].fill_null(0).to_numpy().astype(np.int64)
+    e_all = b["expiration"].cast(pl.Int32).to_numpy().astype(np.int32)
+    k_all = b["strike"].to_numpy().astype(float)
+    r_all = b["right"].to_numpy()
+    n = end.size
+    start = np.flatnonzero(np.r_[True, occ[1:] != occ[:-1]])  # first row of each contract
+    stop = np.r_[start[1:], n]
+    C, nt = start.size, T.size
+    # the last bar of contract c that ended at or before tick t: one search over (contract, end) keys
+    BIG = np.int64(1) << 40
+    cid = np.repeat(np.arange(C, dtype=np.int64), stop - start)
+    idx = np.searchsorted(cid * BIG + end, (np.arange(C, dtype=np.int64)[:, None] * BIG + T[None, :]).ravel(), side="right").reshape(C, nt) - 1
+    ok = idx >= start[:, None]  # a row of an earlier contract means this one has not printed yet
+    cum_all = np.cumsum(vol)
+    base = np.r_[0, cum_all][start]  # volume before the contract's first row
+    ci, ti = np.nonzero(ok)  # contract-major, ticks in order: the order the per-contract loop produced
+    ii = idx[ci, ti]
+    ui = np.searchsorted(ser.end, end[ii], side="right") - 1
+    und = np.where(ui >= 0, ser.c[np.maximum(ui, 0)], np.nan)
+    cols = {"ts": [T[ti]], "expiration": [e_all[start][ci]], "strike": [k_all[start][ci]], "right": [r_all[start][ci]], "last": [px[ii]], "volume": [cum_all[ii] - base[ci]], "underlying_price": [und], "quote_ts": [end[ii]]}
+    if ci.size == 0:
+        cols = {k: [] for k in cols}
+    keys = contract_key(e_all[start], r_all[start] == "C", k_all[start])
+    tot = cum_all[stop - 1] - base
+    stats: dict[int, dict] = {int(keys[j]): {"occ": occ[start[j]], "bars": int(stop[j] - start[j]), "volume": int(tot[j]), "first_print": int(end[start[j]]), "last_print": int(end[stop[j] - 1])} for j in range(C)}
     if not cols["ts"]:
         return pl.DataFrame(), stats
     df = pl.DataFrame({

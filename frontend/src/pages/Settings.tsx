@@ -134,6 +134,14 @@ export default function Settings() {
                   <Field label="If the model fails or is unavailable" hint="Either way you are told which interpreter read each request; a complex strategy is never silently handed to a weaker one.">
                     <Select value={draft["llm.fallback"] || "rules"} onChange={(v) => set("llm.fallback", v)} options={[{ value: "rules", label: "Use the built-in interpreter and say so" }, { value: "none", label: "Stop and report the failure" }]} />
                   </Field>
+                  <Field label="Who reads a request" hint="Measured on sentences neither reader had seen: the built-in readers alone answered a different question without saying so 9 times in 34; with a local model reading as well and every difference asked, 2 to 3 times.">
+                    <Select value={draft["llm.mode"] || "auto"} onChange={(v) => set("llm.mode", v)} options={[{ value: "auto", label: "Automatic: both must agree with a local model; a hosted model reads alone" },
+                      { value: "check", label: "Both read; a difference is asked before anything runs" }, { value: "assist", label: "Built-in readers first, the model for what they flag" }, { value: "model", label: "The model reads everything" }]} />
+                  </Field>
+                  <Field label="How a model is asked" hint="The form is a short list of typed fields that a small local model can fill; every value is checked against your sentence and the expressions are written by Strata. The full planner gives a capable hosted model every tool.">
+                    <Select value={draft["llm.planner"] || "auto"} onChange={(v) => set("llm.planner", v)} options={[{ value: "auto", label: "Automatic: the form for a local model, the full planner for a hosted one" }, { value: "form", label: "The form of typed fields" }, { value: "tools", label: "The full planner" }]} />
+                  </Field>
+                  <Field label="Context asked of a local model (tokens)" hint="Left to the server this is the model's maximum, which made a 6 GB model occupy 13 GB and answer in minutes on this machine."><Input sz="sm" className="num" inputMode="numeric" value={draft["llm.ollama.context_tokens"] ?? 12288} onChange={(e) => set("llm.ollama.context_tokens", Math.max(2048, Math.min(131072, Number(e.target.value) || 12288)))} /></Field>
                   <Field label="New research starts in" hint="Quick research runs straight away and lists every assumption. Review first waits for you to confirm the interpretation.">
                     <Select value={draft["ai.exec_mode"] || "quick"} onChange={(v) => set("ai.exec_mode", v)} options={[{ value: "quick", label: "Quick research" }, { value: "review", label: "Review before running" }]} />
                   </Field>

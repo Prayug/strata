@@ -1,0 +1,645 @@
+{
+ "cases": 34,
+ "correct": 16,
+ "flagged": 9,
+ "silent": 9,
+ "accuracy_pct": 47.1,
+ "silent_pct": 26.5,
+ "by_kind": {
+  "strategy": {
+   "cases": 16,
+   "correct": 5,
+   "flagged": 5,
+   "silent": 6
+  },
+  "experiment": {
+   "cases": 12,
+   "correct": 5,
+   "flagged": 4,
+   "silent": 3
+  },
+  "flag": {
+   "cases": 6,
+   "correct": 6,
+   "flagged": 0,
+   "silent": 0
+  }
+ },
+ "rows": [
+  {
+   "n": 1,
+   "tag": "levels",
+   "kind": "strategy",
+   "text": "Buy an at-the-money QQQ put expiring the same day whenever the low of the first 30 minutes is broken, and get out at 2 PM New York time.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 2,
+   "tag": "sequence",
+   "kind": "strategy",
+   "text": "Go long SPY 0DTE calls the first time SPY trades back above VWAP after having been down at least 0.75% from the open.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 3,
+   "tag": "candles",
+   "kind": "strategy",
+   "text": "Buy IWM 0DTE calls after two consecutive bearish 15-minute candles followed by a bullish 15-minute candle.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 4,
+   "tag": "timed",
+   "kind": "strategy",
+   "text": "Buy 1DTE SPY calls 1% out of the money at 10:15 AM Eastern if SPY gapped up more than 0.3% and is still above its opening price; sell after 45 minutes.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 68 entries on 68 sessions against the reference's 34 on 34 (34 at the same minute; 34 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 5,
+   "tag": "cross-symbol",
+   "kind": "strategy",
+   "text": "Buy 0DTE SPY puts at 11:00 AM Eastern if both SPY and QQQ are trading below their opening prices.",
+   "status": "flagged",
+   "differences": [
+    "the entry rule fires differently: 103 entries on 103 sessions against the reference's 88 on 88 (88 at the same minute; 15 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 6,
+   "tag": "levels",
+   "kind": "strategy",
+   "text": "Sell a 0DTE SPY put credit spread 5 points wide at 9:45 AM Eastern when the low of the opening 15 minutes is above yesterday's high.",
+   "status": "flagged",
+   "differences": [
+    "the entry rule fires differently: 227 entries on 227 sessions against the reference's 28 on 28 (28 at the same minute; 199 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 7,
+   "tag": "levels",
+   "kind": "strategy",
+   "text": "Buy QQQ 0DTE calls when price breaks above the high of the first hour, but only before 1 PM Eastern.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 133 entries on 133 sessions against the reference's 114 on 114 (114 at the same minute; 19 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 8,
+   "tag": "timed",
+   "kind": "strategy",
+   "text": "Buy an ATM SPY straddle expiring today at 3 PM Eastern when the day's range so far is under 0.4%, and close it five minutes before the bell.",
+   "status": "flagged",
+   "differences": [
+    "exit time: None for 15:55",
+    "the entry rule fires differently: 227 entries on 227 sessions against the reference's 8 on 8 (8 at the same minute; 219 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 9,
+   "tag": "daily",
+   "kind": "strategy",
+   "text": "Buy IWM 7DTE puts at the open the day after IWM closed higher for three sessions in a row, and hold for two sessions.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 124 entries on 124 sessions against the reference's 29 on 29 (29 at the same minute; 95 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 10,
+   "tag": "candles",
+   "kind": "strategy",
+   "text": "Buy SPY 0DTE calls on the first bullish five-minute candle after SPY has fallen more than 1% below the previous close.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 11,
+   "tag": "levels",
+   "kind": "strategy",
+   "text": "Buy 30-delta QQQ calls two weeks out when QQQ crosses above yesterday's high, and take the trade off at a 40% gain or a 20% loss on the premium.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 12,
+   "tag": "state",
+   "kind": "strategy",
+   "text": "Buy 0DTE SPY calls at noon Eastern on days when SPY has been at least 1% below its open at some point in the morning and is now back above the open.",
+   "status": "flagged",
+   "differences": [
+    "the entry rule fires differently: 227 entries on 227 sessions against the reference's 0 on 0 (0 at the same minute; 227 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 13,
+   "tag": "sequence",
+   "kind": "strategy",
+   "text": "Buy ATM 0DTE QQQ puts when QQQ falls back below its opening price after having been up more than 0.6% on the day's open.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 100 entries on 100 sessions against the reference's 27 on 27 (0 at the same minute; 73 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 14,
+   "tag": "timed",
+   "kind": "strategy",
+   "text": "Buy SPY 0DTE calls at 10:30 AM Eastern when SPY is above VWAP and the VIX closed below 18 yesterday; sell at a 1.5% rise in SPY or at 3 PM Eastern.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 119 entries on 119 sessions against the reference's 65 on 65 (65 at the same minute; 54 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 15,
+   "tag": "multiple entries",
+   "kind": "strategy",
+   "text": "Enter SPY 0DTE puts up to three times a day, each time price crosses below VWAP, no later than 2:30 PM Eastern, and exit each one after 20 minutes.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 2 entries on 2 sessions against the reference's 627 on 218 (0 at the same minute; 0 sessions only in the interpretation, 216 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 16,
+   "tag": "multiple entries",
+   "kind": "strategy",
+   "text": "Buy one at-the-money SPY 0DTE call at 9:35 AM Eastern, add one more contract if SPY drops another half percent from the entry, and sell half of the position once the premium is up 25%.",
+   "status": "flagged",
+   "differences": [
+    "the added contract is missing"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 17,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "For SPY at-the-money 0DTE calls bought at the open after a down day of at least 1%, compare selling after 10, 20, 40 and 90 minutes.",
+   "status": "silent",
+   "differences": [
+    "structure short_call for long_call"
+   ],
+   "read_as": "experiment",
+   "reader": null
+  },
+  {
+   "n": 18,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Buy 0DTE calls when price breaks above the high of the first 30 minutes; run it on SPY, QQQ and IWM side by side.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "experiment",
+   "reader": null
+  },
+  {
+   "n": 19,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Buy SPY calls at 10 AM Eastern after a red previous day: test same-day, next-day, 2-day, 5-day and 21-day expirations.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "experiment",
+   "reader": null
+  },
+  {
+   "n": 20,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Buy 0DTE SPY calls at the open after a 2% down day; compare at-the-money with 0.5%, 1% and 2% out of the money.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "experiment",
+   "reader": null
+  },
+  {
+   "n": 21,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Try entry times every 30 minutes from 9:30 to 12:00 for buying ATM 0DTE QQQ puts after an up day.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "experiment",
+   "reader": null
+  },
+  {
+   "n": 22,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Buy SPY 0DTE calls at the open after a decline; sweep the decline from 1% to 4% in half-percent steps and the premium stop over 20%, 35% and 50%.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "experiment",
+   "reader": null
+  },
+  {
+   "n": 23,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Compare a 25% premium target with a 50% premium target, each with a 10% and a 20% premium stop, on ATM SPY 0DTE calls bought at 9:45 AM Eastern.",
+   "status": "flagged",
+   "differences": [
+    "read as experiment_needs_base, not as an experiment"
+   ],
+   "read_as": "experiment_needs_base",
+   "reader": null
+  },
+  {
+   "n": 24,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Compare entering at the open, at 10:00 and at 11:00, with 0DTE against 1DTE, for SPY calls after a 1.5% down day.",
+   "status": "flagged",
+   "differences": [
+    "read as experiment_needs_base, not as an experiment"
+   ],
+   "read_as": "experiment_needs_base",
+   "reader": null
+  },
+  {
+   "n": 25,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Buy IWM puts expiring the same day at 10 AM Eastern after a gap up of more than 0.5%: compare holding 30 minutes, holding 2 hours and holding to the close.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 125 entries on 125 sessions against the reference's 56 on 56 (56 at the same minute; 69 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "experiment",
+   "reader": null
+  },
+  {
+   "n": 26,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Test deltas of 20, 30, 40 and 50 for SPY 7DTE calls bought at 10:30 AM Eastern after two down days in a row.",
+   "status": "flagged",
+   "differences": [
+    "read as experiment_needs_base, not as an experiment"
+   ],
+   "read_as": "experiment_needs_base",
+   "reader": null
+  },
+  {
+   "n": 27,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Same signal on SPY and QQQ: buy ATM 0DTE calls when price crosses above the opening 15-minute high, with exits after 30 and 60 minutes.",
+   "status": "silent",
+   "differences": [
+    "the setting 'symbol' is not varied"
+   ],
+   "read_as": "experiment",
+   "reader": null
+  },
+  {
+   "n": 28,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Sweep the underlying target from 0.5% to 2% in half-percent steps for SPY 0DTE calls bought at the open after a 3% down day.",
+   "status": "flagged",
+   "differences": [
+    "read as experiment_needs_base, not as an experiment"
+   ],
+   "read_as": "experiment_needs_base",
+   "reader": null
+  },
+  {
+   "n": 29,
+   "tag": "must be flagged",
+   "kind": "flag",
+   "text": "Buy SPY calls when the bid-ask spread on the at-the-money call tightens below 2 cents.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 30,
+   "tag": "must be flagged",
+   "kind": "flag",
+   "text": "Buy QQQ puts when unusual options activity shows large call sweeps.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 31,
+   "tag": "must be flagged",
+   "kind": "flag",
+   "text": "Buy SPY 0DTE calls when the cumulative NYSE tick index turns positive.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 32,
+   "tag": "must be flagged",
+   "kind": "flag",
+   "text": "Sell IWM calls when retail sentiment on Reddit peaks.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 33,
+   "tag": "must be flagged",
+   "kind": "flag",
+   "text": "Buy SPY calls when dark pool print volume exceeds 5 million shares in an hour.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 34,
+   "tag": "must be flagged",
+   "kind": "flag",
+   "text": "Buy SPY 0DTE puts when the 10-year Treasury yield jumps more than 5 basis points intraday.",
+   "status": "correct",
+   "differences": [],
+   "read_as": "new",
+   "reader": null
+  }
+ ],
+ "failures": [
+  {
+   "n": 4,
+   "tag": "timed",
+   "kind": "strategy",
+   "text": "Buy 1DTE SPY calls 1% out of the money at 10:15 AM Eastern if SPY gapped up more than 0.3% and is still above its opening price; sell after 45 minutes.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 68 entries on 68 sessions against the reference's 34 on 34 (34 at the same minute; 34 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 5,
+   "tag": "cross-symbol",
+   "kind": "strategy",
+   "text": "Buy 0DTE SPY puts at 11:00 AM Eastern if both SPY and QQQ are trading below their opening prices.",
+   "status": "flagged",
+   "differences": [
+    "the entry rule fires differently: 103 entries on 103 sessions against the reference's 88 on 88 (88 at the same minute; 15 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 6,
+   "tag": "levels",
+   "kind": "strategy",
+   "text": "Sell a 0DTE SPY put credit spread 5 points wide at 9:45 AM Eastern when the low of the opening 15 minutes is above yesterday's high.",
+   "status": "flagged",
+   "differences": [
+    "the entry rule fires differently: 227 entries on 227 sessions against the reference's 28 on 28 (28 at the same minute; 199 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 7,
+   "tag": "levels",
+   "kind": "strategy",
+   "text": "Buy QQQ 0DTE calls when price breaks above the high of the first hour, but only before 1 PM Eastern.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 133 entries on 133 sessions against the reference's 114 on 114 (114 at the same minute; 19 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 8,
+   "tag": "timed",
+   "kind": "strategy",
+   "text": "Buy an ATM SPY straddle expiring today at 3 PM Eastern when the day's range so far is under 0.4%, and close it five minutes before the bell.",
+   "status": "flagged",
+   "differences": [
+    "exit time: None for 15:55",
+    "the entry rule fires differently: 227 entries on 227 sessions against the reference's 8 on 8 (8 at the same minute; 219 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 9,
+   "tag": "daily",
+   "kind": "strategy",
+   "text": "Buy IWM 7DTE puts at the open the day after IWM closed higher for three sessions in a row, and hold for two sessions.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 124 entries on 124 sessions against the reference's 29 on 29 (29 at the same minute; 95 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 12,
+   "tag": "state",
+   "kind": "strategy",
+   "text": "Buy 0DTE SPY calls at noon Eastern on days when SPY has been at least 1% below its open at some point in the morning and is now back above the open.",
+   "status": "flagged",
+   "differences": [
+    "the entry rule fires differently: 227 entries on 227 sessions against the reference's 0 on 0 (0 at the same minute; 227 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 13,
+   "tag": "sequence",
+   "kind": "strategy",
+   "text": "Buy ATM 0DTE QQQ puts when QQQ falls back below its opening price after having been up more than 0.6% on the day's open.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 100 entries on 100 sessions against the reference's 27 on 27 (0 at the same minute; 73 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 14,
+   "tag": "timed",
+   "kind": "strategy",
+   "text": "Buy SPY 0DTE calls at 10:30 AM Eastern when SPY is above VWAP and the VIX closed below 18 yesterday; sell at a 1.5% rise in SPY or at 3 PM Eastern.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 119 entries on 119 sessions against the reference's 65 on 65 (65 at the same minute; 54 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 15,
+   "tag": "multiple entries",
+   "kind": "strategy",
+   "text": "Enter SPY 0DTE puts up to three times a day, each time price crosses below VWAP, no later than 2:30 PM Eastern, and exit each one after 20 minutes.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 2 entries on 2 sessions against the reference's 627 on 218 (0 at the same minute; 0 sessions only in the interpretation, 216 only in the reference)"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 16,
+   "tag": "multiple entries",
+   "kind": "strategy",
+   "text": "Buy one at-the-money SPY 0DTE call at 9:35 AM Eastern, add one more contract if SPY drops another half percent from the entry, and sell half of the position once the premium is up 25%.",
+   "status": "flagged",
+   "differences": [
+    "the added contract is missing"
+   ],
+   "read_as": "new",
+   "reader": null
+  },
+  {
+   "n": 17,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "For SPY at-the-money 0DTE calls bought at the open after a down day of at least 1%, compare selling after 10, 20, 40 and 90 minutes.",
+   "status": "silent",
+   "differences": [
+    "structure short_call for long_call"
+   ],
+   "read_as": "experiment",
+   "reader": null
+  },
+  {
+   "n": 23,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Compare a 25% premium target with a 50% premium target, each with a 10% and a 20% premium stop, on ATM SPY 0DTE calls bought at 9:45 AM Eastern.",
+   "status": "flagged",
+   "differences": [
+    "read as experiment_needs_base, not as an experiment"
+   ],
+   "read_as": "experiment_needs_base",
+   "reader": null
+  },
+  {
+   "n": 24,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Compare entering at the open, at 10:00 and at 11:00, with 0DTE against 1DTE, for SPY calls after a 1.5% down day.",
+   "status": "flagged",
+   "differences": [
+    "read as experiment_needs_base, not as an experiment"
+   ],
+   "read_as": "experiment_needs_base",
+   "reader": null
+  },
+  {
+   "n": 25,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Buy IWM puts expiring the same day at 10 AM Eastern after a gap up of more than 0.5%: compare holding 30 minutes, holding 2 hours and holding to the close.",
+   "status": "silent",
+   "differences": [
+    "the entry rule fires differently: 125 entries on 125 sessions against the reference's 56 on 56 (56 at the same minute; 69 sessions only in the interpretation, 0 only in the reference)"
+   ],
+   "read_as": "experiment",
+   "reader": null
+  },
+  {
+   "n": 26,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Test deltas of 20, 30, 40 and 50 for SPY 7DTE calls bought at 10:30 AM Eastern after two down days in a row.",
+   "status": "flagged",
+   "differences": [
+    "read as experiment_needs_base, not as an experiment"
+   ],
+   "read_as": "experiment_needs_base",
+   "reader": null
+  },
+  {
+   "n": 27,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Same signal on SPY and QQQ: buy ATM 0DTE calls when price crosses above the opening 15-minute high, with exits after 30 and 60 minutes.",
+   "status": "silent",
+   "differences": [
+    "the setting 'symbol' is not varied"
+   ],
+   "read_as": "experiment",
+   "reader": null
+  },
+  {
+   "n": 28,
+   "tag": "experiment",
+   "kind": "experiment",
+   "text": "Sweep the underlying target from 0.5% to 2% in half-percent steps for SPY 0DTE calls bought at the open after a 3% down day.",
+   "status": "flagged",
+   "differences": [
+    "read as experiment_needs_base, not as an experiment"
+   ],
+   "read_as": "experiment_needs_base",
+   "reader": null
+  }
+ ],
+ "interpreter": "rules",
+ "window": [
+  "2026-01-02",
+  "2026-11-25"
+ ],
+ "sealed_sha256": "7ed431778fa541f062d1881cc913b81f0d072f99420cf0c64f599ecacd858d22",
+ "run_on": "2026-11-26",
+ "reader": "rules",
+ "seconds": 23.5,
+ "scored_at": "2026-11-26T12:00:32+00:00",
+ "code_sha256_16": {
+  "planner_form.py": "97a97c71cf82d444",
+  "nl_rules.py": "b759216679e48913",
+  "nl_stateful.py": "f327e6039687849b",
+  "nl_experiment.py": "7800a784851cbd62",
+  "agent.py": "27df044063c24c49",
+  "eval_v7.py": "af4699d237f0d1c4"
+ },
+ "note": "first and only scoring of this reader on the sealed set; nothing was changed in response to these sentences"
+}

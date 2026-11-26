@@ -58,8 +58,38 @@ def default_tz_offset() -> int:
     return 180 if ("los_angeles" in t or t in ("pst", "pdt", "pacific")) else 120 if ("denver" in t or t in ("mst", "mdt")) else 60 if ("chicago" in t or t in ("cst", "cdt")) else 0
 
 
-TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\s*(pacific|pst|pdt|pt|mountain|mst|mdt|mt|central|cst|cdt|ct|eastern|est|edt|et|new york)?(?:\s*time)?\b", re.I)
+# "6:30 AM Pacific", "9:30ET", "15:30", and as people type them in a hurry: "6:30a, PST" (a letter for the half of the day,
+# attached to the digits; a comma before the zone)
+TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?|(?<=\d)[ap](?![a-z.]))?(?:\s*,?\s*(pacific|pst|pdt|pt|mountain|mst|mdt|mt|central|cst|cdt|ct|eastern|est|edt|et|new york)(?:\s*time)?)?\b", re.I)
 EXIT_CUE = re.compile(r"\b(exit|sell (?:them|it|at|when|by)|close (?:the position|it|them|out)|clos(?:e|ing) (?:at|by)|take profits?|until|till|hold(?:ing)?\b|out by|\bor at\b|get out)", re.I)
+
+
+EXIT_WHEN = re.compile(r"\b(?:exit(?:s|ing)?|sell(?:s|ing)?|clos(?:e|es|ing)|get(?:ting)?\s+out|take\s+profits?|tak(?:e|ing)\s+(?:it|them)\s+off|cut(?:ting)?\s+(?:it|them|the\s+\w+))\b(?P<mid>(?:[^.;]|\.(?=\d))*?)"
+                       r"\b(?P<w>when(?:ever)?|if|once|as\s+soon\s+as)\b(?P<body>(?:[^.;]|\.(?=\d))*)", re.I)  # a decimal point does not end the sentence
+
+
+def exit_clauses(text: str) -> list[tuple[int, int]]:
+    """Character ranges of the conditions under which the position is CLOSED ("exit at 15:55 or when SPY has risen 1%",
+    "close the trade if it reclaims VWAP"). What stands there is an exit rule. It is never also an entry condition: read as
+    one, "buy after a 1% down day ... exit when SPY has risen 1%" asks for a day that fell 1% and rose 1%.
+
+    Not an exit clause: a verb that opens the position ("sell puts when ..."), and a condition on the previous session or
+    the opening gap, which is known before the entry and cannot close anything."""
+    out = []
+    for m in EXIT_WHEN.finditer(text):
+        head = text[m.start():m.start("w")].lower()
+        held = r"\b(?:it|them)\b|\b(?:the|my|every|each|all|both)\s+(?:\w+\s+)?(?:puts?|calls?|spreads?|condors?|straddles?|strangles?|contracts?|options?|positions?|trades?|lots?|rest|remainder|other half)\b"
+        if re.search(r"\b(?:puts?|calls?|spreads?|condors?|straddles?|strangles?|butterfl\w+|contracts?)\b", head) and not re.search(held, head):
+            continue  # "sell puts 1% out of the money when ...": the sale is the entry. "sell them when", "close the calls if" are exits
+        if re.search(r"\b(?:buy|buying|enter|entering|open a|go long|go short)\b", head):
+            continue  # "... sell at the close; buy when ..." never reaches here (the sentence ended), "sell and buy back when" does
+        body = m.group("body")
+        if re.search(rf"{PREV}|\bgaps?\b|\bgapp", body.lower()):
+            continue
+        # the period of the test is not part of the exit ("... when SPY has risen 1%, from 2024-01-18 to 2026-11-25")
+        cut = re.search(rf",?\s*\b(?:from|between|since|starting|over|during|in|for)\s+(?:the\s+)?(?:{DATE_TOK}|(?:19|20)\d\d\b|(?:last|past)\s+\w+\s+(?:years?|months?))", body, re.I)
+        out.append((m.start("w"), m.start("body") + (cut.start() if cut else len(body))))
+    return out
 
 
 def _session_readings(h: int, mi: int, ap: str | None) -> list[tuple[int, int]]:
@@ -101,6 +131,10 @@ def find_times(text: str, msg_offset: int | None) -> list[dict]:
         sets = [{o for o, _ in _session_readings(h, mi, ap)} for _m, h, mi, ap, tz in found if not tz]
         shared = set.intersection(*sets) if sets else set()
         common = next((o for o in dict.fromkeys((pref, 0, 180)) if o in shared), None)
+        # 9:30 with no zone is the opening bell: nobody on the west coast calls 12:30 New York time "9:30". It is read as New
+        # York time, and so is every other zone-less time in the sentence; the interpretation still says which zone it assumed.
+        if 0 in shared and any((h, mi) == (9, 30) and not tz and (ap or "a").lower().startswith("a") for _m, h, mi, ap, tz in found):
+            common = 0
     for m, h, mi, ap, tz in found:
         off = TZ_OFFSET.get(tz.lower()) if tz else msg_offset
         assumed = None
@@ -485,7 +519,11 @@ def parse_fresh(text: str, known: list[str], default_symbol: str = "SPY") -> Dra
     entry_t = next((t for t in times if t["pos"] < cut and not (before_noon and abs(t["pos"] - before_noon.start()) < 12)), None)
     exit_t = next((t for t in times if t["pos"] >= cut), None)
     spans: list = []
-    conds = find_conditions(text, spans)
+    closing = exit_clauses(text)
+    entry_text = text
+    for a_, b_ in closing:  # what closes the position is read below, as an exit; here it is blank
+        entry_text = entry_text[:a_] + " " * (b_ - a_) + entry_text[b_:]
+    conds = find_conditions(entry_text, spans)
     d.conditions = [c for _, c in conds]
     d.weekdays = find_weekdays(low)
     intraday_signal = any(c in ("reclaim", "orb", "streak", "vwap") and ("candles" in x.expr or c in ("reclaim", "orb", "vwap")) for c, x in conds)
@@ -539,6 +577,14 @@ def parse_fresh(text: str, known: list[str], default_symbol: str = "SPY") -> Dra
         d.premium_stop_pct = pc.get("premium_stop")
         if exit_t:
             d.exit_time, d.exit_time_stated = exit_t["et"], exit_t["stated"]
+        # a condition inside an exit clause closes the position. A plain move of the underlying there is the target or the
+        # stop that was just read (one number, one role); anything else is an exit condition of its own
+        levels = {float(v) for v in pc.values() if isinstance(v, (int, float))}
+        for a_, b_ in closing:
+            for _cat, c in find_conditions(text[a_:b_], []):
+                if {abs(float(x)) for x in re.findall(r"\d+(?:\.\d+)?", c.expr)} & levels or c.expr in {x.expr for x in d.exit_conditions}:
+                    continue
+                d.exit_conditions.append(c)
         m = re.search(r"hold(?:ing)?\s+(?:them|it|the position|for)?\s*(?:for\s+)?(\w+)\s+(?:trading\s+)?(day|session|week)s?", low)
         if m and _num(m.group(1)):
             d.hold_sessions = int(_num(m.group(1))) * (5 if m.group(2) == "week" else 1)
@@ -812,7 +858,7 @@ def parse_followup(text: str, cur: Draft, known: list[str], last_field: str | No
     m = re.search(rf"(?:change|set|make|move|adjust|lower|raise|increase|decrease)\s+(?:the\s+)?(.{{3,48}}?)\s+(?:to|at)\s+(-?{N[1:-1]})\s*%?", low)
     if m:
         f = _field_in(m.group(1), cur)
-        if f:
+        if f and f != "entry_time":  # "change the entry time to 6:45 AM Pacific": the clock reader below takes it, zone and all
             n = apply_value(n, f, float(m.group(2)))
             changed.append(f)
     if not changed or wants_compare:
@@ -840,7 +886,7 @@ def parse_followup(text: str, cur: Draft, known: list[str], last_field: str | No
     hold_until = bool(re.search(r"\b(?:hold|holding)\s+(?:it\s+|them\s+)?(?:until|till|to|through)\b|\bget out\b|\bbe out\b|\bflat by\b", low))
     if hold_until and t_in and not t_out:
         t_out, t_in = t_in, []
-    if t_in and re.search(r"enter|entry|buy at|open (?:the trade|at)|at the open|start", low) and "entry_time" not in changed:
+    if t_in and re.search(r"enter|entry|buy at|open (?:the trade|at)|at the open|start|observ|measur|watch|look(?:ing)? (?:at|from)", low) and "entry_time" not in changed:
         n.entry_time, n.entry_time_stated = ("open" if t_in[0]["et"] == "09:30" else t_in[0]["et"]), t_in[0]["stated"]
         changed.append("entry_time")
     # both can be stated in one sentence ("enter at 6:30 AM Pacific and exit at 12:45 PM Pacific"): the exit used to be dropped when an entry was read
@@ -913,6 +959,103 @@ def parse_followup(text: str, cur: Draft, known: list[str], last_field: str | No
     if not changed:
         return {"action": "unknown"}
     return {"action": "modify", "draft": n, "changed": changed, "compare": wants_compare or "period" in changed}
+
+
+CORRECTION = re.compile(r"^\s*(?P<cue>(?:(?:no+|nope|not quite|wrong|sorry|oops|wait|actually|rather)\b[\s,.:;!-]*)*"
+                        r"(?:(?:i|we)\s+(?:meant|mean)(?:\s+to\s+say)?\b|(?:make|change|set)\s+(?:it|that)(?:\s+to)?\b|it\s+should\s+be\b|should\s+be\b|it'?s\s+supposed\s+to\s+be\b)?)"
+                        r"\s*[,:]?\s*(?P<rest>.*)$", re.I | re.S)
+FILLER = {"at", "the", "a", "an", "not", "instead", "time", "sharp", "please", "to", "it", "that", "of", "for", "on", "in", "is", "was", "be", "i", "meant", "mean", "said", "and", "new", "york", "day", "days",
+          "contract", "contracts", "option", "options", "expiration", "expiry", "exp"}
+
+
+def correction(text: str) -> str | None:
+    """The words after a correcting lead-in ("no I meant 6:30a, PST" -> "6:30a, PST"), or None when the message is not one."""
+    m = CORRECTION.match(text or "")
+    if not m or not m.group("cue").strip() or not m.group("rest").strip(" .!?"):
+        return None
+    return m.group("rest").strip()
+
+
+def _bare(rest: str, *spans: tuple[int, int]) -> bool:
+    """Nothing is left of the message once the value at `spans` is taken out: it is a value on its own, not a sentence."""
+    left = "".join(ch for i, ch in enumerate(rest) if not any(a <= i < b for a, b in spans))
+    return not [w for w in re.findall(r"[a-z]+", left.lower()) if w not in FILLER and w not in TZ_OFFSET]
+
+
+def bare_correction(rest: str, cur: Draft, known: list[str]) -> dict | None:
+    """A correction that is a value on its own: "no I meant 6:30a, PST", "no, 2%", "I meant puts", "sorry, 1DTE".
+
+    The value replaces the one thing in the current reading it can replace. If it could replace two (a rise of 1% after a
+    decline of 3%, then "no I meant 2%"), nothing is changed: the reply says how to name the one meant. Words that say what
+    they change ("no stop loss", "actually enter at 10:00") are not for this function: None, and the ordinary readers take them."""
+    low = rest.lower().strip(" .!?")
+    n = cur.model_copy(deep=True)
+    msg_tz = next((TZ_OFFSET[k] for k in ("pacific", "eastern", "central", "mountain") if k in low), None)
+    times = find_times(rest, msg_tz)
+    spans = [(m.start(), m.end()) for m in TIME_RE.finditer(rest) if m.group(2) or m.group(3) or m.group(4)]
+    if len(times) == 1 and _bare(re.sub(r"\b(?:market|opening|closing)?\s*(?:open|close|bell|noon|midday)\b", " ", rest, flags=re.I), *spans):
+        t = times[0]
+        stated_exit = cur.kind == "options" and bool(cur.exit_time and cur.exit_time_stated)
+        stated_entry = bool(cur.entry_time and cur.entry_time_stated)
+        if stated_exit and stated_entry:
+            said = t["stated"].split(" (")[0]
+            return {"action": "clarify", "text": f"The current reading has an entry time ({cur.entry_time_stated}) and an exit time ({cur.exit_time_stated}), and \"{said}\" could replace either. "
+                                                 f"Say which: \"enter at {said}\" or \"exit at {said}\"."}
+        if stated_exit and not stated_entry and t["et"] not in ("open", "09:30"):
+            n.exit_time, n.exit_time_stated = t["et"], t["stated"]
+            return {"action": "modify", "draft": n, "changed": ["exit_time"], "compare": False}
+        n.entry_time, n.entry_time_stated = ("open" if t["et"] in ("09:30", "open") else t["et"]), t["stated"]
+        return {"action": "modify", "draft": n, "changed": ["entry_time"], "compare": False}
+    m = re.fullmatch(rf"(?:an?\s+)?-?{N}\s*(?:%|percent)", low)
+    if m:
+        x = float(m.group(1))
+        cands: list[tuple[str, str]] = []
+        for c in cur.conditions:
+            cat = _cat_of(c.expr)
+            if cat in ("prev_ret", "gap", "vix") and re.search(r"(<=|>=|<|>)\s*-?\d+(?:\.\d+)?\s*$", c.expr):
+                cands.append((cat, c.text.split("   [")[0].split(" (")[0]))
+        st = cur.study
+        if cur.kind == "study" and st is not None:
+            if st.target is not None and st.target.kind == "pct" and st.target.value:
+                cands.append(("target", f"the {abs(st.target.value):g}% target"))
+            if st.stop is not None and st.stop.kind == "pct":
+                cands.append(("stop", f"the {abs(st.stop.value):g}% stop"))
+        if cur.kind == "options":
+            for f, v, name in (("target", cur.underlying_target_pct, "target on the underlying"), ("stop", cur.underlying_stop_pct, "stop on the underlying"),
+                               ("premium_target", cur.premium_target_pct, "premium target"), ("premium_stop", cur.premium_stop_pct, "premium stop")):
+                if v is not None:
+                    cands.append((f, f"the {v:g}% {name}"))
+        if len(cands) == 1:
+            return {"action": "modify", "draft": apply_value(n, cands[0][0], x), "changed": [cands[0][0]], "compare": False}
+        if len(cands) > 1:
+            return {"action": "clarify", "text": f"\"{rest.strip(' .!?')}\" could replace more than one thing in the current reading: " + "; ".join(lab for _f, lab in cands) + ". "
+                                                 "Nothing was changed. Name the one you mean, for example \"make the target 2%\" or \"change the decline to 2%\" (with your number)."}
+    stc = find_structure(low)
+    if stc and cur.kind == "options" and _bare(re.sub(r"\b(?:long|short|calls?|puts?|spreads?|straddles?|strangles?|condors?|iron|credit|debit|bull|bear|vertical|butterfl\w+)\b", " ", rest, flags=re.I)):
+        n.structure = stc
+        return {"action": "modify", "draft": n, "changed": ["structure"], "compare": False}
+    if cur.kind == "options" and cur.structure and re.fullmatch(r"(?:the\s+)?(puts?|calls?)", low):
+        flip = {"long_call": "long_put", "short_call": "short_put", "bull_call_spread": "bear_put_spread", "bear_call_spread": "bull_put_spread"}
+        flip.update({v: k for k, v in flip.items()})
+        want_put = low.strip().endswith(("put", "puts"))
+        n.structure = flip.get(cur.structure, cur.structure) if want_put != ("put" in cur.structure) else cur.structure
+        return {"action": "modify", "draft": n, "changed": ["structure"], "compare": False}
+    if cur.kind == "options" and find_dte(low) is not None and _bare(re.sub(r"\d+\s*-?\s*dte|same[- ]day|zero[- ]dte|weekl\w+|monthl\w+|\d+|days?|weeks?|months?|out", " ", rest, flags=re.I)):
+        n.dte = find_dte(low)
+        return {"action": "modify", "draft": n, "changed": ["dte"], "compare": False}
+    sym = find_symbol(rest, known)
+    if sym and _bare(re.sub(rf"\b{re.escape(sym)}\b", " ", rest, flags=re.I)):
+        n.symbol, n.symbol_stated = sym, True
+        return {"action": "modify", "draft": n, "changed": ["symbol"], "compare": False}
+    return None
+
+
+def unplaced_correction(rest: str) -> dict | None:
+    """What is said when a correction could not be placed by any reader: only for a few words, never for a whole sentence."""
+    if len(rest.split()) > 7:
+        return None
+    return {"action": "clarify", "text": f"I took \"{rest.strip(' .!?')}\" as a correction of the current reading, but could not tell which part it replaces, so nothing was changed. "
+                                         "Name the part, for example \"enter at 10:00 AM Eastern\", \"change the decline to 2%\" or \"use puts instead\"."}
 
 
 def interpret(text: str, current: Draft | None, known_symbols: list[str], last_field: str | None = None, default_symbol: str = "SPY") -> dict:

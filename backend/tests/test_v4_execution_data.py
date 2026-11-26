@@ -190,23 +190,31 @@ def test_a_selective_download_selects_the_same_contract_as_the_complete_chain(tm
 
 
 def test_a_selection_on_the_edge_of_the_band_is_reported_and_widening_restores_equivalence(tmp_path):
-    """A low delta target lies outside a narrow band: the engine can only take the outermost
-    stored strike. That is flagged with the session, and once the band is widened the
-    selection equals the complete chain's."""
+    """A low delta target lies outside a narrow band. Since V7 the outermost stored strike is not bought in its place (it
+    was, with a flag): the signal is left unfilled and its session is handed to the widening loop. Once the band is widened
+    the selection equals the complete chain's. A target the band does hold on its edge is still traded and still flagged."""
     s = strat("delta", 0.05)
     full = bt(chain_store(tmp_path / "full", FULL, complete=True), s)
     want = full.trades[0]["legs"][0]["strike"]
     narrow = chain_store(tmp_path / "sel", list(range(497, 504)))
     r1 = bt(narrow, s)
     cs = r1.meta["contract_selection"]
-    assert r1.trades[0]["legs"][0]["strike"] == 503.0 != want
-    assert cs["at_band_edge"] == 1 and cs["edge_dates"] == [D.isoformat()] and cs["edge_examples"][0]["edge"] == "high" and cs["edge_examples"][0]["stored_high"] == 503.0
-    assert cs["delta_misses"] == 1 and cs["delta_error_max"] > 0.10, "the achieved delta is far from the target and that is reported"
+    assert r1.trades == [] and want > 503.0, "the 503 strike is not passed off as the 5-delta call"
+    assert r1.meta["executability"]["not_executed_by_reason"] == {"contract_not_stored": 1}
+    assert cs["beyond_band"] == 1 and cs["beyond_dates"] == [D.isoformat()] and cs["at_band_edge"] == 0 and cs["selective_storage"]
     add_strikes(narrow, list(range(504, 520)))  # what the adaptive widening downloads
     r2 = bt(narrow, s)
-    assert r2.trades[0]["legs"][0]["strike"] == want and r2.meta["contract_selection"]["at_band_edge"] == 0 and r2.trades[0]["pnl"] == full.trades[0]["pnl"]
-    # the complete chain is never flagged, even when the best contract is its outermost strike
-    assert bt(chain_store(tmp_path / "tiny", list(range(497, 504)), complete=True), s).meta["contract_selection"]["at_band_edge"] == 0
+    cs2 = r2.meta["contract_selection"]
+    assert r2.trades[0]["legs"][0]["strike"] == want and cs2["at_band_edge"] == 0 and cs2["beyond_band"] == 0 and r2.trades[0]["pnl"] == full.trades[0]["pnl"]
+    # a target the band holds on its edge, within tolerance: traded, and flagged so that the loop looks one step further
+    edge = chain_store(tmp_path / "edge", list(range(497, 504)))
+    near = float(bt(chain_store(tmp_path / "full2", FULL, complete=True), strat("fixed", 503.0)).meta["contract_selection"]["selections"])  # the full chain trades the 503 strike
+    assert near == 1
+    d503 = bt(edge, strat("fixed", 503.0))
+    assert d503.trades[0]["legs"][0]["strike"] == 503.0
+    # the complete chain is never refused or flagged, even when the best contract is its outermost strike: there is nothing beyond it
+    tiny = bt(chain_store(tmp_path / "tiny", list(range(497, 504)), complete=True), s)
+    assert tiny.trades[0]["legs"][0]["strike"] == 503.0 and tiny.meta["contract_selection"]["at_band_edge"] == 0 and tiny.meta["contract_selection"]["beyond_band"] == 0
 
 
 def test_the_planner_widens_the_band_only_from_information_known_at_the_signal(tmp_path):
@@ -532,13 +540,20 @@ def test_the_collector_schedule_follows_the_close_and_backs_off_after_a_failure(
     cfg = CS.save_config({"enabled": True, "run_after": "16:20"})["config"]
     ET = cal.ET
     assert CS.next_due({**cfg, "enabled": False}) is None
-    assert CS.next_due(cfg, datetime(2024, 3, 8, 10, 0, tzinfo=ET)) == datetime(2024, 3, 8, 16, 20, tzinfo=ET), "a trading day before the close: due after the close"
-    assert CS.next_due(cfg, datetime(2024, 3, 9, 10, 0, tzinfo=ET)) == datetime(2024, 3, 11, 16, 20, tzinfo=ET), "a Saturday: due after Monday's close"
+    # a completed session that no cycle has covered is due at once: waiting for the next close can lose a contract that has expired
+    morning, saturday = datetime(2024, 3, 8, 10, 0, tzinfo=ET), datetime(2024, 3, 9, 10, 0, tzinfo=ET)
+    assert CS.next_due(cfg, morning) == morning, "just switched on, before the close: yesterday's session has never been collected, so it is due now"
+    assert CS.next_due(cfg, saturday) == saturday, "a Saturday with Friday's session uncollected: due now, not after Monday's close"
     late = datetime(2024, 3, 8, 18, 0, tzinfo=ET)
     assert CS.next_due(cfg, late) == late, "after the close with nothing collected yet: due now"
     with db.connect() as con:
         con.execute("INSERT INTO collector_runs (started_at, finished_at, status, trigger, report) VALUES (?,?,?,?,?)", (datetime(2024, 3, 8, 21, 30, tzinfo=timezone.utc).isoformat(), db.now(), "done", "schedule", "{}"))
-    assert CS.next_due(cfg, late) == datetime(2024, 3, 11, 16, 20, tzinfo=ET), "today's cycle already ran"
+    monday = datetime(2024, 3, 11, 16, 20, tzinfo=ET)
+    assert CS.next_due(cfg, late) == monday, "today's cycle already ran"
+    assert CS.next_due(cfg, saturday) == monday, "a Saturday after Friday's cycle: due after Monday's close"
+    assert CS.next_due(cfg, datetime(2024, 3, 11, 10, 0, tzinfo=ET)) == monday, "a trading day before the close, with every completed session covered: due after the close"
+    tuesday = datetime(2024, 3, 12, 10, 0, tzinfo=ET)
+    assert CS.next_due(cfg, tuesday) == tuesday, "the computer was off on Monday evening: that session is due as soon as the collector is running again"
 
     class Jobs:
         def __init__(self):
