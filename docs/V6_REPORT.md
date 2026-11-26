@@ -54,21 +54,29 @@ priced. (One vendor sample session of bid/ask from 2020-03-06, 09:30 to 12:00, i
 - Options, intraday bid/ask: 0 whole sessions, 1 partial.
 
 **6. How many QQQ and IWM sessions are usable?**
-Unchanged, because only SPY was asked for: QQQ has 2 sessions of Yahoo option bars, IWM none, and
-both have Yahoo's intraday bars only (about 720 sessions, mostly hourly). The same two commands
-download them: `strata download alpaca bars_1m QQQ IWM` and `strata download alpaca option_trades
-QQQ IWM --band 3`. Alpaca's coverage for them has not been measured.
+Both were downloaded from Alpaca after SPY, with the same commands, and checked the same way.
+
+| | QQQ | IWM |
+| --- | --- | --- |
+| Underlying, 1-minute bars | 2,741 whole sessions, 2016-01-04 to 2026-11-25 (1,065,095 bars) | 2,740 whole sessions (2019-08-12 stops at 15:29, as for SPY); 1,065,103 bars |
+| Options, 1-minute trade bars | 711 whole sessions of 718, 2024-01-18 to 2026-11-25; 34,403,727 bars over 300,586 contract-sessions | 711 whole of 718; 10,488,629 bars over 134,700 contract-sessions |
+| Same-day expirations | on all 718 sessions | on 693 of the 718 (none on 25 early sessions) |
+| Stored bars against individual trades | 24 contract-sessions, 36,488 trades: 4,113 of 4,113 bars identical | 24 contract-sessions, 33,186 trades: 3,939 of 3,940 identical |
+| Baseline: ATM 0DTE call at 10:00, out at 15:30, every session | 702 sessions traded, -$5,194.16, 251 winners | 683 sessions traded, -$2,171.84, 236 winners |
+
+The seven sessions that are incomplete for SPY are incomplete for QQQ and IWM too: the holes are in
+the provider's feed. Neither symbol has intraday bid/ask or end-of-day option chains stored.
 
 **7. What is the resolution of each dataset?**
 
 | Dataset | Symbol | Observation | Resolution | Sessions | Period |
 | --- | --- | --- | --- | --- | --- |
 | yahoo underlying | SPY, QQQ, IWM | trade bars | daily | 8,515 / 6,973 / 6,664 | 1993 / 1999 / 2000 to 2026-11-25 |
-| **alpaca underlying** | SPY | trade bars, consolidated tape | 1 minute | 2,741 | 2016-01-04 to 2026-11-25 |
+| **alpaca underlying** | SPY, QQQ, IWM | trade bars, consolidated tape | 1 minute | 2,741 each | 2016-01-04 to 2026-11-25 |
 | yahoo underlying | SPY, QQQ, IWM | trade bars, feed not documented | 1 / 5 / 60 minutes | 21 / 61 / 729 | from 2026-10-27 / 2026-08-31 / 2023-12-27 |
 | cboe | VIX | index level | daily | 9,324 | 1990-01-02 to 2026-11-25 |
 | github_eod | SPY | bid/ask quotes | end of day | 1,495 | 2020-01-02 to 2025-12-12 |
-| **alpaca options** | SPY | trade bars | 1 minute | 718 (711 whole) | 2024-01-18 to 2026-11-25 |
+| **alpaca options** | SPY, QQQ, IWM | trade bars | 1 minute | 718 each (711 whole) | 2024-01-18 to 2026-11-25 |
 | yahoo_options | SPY, QQQ | sampled last prices (see 8) | 1 minute | 7 / 2 | 2026-11-16 to 2026-11-24 |
 | optionsdx (public sample) | SPY | bid/ask snapshots | 5 minutes | 1, partial | 2020-03-06 |
 
@@ -96,6 +104,8 @@ On real observations, through the engine:
 | The same after a fall of 2% or more | 342; 16 | 16 | -$81.80 | -$919.80 to +$429.20 | 8 of 16 |
 | The same after a fall of 1% or more | 1,079; 75 | 75 | +$2,384.50 | -$962.50 to +$4,268.50 | 38 of 75 |
 | Baseline: ATM 0DTE call at 10:00, out at 15:30, every session | 718 | 707 | -$376.14 | not computed | 269 of 707 |
+| The same baseline on QQQ | 718 | 702 | -$5,194.16 | not computed | 251 of 702 |
+| The same baseline on IWM | 718 | 683 | -$2,171.84 | not computed | 236 of 683 |
 
 "Worst to best print" restates a result with every fill taken at the worst, then the best, price
 the contract traded at in the minute the fill came from. Trade bars carry no bid or ask, so this is
@@ -143,7 +153,6 @@ intraday option history covers.
 | ThetaData, ORATS | a subscription and, for ThetaData, its terminal |
 | Model-backed reading of requests, and its evaluation | a model key or a local Ollama |
 | UW data (WRDS TAQ, Bloomberg) | a UW login, an instructor's or Foster's approval for WRDS, and a manual export |
-| QQQ and IWM history from Alpaca | nothing: not requested, one command each |
 
 **12. What credentials or subscriptions do I need to supply?**
 None for what is done. For more: a Databento account (free, with $125 of credit) to reach
@@ -233,7 +242,6 @@ parameters were right and only the key was missing.
 
 - A meaningful test of the original 3% rule: the observations do not exist in any free history.
 - Intraday option history before 2024-01-18 (a Databento account, or $24 of files).
-- QQQ and IWM from Alpaca (not requested).
 - Any measurement of Massive, Databento, ThetaData, ORATS or a language model.
 - A third source to settle which of Alpaca's and Yahoo's option bars is closer to the tape for the
   minutes where they differ (Alpaca's reproduce from its own trades; Yahoo publishes no trades).

@@ -85,7 +85,8 @@ def audit_option_bars(store: MarketStore | None = None, sym: str = "SPY", provid
 
     add("sessions not downloaded", len(absent), f"the exchange was open on {len(absent)} session(s) between {first} and {last} that have no entry in this dataset: nothing was asked for them", absent[-12:])
     add("sessions with no trade at the provider", len(empty), f"{len(empty)} session(s) were asked for and returned no bar for ANY contract: the provider has no option history for them", empty)
-    add("thin sessions", len(thin), f"{len(thin)} session(s) hold less than {THIN:.0%} of the bars of the sessions around them: part of the session is missing at the provider, or it was a short session",
+    add("thin sessions", len(thin), f"{len(thin)} session(s) hold less than {THIN:.0%} of the bars of the sessions around them: part of the session is missing at the provider, it was a short session, "
+        "or the underlying opened far from the previous close and traded away from the stored strikes (the band is taken around the previous close)",
         [f"{d} ({n:,} bars against a median of {m:,})" for d, n, m in thin])
     add("sessions that start late", late.height, f"on {late.height} session(s) the first stored bar is after 09:35 New York time", late["date"].to_list()[-12:])
     add("sessions that stop early", early.height, f"on {early.height} session(s) the last stored bar is more than 6 minutes before the close", early["date"].to_list()[-12:])

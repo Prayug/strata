@@ -50,7 +50,7 @@ ENTRIES = [
        limits=["No historical option prices: the delayed chain is a current snapshot.", "Strata reads the index history files only."], integration="built-in", tested="live: VIX history download"),
     _e("alpaca", "Alpaca Market Data", "broker API", source="alpaca", url="https://docs.alpaca.markets/docs/historical-option-data", account="free signup (paper account is enough)", credentials=["ALPACA_API_KEY", "ALPACA_API_SECRET"],
        data="1-minute option TRADE bars, trades and (with a subscription) OPRA quotes; expired contracts included; 1-minute stock bars since 2016", resolution="1 minute", history="options since 2024-01-18 (measured with a paper key; 2024-02-02 is missing at the provider)",
-       symbols={"SPY": "2024-01-18 onward (measured)", "QQQ": "2024-01 onward (not measured here)", "IWM": "2024-01 onward (not measured here)", "SPX": "index options are not offered"},
+       symbols={"SPY": "2024-01-18 onward (measured)", "QQQ": "2024-01-18 onward (measured)", "IWM": "2024-01-18 onward (measured; no same-day expiration on 25 early sessions)", "SPX": "index options are not offered"},
        pricing={"model": "free key", "summary": "Basic plan free: historical bars are built from OPRA but the latest 15 minutes are withheld, 200 requests a minute. Algo Trader Plus $99 a month: OPRA feed and quotes, 10,000 requests a minute.",
                 "tiers": [{"name": "Basic", "price": 0, "history": "2024-01-18 onward (measured)", "what": "option trade bars (not the latest 15 minutes); indicative feed for live data"}, {"name": "Algo Trader Plus", "price": 99, "history": "the same history", "what": "OPRA quotes and trades"}],
                 "source_url": "https://docs.alpaca.markets/docs/about-market-data-api"},

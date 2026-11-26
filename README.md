@@ -103,8 +103,17 @@ files on the development machine afterwards (`Data > Readiness`, `strata usecase
 
 The option set is 43.4 million bars over 331,147 contract-sessions (629 MB): every contract within
 3% of the previous close expiring within 7 days, calls and puts, on every session, plus the
-contracts the original strategy could select around the opening price on its own sessions. QQQ and
-IWM were not asked for and are unchanged; the same two commands download them.
+contracts the original strategy could select around the opening price on its own sessions.
+
+QQQ and IWM were downloaded afterwards with the same two commands and checked the same way:
+
+| Symbol | 1-minute bars | Option trade bars, 2024-01-18 to 2026-11-25 | Against Alpaca's individual trades | Baseline (ATM 0DTE call 10:00 to 15:30, every session) |
+| --- | --- | --- | --- | --- |
+| QQQ | 2,741 sessions since 2016-01-04 | 718 sessions (711 whole); 34.4 million bars over 300,586 contract-sessions; 506 MB | 24 contract-sessions, 36,488 trades: 4,113 of 4,113 bars identical | 702 sessions traded, -$5,194.16, 251 winners |
+| IWM | 2,741 sessions (2,740 whole) since 2016-01-04 | 718 sessions (711 whole); 10.5 million bars over 134,700 contract-sessions; 154 MB. A same-day expiration is listed on 693 of them | 24 contract-sessions, 33,186 trades: 3,939 of 3,940 bars identical | 683 sessions traded, -$2,171.84, 236 winners |
+
+The same seven early sessions are incomplete for all three symbols, so the holes are in the
+provider's feed, not in one symbol. 2019-08-12 stops at 15:29 for SPY and IWM and is whole for QQQ.
 
 **What the key returns (measured).** `strata access alpaca`, about 140 read-only requests:
 - 100 of 100 expired contract-sessions on ten dates (2024-02-14 to 2026-11-18) returned one-minute
@@ -998,8 +1007,7 @@ scripts/       setup.sh · dev.sh · init_db.sh · docker-entrypoint.sh
   approximation of what could have been filled.
 - **Not exercised against live endpoints here:** the paid-provider adapters (Massive, Databento,
   ThetaData, ORATS) and the language-model providers (mocked transport plus opt-in live tests).
-  Alpaca and the macOS Keychain were exercised for real on 2026-11-25; Alpaca's coverage for QQQ
-  and IWM was not measured.
+  Alpaca and the macOS Keychain were exercised for real on 2026-11-25, for SPY, QQQ and IWM.
 - **Two free sources disagree about option minutes.** Where Alpaca and Yahoo hold the same contract
   and minute, the close differs on 45% of them. Alpaca's bars reproduce from its own trade records
   and are used first; no third source was available to settle which is closer to the tape.
