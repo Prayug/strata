@@ -1,0 +1,282 @@
+{
+ "written": "2026-11-27T00:10:27-0800",
+ "studies": [
+  {
+   "question": "How often does SPY close above its open on Mondays?",
+   "kind": "frequency",
+   "app": [
+    861,
+    1601
+   ],
+   "reference": [
+    861,
+    1601
+   ],
+   "same": true
+  },
+  {
+   "question": "When QQQ gaps down 0.5% or more, how often does it fill the gap the same day?",
+   "kind": "frequency",
+   "app": [
+    616,
+    1257
+   ],
+   "reference": [
+    616,
+    1257
+   ],
+   "same": true
+  },
+  {
+   "question": "How often does IWM close above the previous close the day after a 1.5% down day?",
+   "kind": "frequency",
+   "app": [
+    438,
+    812
+   ],
+   "reference": [
+    438,
+    812
+   ],
+   "same": true
+  },
+  {
+   "question": "How often does SPY rise 0.7% from the open before noon ET?",
+   "kind": "frequency",
+   "app": [
+    350,
+    2740
+   ],
+   "reference": [
+    350,
+    2740
+   ],
+   "same": true
+  },
+  {
+   "question": "How often does QQQ close below its open when VIX was above 30 the previous day?",
+   "kind": "frequency",
+   "app": [
+    289,
+    623
+   ],
+   "reference": [
+    289,
+    623
+   ],
+   "same": true
+  },
+  {
+   "question": "After 4 down days in a row, how often does SPY close higher?",
+   "kind": "frequency",
+   "app": [
+    186,
+    289
+   ],
+   "reference": [
+    186,
+    289
+   ],
+   "same": true
+  },
+  {
+   "question": "How often does IWM trade below the previous day's low after a gap down of 0.3%?",
+   "kind": "frequency",
+   "app": [
+    1285,
+    1653
+   ],
+   "reference": [
+    1285,
+    1653
+   ],
+   "same": true
+  },
+  {
+   "question": "how often does qqq close above its open after the first 15 minute candle is green",
+   "kind": "frequency",
+   "app": [
+    962,
+    1422
+   ],
+   "reference": [
+    962,
+    1422
+   ],
+   "same": true
+  },
+  {
+   "question": "How often does SPY close below the previous close the day after a 2.5% up day?",
+   "kind": "frequency",
+   "app": [
+    77,
+    152
+   ],
+   "reference": [
+    77,
+    152
+   ],
+   "same": true
+  },
+  {
+   "question": "How often does IWM close above its open when the first 30 minute candle is red?",
+   "kind": "frequency",
+   "app": [
+    438,
+    1376
+   ],
+   "reference": [
+    438,
+    1376
+   ],
+   "same": true
+  },
+  {
+   "question": "How often does QQQ touch -0.8% from the open before 11:30 ET after a gap up of 0.5%?",
+   "kind": "frequency",
+   "app": [
+    172,
+    599
+   ],
+   "reference": [
+    172,
+    599
+   ],
+   "same": true
+  },
+  {
+   "question": "After 3 up days in a row, how often does IWM close below its open?",
+   "kind": "frequency",
+   "app": [
+    451,
+    923
+   ],
+   "reference": [
+    451,
+    923
+   ],
+   "same": true
+  },
+  {
+   "question": "What does SPY do in the first two hours after a 1% gap up?",
+   "kind": "movement",
+   "app": [
+    118,
+    0.0158
+   ],
+   "reference": [
+    118,
+    0.0158
+   ],
+   "same": true
+  },
+  {
+   "question": "What happens to IWM the day after a 2% down day?",
+   "kind": "movement",
+   "app": [
+    456,
+    0.1643
+   ],
+   "reference": [
+    456,
+    0.1643
+   ],
+   "same": true
+  },
+  {
+   "question": "average move from 11am ET to the close on Thursdays for QQQ",
+   "kind": "movement",
+   "app": [
+    552,
+    -0.018
+   ],
+   "reference": [
+    552,
+    -0.018
+   ],
+   "same": true
+  }
+ ],
+ "profiles": [
+  {
+   "what": "SPY: half hour of the day's high",
+   "app": [
+    "09:30",
+    2740,
+    24.416
+   ],
+   "reference": [
+    "09:30",
+    2740,
+    24.416
+   ],
+   "same": true
+  },
+  {
+   "what": "SPY: gaps of 1% or more",
+   "app": [
+    353,
+    8514
+   ],
+   "reference": [
+    353,
+    8514
+   ],
+   "same": true
+  }
+ ],
+ "agreement": [
+  {
+   "question": "Does the first 15-minute candle predict the rest of the day for IWM?",
+   "check": {
+    "status": "same",
+    "text": "Recalculated independently from the stored bars: every agreement count is the same.",
+    "method": "a second calculation written apart from the engines, in SQL on the stored files (strata.research.reference)"
+   }
+  },
+  {
+   "question": "how often does the first 30 minute candle of QQQ agree with the whole day?",
+   "check": {
+    "status": "same",
+    "text": "Recalculated independently from the stored bars: every agreement count is the same.",
+    "method": "a second calculation written apart from the engines, in SQL on the stored files (strata.research.reference)"
+   }
+  }
+ ],
+ "backtests": [
+  {
+   "strategy": "Buy 1 ATM QQQ 0DTE call at 9:45 ET after a down day, sell at 14:30 ET, using option trade prices",
+   "app_trades": 311,
+   "app_pnl": 6032.7,
+   "reference_trades": 311,
+   "reference_pnl": 6032.7,
+   "same": 311,
+   "different": [],
+   "only_app": [],
+   "only_reference": [],
+   "seconds": 56.3
+  },
+  {
+   "strategy": "Buy 2 ATM IWM 0DTE puts at 10:15 ET after a 0.5% up day, sell at 15:00 ET, using option trade prices",
+   "app_trades": 242,
+   "app_pnl": 3210.8,
+   "reference_trades": 242,
+   "reference_pnl": 3210.8,
+   "same": 242,
+   "different": [],
+   "only_app": [],
+   "only_reference": [],
+   "seconds": 50.2
+  }
+ ],
+ "summary": {
+  "studies_same": 15,
+  "studies": 15,
+  "profiles_same": 2,
+  "profiles": 2,
+  "agreement_same": 2,
+  "agreement": 2,
+  "trades_same": 553,
+  "trades": 553
+ }
+}

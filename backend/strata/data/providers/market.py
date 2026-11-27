@@ -231,7 +231,18 @@ def needs_of(config: dict, store=None, max_signals: int = 4000) -> dict:
     cfg = BacktestConfig.model_validate(config)
     strat = cfg.strategies[0]
     sigs = scan_signals(cfg, store)
-    signals = sigs.get("signals", [])[:max_signals]
+    every = sigs.get("signals", [])
+    # V9: this kept the FIRST max_signals signals, so a rule firing on more sessions than that (an entry at the open on
+    # SPY's daily history since 1993) was previewed on its oldest sessions only, where no option prices exist, and said
+    # none could be priced. Every session is kept; past the cap only each session's first signal is listed (the readiness
+    # check uses no other).
+    if len(every) > max_signals:
+        firsts: dict = {}
+        for s in every:
+            firsts.setdefault(str(s.get("date")), s)
+        signals = list(firsts.values())
+    else:
+        signals = every
     hold = PL.hold_sessions(strat)
     legs = [l for l in strat.legs if l.kind == "option"]
     per_side = 2 * 6 + 1  # the planner's default strike band: about six strikes either side of each leg's target
@@ -270,7 +281,7 @@ def needs_of(config: dict, store=None, max_signals: int = 4000) -> dict:
                           + (f"On {len(absent)} of them no such expiration was listed: those sessions cannot be tested with any data. " if absent else "")
                           + (f"For the other {len(days) - known} it is not established here." if len(days) > known else ""))}
     return {"no_contract_days": absent, "contract_existence": existence, "sessions_with_intraday_quotes": intraday_q, "signal_list": signals, "not_evaluable": {k: len(v) for k, v in (sigs.get("excluded") or {}).items()},
-            "symbol": strat.symbol, "signals": len(signals), "signal_sessions": len(days), "first": days[0] if days else None, "last": days[-1] if days else None, "hold_sessions": hold, "option_legs": len(legs),
+            "symbol": strat.symbol, "signals": len(every), "signal_sessions": len(days), "first": days[0] if days else None, "last": days[-1] if days else None, "hold_sessions": hold, "option_legs": len(legs),
             "contracts_per_signal": contracts, "sessions_per_signal": hold + 1, "days": days, "pricing": mode, "sessions_with_quotes": sum(1 for d in days if d in have_q), "sessions_with_trades": sum(1 for d in days if d in have_t),
             "excluded_sessions": len({d for v in (sigs.get("excluded") or {}).values() for d in v}), "sessions_scanned": sigs.get("sessions"), # an end-of-day chain is one snapshot at the close: any entry before it (the open included) needs intraday option prices
             "intraday": any(int(s.get("minute", 570)) < 955 for s in signals) or any(l.dte == 0 for l in legs)}
@@ -320,7 +331,7 @@ def estimate(need: dict, today: date | None = None) -> dict:
             row["notes"].append("None of the signal sessions fall inside this source's history.")
         rows.append(row)
     rows.sort(key=lambda r: (-(r["coverage_pct"] or 0), r["dollars"] if r["dollars"] is not None else 1e9))
-    return {"need": {k: v for k, v in need.items() if k not in ("days", "no_contract_days")}, "sources": rows,
+    return {"need": {k: v for k, v in need.items() if k not in ("days", "no_contract_days", "signal_list")}, "sources": rows,
             "notes": ["Signals are found by scanning the underlying only, so no option data is needed to produce this estimate.",
                       "Nothing here is started automatically. A free source is downloaded when you run the backtest (large downloads ask first); a paid one is never called without your approval of its quoted cost.",
                       "Dollar figures are the providers' published subscription prices on " + CHECKED + ", not charges Strata can see or control."]}

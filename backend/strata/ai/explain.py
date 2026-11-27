@@ -5,6 +5,10 @@ backtest or study result. The default narrative is assembled deterministically f
 facts. When a language model is configured it may rephrase the same facts, but its text is
 checked token by token: any number that does not match a fact (or a parameter of the
 request) causes the model's text to be discarded in favour of the deterministic one.
+
+V9: that check cannot see a true number attached to the wrong quantity, which a model did
+("closed above its open in 2,741 sessions out of 2,741"), so results shown to the user use
+the deterministic narrative only (Agent.finalize); the rephrasing stays available here.
 """
 from __future__ import annotations
 

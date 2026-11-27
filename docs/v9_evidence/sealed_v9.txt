@@ -1,0 +1,18 @@
+Strata V9 sealed evaluation set
+written: 2026-11-26T22:40:39-08:00 (before any V9 change to the readers, the model reader, the conversation layer or sizing)
+file: backend/strata/ai/evalset_v9.py (SEALED, SEALED_CONVERSATIONS, SEALED_ANSWERS, FORBIDDEN)
+items: 62 single requests (52 supported with a run as the right response), 7 conversations (31 turns), 12 numerical answers
+sha256(sealed_payload): 868db97d358ffaadcca113cc37d48e37adc318237a87c28a5d0bd2bec389d1e9
+author: the same author as the code; no independent author was available
+rule: not run, edited or used for tuning during development; scored once at the end of V9
+
+Pre-registration (written 2026-11-27T00:05:29-0800, before any sealed item was run):
+  configurations, each scored once on SEALED + SEALED_CONVERSATIONS, nothing tuned between or after:
+    A  built-in readers only (the default installation: no language model selected)
+    B  llm.mode auto with the local model qwen3:8b = rules_first   <- PRIMARY (the V9 default when a local model is selected)
+    C  llm.mode model_first with qwen3:8b
+  SEALED_ANSWERS scored once, with configuration B.
+  The code is frozen at the state of this commit's working tree; the sealed-set hash is unchanged (868db97d...).
+  Disclosed before scoring: v9c7 turns 1-2 paraphrase examples of the V9 brief (development material); the sizing reader
+  (converse.sizing_from_text) was spot-checked on sentences close to four sealed sizing items, so those items are not
+  independent; all items were written by the author of the code.

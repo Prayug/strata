@@ -112,3 +112,24 @@ def history(limit: int = 40):
         out.append({"id": s["id"], "title": s.get("title") or "", "question": (first.get("text") if isinstance(first, dict) else str(first))[:280],
                     "questions": len(qs), "findings": found[-3:], "updated": s.get("updated_at"), "created": s.get("created_at")})
     return J(out)
+
+
+class SelectionReq(BaseModel):
+    session_id: str
+    ids: list[str] = []
+    what: str = "days"
+
+
+@router.post("/api/v8/selection")
+def selection(req: SelectionReq):
+    """Observations picked in the explore sheet, so that the next question can be about them ("what sets them apart?"). A
+    selection belongs to the result it was made on and is not used once another result is shown."""
+    from strata.api import db
+    s = db.get_session(req.session_id)
+    if s is None:
+        raise HTTPException(404, "session not found")
+    st = s.get("state") if isinstance(s.get("state"), dict) else {}
+    latest = next((m["id"] for m in reversed(db.list_messages(req.session_id)) if m["kind"] == "result"), None)
+    st = {**st, "selection": ({"ids": [str(x) for x in req.ids][:5000], "what": req.what, "result": latest} if req.ids else None)}
+    db.update_session(req.session_id, state=st)
+    return {"ok": True, "count": len(req.ids)}

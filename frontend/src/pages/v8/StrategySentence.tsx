@@ -86,6 +86,49 @@ function TimeEdit({ value, onSave, zone, setZone, allowClose }: { value: string 
   );
 }
 
+/* position sizing in a trader's terms (V9): what each trade buys, and what "risk" means for it */
+const SIZE_MODES: [string, string, string][] = [["contracts", "contracts per trade", ""], ["dollars", "dollars of premium per trade", "$"], ["risk_dollars", "dollars at risk per trade", "$"],
+  ["risk_pct", "% of the account at risk per trade", "%"], ["equity_pct", "% of the account in premium per trade", "%"]];
+
+export function sizeText(d: any): string {
+  const s = d.sizing;
+  if (!s || s.mode === "contracts") return `${d.quantity || 1} contract${(d.quantity || 1) === 1 ? "" : "s"}`;
+  const v = Number(s.value);
+  const base = s.mode === "dollars" ? `$${v.toLocaleString()} of premium` : s.mode === "risk_dollars" ? `$${v.toLocaleString()} at risk` : s.mode === "risk_pct" ? `${v}% of the account at risk` : `${v}% of the account in premium`;
+  const extra = [s.capital ? `from a $${Number(s.capital).toLocaleString()} account` : "", ["risk_pct", "equity_pct"].includes(s.mode) ? (s.reinvest ? "reinvesting profits" : "of the starting account") : "",
+    s.daily_loss_stop ? `stopping for the day after losing $${Number(s.daily_loss_stop).toLocaleString()}` : ""].filter(Boolean);
+  return [base, ...extra].join(", ");
+}
+
+function SizeEdit({ d, onSave }: { d: any; onSave: (patch: any) => void }) {
+  const s = d.sizing || { mode: "contracts", value: d.quantity || 1 };
+  const [mode, setMode] = useState<string>(s.mode);
+  const [v, setV] = useState<string>(String(s.mode === "contracts" ? d.quantity || 1 : s.value));
+  const [cap, setCap] = useState<string>(s.capital ? String(s.capital) : "");
+  const [re, setRe] = useState<boolean>(!!s.reinvest);
+  const [stop, setStop] = useState<string>(s.daily_loss_stop ? String(s.daily_loss_stop) : "");
+  const unit = SIZE_MODES.find((m) => m[0] === mode)?.[2] || "";
+  const save = () => {
+    const n = Number(v);
+    if (!(n > 0)) return;
+    if (mode === "contracts" && !cap && !stop) { onSave({ quantity: Math.max(1, Math.round(n)), sizing: null }); return; }
+    onSave({ quantity: mode === "contracts" ? Math.max(1, Math.round(n)) : 1, sizing: { mode, value: mode === "contracts" ? Math.round(n) : n, capital: cap ? Number(cap) : null, reinvest: re, daily_loss_stop: stop ? Number(stop) : null, text: "" } });
+  };
+  return (
+    <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); save(); }} data-testid="size-edit">
+      <select value={mode} onChange={(e) => setMode(e.target.value)} className="h-8 border bg-transparent px-1" style={{ borderColor: "var(--rule-2)" }}>
+        {SIZE_MODES.map(([k, l]) => <option key={k} value={k} style={{ background: "#191c22" }}>{l}</option>)}
+      </select>
+      <div className="flex items-center gap-2">{unit === "$" && <span className="mute">$</span>}<input autoFocus type="number" step={mode === "contracts" ? 1 : 0.5} value={v} onChange={(e) => setV(e.target.value)} className="h-8 w-28 border bg-transparent px-2 num" style={{ borderColor: "var(--rule-2)" }} />{unit === "%" && <span className="mute">%</span>}</div>
+      <label className="small flex items-center gap-2"><span className="mute w-[130px]">Starting account $</span><input type="number" value={cap} placeholder="100,000" onChange={(e) => setCap(e.target.value)} className="h-8 w-28 border bg-transparent px-2 num" style={{ borderColor: "var(--rule-2)" }} /></label>
+      {["risk_pct", "equity_pct"].includes(mode) && <label className="small flex items-center gap-2"><input type="checkbox" checked={re} onChange={(e) => setRe(e.target.checked)} />Reinvest profits (size from the current account)</label>}
+      <label className="small flex items-center gap-2"><span className="mute w-[130px]">Stop for the day after losing $</span><input type="number" value={stop} onChange={(e) => setStop(e.target.value)} className="h-8 w-28 border bg-transparent px-2 num" style={{ borderColor: "var(--rule-2)" }} /></label>
+      <div className="tiny mute">{mode === "risk_dollars" || mode === "risk_pct" ? (d.premium_stop_pct ? `Risk is the loss if the ${d.premium_stop_pct}% stop is hit (premium × ${d.premium_stop_pct}%); a stop can be jumped.` : "With no stop, risk is the whole premium paid.") : mode === "dollars" ? "As many whole contracts as the budget buys; none when one contract costs more." : ""}</div>
+      <button className="act primary" type="submit">Set</button>
+    </form>
+  );
+}
+
 export function describeChange(before: any, after: any, zone: number): string[] {
   const out: string[] = [];
   const name = (k: string, v: any) => {
@@ -98,7 +141,8 @@ export function describeChange(before: any, after: any, zone: number): string[] 
   };
   const label: Record<string, string> = { symbol: "the ticker", structure: "the position", dte: "the expiration", entry_time: "the entry time", exit_time: "the exit time", premium_target_pct: "the profit target",
     premium_stop_pct: "the stop", underlying_target_pct: "the target on the underlying", underlying_stop_pct: "the stop on the underlying", quantity: "the number of contracts" };
-  for (const k of Object.keys(label)) if (JSON.stringify(before?.[k] ?? null) !== JSON.stringify(after?.[k] ?? null)) out.push(`Changed ${label[k]} from ${name(k, before?.[k])} to ${name(k, after?.[k])}.`);
+  for (const k of Object.keys(label)) if (k !== "quantity" && JSON.stringify(before?.[k] ?? null) !== JSON.stringify(after?.[k] ?? null)) out.push(`Changed ${label[k]} from ${name(k, before?.[k])} to ${name(k, after?.[k])}.`);
+  if (sizeText(before || {}) !== sizeText(after || {})) out.push(`Changed the size of each trade from ${sizeText(before || {})} to ${sizeText(after || {})}.`);
   const bc = (before?.conditions || []).map((c: any) => c.text || c.expr), ac = (after?.conditions || []).map((c: any) => c.text || c.expr);
   for (const c of ac) if (!bc.includes(c)) out.push(`Added: only when ${c}.`);
   for (const c of bc) if (!ac.includes(c)) out.push(`Removed: ${c}.`);
@@ -182,6 +226,10 @@ export function StrategySentence({ draft, symbols, onRun, busy }: { draft: any; 
       <div className="mt-2">
         Close any remaining position at <span className="relative inline-block"><Slot testid="slot-exit" onClick={() => setOpen("exit")}>{exit}</Slot>
           <Pop open={open === "exit"} onClose={() => setOpen(null)}><TimeEdit value={d.exit_time && d.exit_time !== "close" ? d.exit_time : "15:55"} zone={zone} setZone={setZone} allowClose onSave={(et) => set({ exit_time: et, exit_time_stated: null, hold_minutes: null })} /></Pop></span>.
+      </div>
+      <div className="mt-2">
+        Size each trade at <span className="relative inline-block"><Slot testid="slot-size" onClick={() => setOpen("size")}>{sizeText(d)}</Slot>
+          <Pop open={open === "size"} onClose={() => setOpen(null)}><SizeEdit d={d} onSave={(patch) => set(patch)} /></Pop></span>.
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3" style={{ fontFamily: "var(--font-sans)", fontSize: 14, lineHeight: 1.5 }}>
         {changes.length > 0 ? (

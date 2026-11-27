@@ -365,8 +365,12 @@ def test_stateful_strategy_requests_are_not_mistaken_for_hypotheses(tmp_settings
                  "How often does TST rise 1% after a 3% down day?"):
         r, _, _ = ag.interpret(sid, text, None, None, None)
         assert r["action"] == "new", (text, r["action"])
+    # V9: a question whether the first candle predicts the rest of the session is answered by the agreement reading (the same
+    # engine as every other phrasing of it); the hypothesis lab keeps requests worded as hypotheses to investigate
     r, _, _ = ag.interpret(sid, "Does the first 15-minute candle predict the rest of the session for TST?", None, None, None)
-    assert r["action"] == "hypothesis" and r["plan"]["symbol"] == "TST"
+    assert r["action"] == "investigate" and r["plan"]["kind"] in ("first_candle", "agreement") and r["plan"]["symbol"] == "TST"
+    r, _, _ = ag.interpret(sid, "Investigate the hypothesis that a large gap down on TST tends to reverse by the close", None, None, None)
+    assert r["action"] in ("hypothesis", "investigate", "discover", "graph"), r["action"]
 
 
 def test_structure_variants_cover_both_sides_and_the_stated_exits():

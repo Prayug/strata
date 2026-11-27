@@ -45,6 +45,14 @@ _BARE_COMPARE_WORDS = set("compare comparing comparison both them the two these 
                           "please can you could now ok okay so lets let's show me it that this a of vs versus against new latest current".split())
 
 
+def _names_a_kind(text: str) -> bool:
+    """Does a follow-up ask for a different kind of answer ("how often", "when during the day", "by weekday", "predict")?
+    A conversational lead-in ("what happens if", "what about") does not."""
+    low = text.lower()
+    return bool(re.search(r"\bhow often\b|\bodds\b|\bchance\b|\bwhat (?:%|percent)|\bwhen during\b|\bwhat time\b|\bwhich (?:half ?hour|hour|weekday|day of the week|month)\b|"
+                          r"\bby (?:weekday|month)\b|\bpredict|\btypical (?:path|move)\b|\bhow (?:far|much) does\b|\baverage move\b", low))
+
+
 def bare_compare(text: str) -> bool:
     """'Compare both', 'compare them side by side', 'compare with the previous one': nothing but the request to compare.
     'Change the decline to 3.8% and compare the results' is a change that also asks for a comparison."""
@@ -59,6 +67,15 @@ def wants_compare(text: str) -> bool:
 
 
 OLD_FILTER = {"miss": "loss", "losers": "loss", "wrong": "loss", "worst": "loss", "hit": "win", "winners": "win", "right": "win", "best": "win"}
+# V9, for the built-in path (the model reader names these itself)
+NEXT_STEPS = re.compile(r"\bwhat (?:would|should|do|could) (?:you|i|we) (?:investigate|look at|look into|test|try|check|do|explore) next\b|\bwhat(?:'s| is)? next\b|\bnext steps?\b|\bwhere (?:would|should|do) (?:you|i|we) (?:look|go) next\b|\bwhat else should i (?:test|check|look at)\b", re.I)
+ABOUT_SELECTION = re.compile(r"\b(?:anything|something) (?:interesting|unusual|special|different|notable|odd)\b.*\b(?:trades?|days?|sessions?|losers?|winners?|those|these|them)\b|\b(?:anything|something|what) (?:do )?(?:those|these|the|they) (?:days|trades|sessions)? ?(?:have )?in common\b|\bwhat (?:sets|set|makes) (?:the |those |these )?(?:selected|chosen|losing|winning|losers|winners|bad|good|worst|best)\b|\b(?:selected|chosen) (?:days|trades|sessions)\b", re.I)
+
+
+def _selection_filter(text: str) -> str:
+    low = text.lower()
+    return "winning" if re.search(r"\bwin|\bwinners?\b|\bright\b|\bgood\b|\bworked\b", low) else "best" if re.search(r"\bbest\b", low) else \
+        "worst" if re.search(r"\bworst\b", low) else "losing"
 
 
 def _explore_filter(text: str, kind: str | None) -> str:
@@ -82,6 +99,193 @@ class ResearchV8:
         st = (s or {}).get("state") if isinstance((s or {}).get("state"), dict) else {}
         return sid, st or {}
 
+    # ------------------------------------------------------------------------------------------- V9: the model reads first
+    def _model_route(self, llm, text: str, current, known: list[str], default_symbol: str) -> tuple[dict | None, str | None, str]:
+        """The language model's reading of the message, checked part by part (model_reader.py). Returns (route, note, reader).
+        A route of None hands the message to the deterministic readers (the note says why when it matters)."""
+        from strata.ai import model_reader as MR
+        from strata.ai.llm import LLMError
+        sid, st = self._v8_state()
+        frame, pending = st.get("frame"), st.get("pending")
+        if pending and CV.answer_clarification(text, pending) is not None:
+            return None, None, "built-in rules"  # the answer to a question just asked: the buttons' own path
+        result_kind = None
+        if sid:
+            lr = self._latest_result(sid)
+            result_kind = ((lr or {}).get("content") or {}).get("view") if lr else None
+        ctx = MR.context_of(frame, current, result_kind, [{"role": h["role"], "text": h["content"][:240]} for h in self._history(sid)][-4:] if sid else [], st.get("selection"))
+        MR.reset()
+        try:
+            raw = MR.ask_model(llm, text, ctx)
+        except LLMError as e:
+            return self._model_failed(llm.name, str(e)[:160], text)
+        self._tl.model_raw = raw
+        act = raw.get("act") if isinstance(raw, dict) else None
+        if act not in ("ask", "strategy", "edit", "command", "unsupported", "unclear"):
+            return self._model_failed(llm.name, "the reply is not a reading in Strata's question language", text)
+        bad = MR.invalid(raw)
+        if bad:
+            return self._model_failed(llm.name, bad, text)
+        name = llm.name
+        has = bool(frame and frame.get("kind") in CV.QUESTION_KINDS) or current is not None
+        low = text.lower()
+        # what this reading cannot express goes to the readers that can: ordered events, grids of settings, several symbols
+        if re.search(r"\bthen\b|\bafter that\b|\bfirst\b.{0,40}\b(?:and|then)\b.{0,30}\b(?:back|falls?|drops?|rises?|reclaims?|fails?)\b", low) and act in ("strategy", "edit"):
+            return None, None, "built-in rules"
+        if re.search(r"\bcompare\b.{0,60}\b(?:\d+\s*dte|\d+:\d\d|\d+%)\b.{0,20}\b(?:and|vs|versus|or)\b|\bfrom \d+(?:\.\d+)?%? to \d+(?:\.\d+)?%?\b|\bevery \d+ minutes\b|\bsteps?\b", low):
+            return None, None, "built-in rules"
+        if act == "edit" and not has:
+            act = "strategy" if raw.get("strat") else "ask"
+        # ---- actions on what is on screen
+        if act == "command":
+            cmd = raw.get("cmd")
+            if not has and cmd not in ("teach",):
+                return {"action": "clarify", "text": "There is no result in this conversation yet. Ask a question or describe a strategy first, and then ask about it."}, None, name
+            if cmd == "undo":
+                return {"action": "undo"}, None, name
+            if cmd == "compare":
+                return {"action": "compare_versions"}, None, name
+            if cmd == "explore":
+                k = (frame or {}).get("kind") or ("strategy" if current is not None and current.kind == "options" else "frequency")
+                f = raw.get("filter") or _explore_filter(text, k)
+                return {"action": "show_trades", "filter": OLD_FILTER.get(f, "all"), "explore_filter": f}, None, name
+            if cmd == "explain":
+                w = WHICH_TRADE.search(text)
+                if current is not None and current.kind == "options":
+                    return {"action": "explain_trade", "which": (w.group(1).lower() if w else "worst")}, None, name
+                topic = TEACH.topic_of(text) or "chart"
+                return {"action": "teach", "topic": topic}, None, name
+            if cmd == "teach":
+                return {"action": "teach", "topic": TEACH.topic_of(text) or "chart"}, None, name
+            if cmd == "reliability":
+                return {"action": "robustness"}, None, name
+            if cmd == "next":
+                return {"action": "next_steps"}, None, name
+            if cmd == "about_selection":
+                return {"action": "about_selection", "filter": raw.get("filter") or "all", "question": text}, None, name
+            if cmd == "prices":
+                return {"action": "fills"}, None, name
+            return None, None, "built-in rules"
+        if act == "unsupported":
+            u = raw.get("unsupported") or {}
+            det = SM.read(text, known, default_symbol)
+            tickers = [t for t in re.findall(r"\b[A-Z]{2,5}\b", text) if t not in ("ET", "PT", "CT", "MT", "EST", "PST", "AM", "PM", "DTE", "ATM", "OTM", "ITM", "VWAP", "RSI", "EOD", "CPI", "FOMC") and t not in known]
+            grounds = det.flag or tickers or re.search(r"\b(?:will|gonna|going to)\b.{0,30}\b(?:tomorrow|next week|today)\b|\bfomc|\bfed\b|\bcpi\b|\bnfp\b|\bjobs report|\bearnings|\bopex|\brsi\b|\bmacd\b|moving average|\bsma\b|\bema\b|bollinger|\b(?:19\d\d|20(?:0\d|1\d|2[0-3]))\b", low)
+            if not grounds:
+                return None, None, "built-in rules"  # the model's "cannot be answered" has no deterministic ground: the readers try
+            why = (u.get("why") or "").strip().rstrip(".")
+            closest = (u.get("closest") or "").strip()
+            ok_closest = closest and not MR.find_quote(closest, text) and len(closest) > 12
+            txt = f"That cannot be answered from the stored data: {why}." if why else "That cannot be answered from the stored data."
+            det = SM.read(text, known, default_symbol)
+            if det.flag:
+                txt = det.flag  # the deterministic reason, when there is one, is the one shown
+            return {"action": "clarify", "declined": True, "text": txt + (" Nothing was run." if not ok_closest else " Nothing was run. The closest question that can be answered:"),
+                    "options": ([{"label": closest, "ask": closest}] if ok_closest else [])}, None, name
+        if act == "unclear":
+            u = raw.get("unclear") or {}
+            det = SM.read(text, known, default_symbol)
+            if det.complete and det.frame.get("kind") in CV.QUESTION_KINDS:
+                return None, None, "built-in rules"  # the built-in reader read every part of it: no reason to ask
+            opts = [o for o in (u.get("opts") or []) if isinstance(o, str) and len(o) > 8][:3]
+            return {"action": "clarify", "text": (u.get("ask") or "Which part do you mean?").strip(), "options": [{"label": o, "ask": o} for o in opts]}, None, name
+        # ---- a strategy, or a change to the strategy on screen
+        strat_edit = act == "edit" and current is not None and current.kind == "options" and not (frame and frame.get("kind") in CV.QUESTION_KINDS)
+        if act == "strategy" or strat_edit or (act == "edit" and raw.get("strat") and frame and frame.get("kind") in CV.QUESTION_KINDS):
+            base = current if strat_edit else None
+            if act == "edit" and not strat_edit and frame:
+                # "what if I bought calls instead": the question's condition traded (the V8 conversion), then the model's parts on top
+                conv = CV.to_strategy(frame, text)
+                base = conv["draft"]
+            d, problems, quotes, changed = MR.strategy_draft(raw, text, known, default_symbol, base)
+            unknown = next((p_ for p_ in problems if p_.startswith("no price history for")), None)
+            if unknown:
+                sym_ = unknown.split("for ")[1].split(" ")[0]
+                return {"action": "clarify", "declined": True, "text": f"No price history for {sym_} is stored, so it cannot be backtested. Stored: {', '.join(k for k in known if k != 'VIX')}. Nothing was run.",
+                        "options": [{"label": re.sub(re.escape(sym_), "SPY", text, flags=re.I), "ask": re.sub(re.escape(sym_), "SPY", text, flags=re.I)}]}, None, name
+            left = MR.coverage(text, quotes, known)
+            if problems or left:
+                return None, (f"The language model's reading ({name}) left part of this unplaced ({'; '.join((problems + [f'not placed: {x}' for x in left])[:3])}), so the built-in reader read it." ), "built-in rules"
+            if base is not None and strat_edit:
+                from strata.ai.draft import diff_drafts
+                ch = [x["field"] for x in diff_drafts(current, d)]
+                if not ch:
+                    return {"action": "noop", "text": "That does not change anything in the current strategy."}, None, name
+                return {"action": "modify", "draft": d, "changed": ch, "compare": wants_compare(text), "edit": True}, None, name
+            if base is not None:
+                nf = {"kind": "strategy", "symbol": d.symbol, "draft": d.model_dump(mode="json"), "text": text}
+                return {"action": "new", "draft": d, "frame": nf, "edit": True, "changes": CV.summary(frame, nf), "assumptions": conv["assumptions"]}, None, name
+            return {"action": "new", "draft": d, "sweep": None, "model_checked": True}, None, name
+        # ---- a question, or a change to the question on screen
+        if act in ("ask", "edit"):
+            base = frame if (act == "edit" and frame and frame.get("kind") in CV.QUESTION_KINDS) else None
+            f, problems, quotes = MR.question_frame(raw, text, known, frame.get("symbol") if base else default_symbol, base)
+            if f and f.get("kind") == "unsupported":
+                return {"action": "clarify", "declined": True, "text": f"{f['why']} Stored: {', '.join(known)}. Nothing was run.",
+                        "options": [{"label": re.sub(re.escape(f['symbol']), s, text, flags=re.I), "ask": re.sub(re.escape(f['symbol']), s, text, flags=re.I)} for s in ("SPY", "QQQ") if s in known]}, None, name
+            also = [((raw.get("candle") or {}).get("q") or "")]
+            left = MR.coverage(text, quotes + [x for x in also if x], known)
+            if base is not None:
+                left = [x for x in left if not re.fullmatch(r"(?i)(?:instead|actually|rather|nah|no|use|try|make it|what about|how about|only|just|also|too|and)", x.strip())]
+            if f is None or f.get("kind") not in CV.QUESTION_KINDS or problems or left:
+                det = SM.read(text, known, default_symbol) if base is None else None
+                why = "; ".join((problems + [f"not placed: \"{x}\"" for x in left])[:3])
+                if det is not None and det.complete and det.frame.get("kind") in CV.QUESTION_KINDS:
+                    return None, f"The language model's reading ({name}) was incomplete ({why}); the built-in reader read every part, so its reading is used.", "built-in rules"
+                return None, f"The language model's reading ({name}) could not be checked ({why}); the built-in reader read this message.", "built-in rules"
+            if base is not None:
+                ch = CV.summary(base, f)
+                if not ch:
+                    return {"action": "noop", "text": "That does not change anything in the current question."}, None, name
+                route = SM.to_route(SM.Reading(text=f.get("text") or text, frame=f, mentions=[]))
+                if f.get("kind") == "frequency" and (f.get("outcome") or {}).get("key") == "event":
+                    route = {"action": "profile", "frame": f}
+                route.update(frame=f, edit=True, changes=ch, slot=None)
+                if route.get("action") == "new" and current is not None and getattr(current, "kind", None) == "study" and route.get("draft") is not None:
+                    from strata.ai.draft import diff_drafts
+                    route.update(action="modify", changed=[x["field"] for x in diff_drafts(current, route["draft"])], compare=wants_compare(text))
+                return route, None, name
+            # cross-check: the deterministic reader read the same sentence completely and differently -> ask, nothing runs
+            det = SM.read(text, known, default_symbol)
+            reader = name
+            if det.complete and det.frame.get("kind") in CV.QUESTION_KINDS:
+                a, b = CV.facts(f), CV.facts(det.frame)
+                diff = sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k) and k not in ("period",) or (k == "period" and a.get(k) != b.get(k)))
+                if diff and set(diff) <= {"outcome"} and f.get("kind") == det.frame.get("kind") == "frequency" and det.frame.get("outcome") and f.get("outcome"):
+                    # the two read the same question and differ only in what the outcome is measured against ("close higher":
+                    # than the open, or than the previous close): both are measured and said, as an ambiguous word always is
+                    f2 = copy.deepcopy(det.frame)
+                    o1, o2 = det.frame["outcome"], f["outcome"]
+                    f2["outcome_options"] = [{"label": SM.describe_outcome(o1, f2.get("start") or "open"), "outcome": o1}, {"label": SM.describe_outcome(o2, f2.get("start") or "open"), "outcome": o2}]
+                    f2.setdefault("assumptions", []).append({"slot": "outcome", "text": f"\"{o1.get('text') or o2.get('text') or 'the outcome'}\" can be read two ways, so both are measured: " + "; ".join(x["label"] for x in f2["outcome_options"]) + "."})
+                    route = SM.to_route(SM.Reading(text=text, frame=f2, mentions=[]))
+                    route["frame"] = f2
+                    return route, None, f"{name} and the built-in reader (two readings, both measured)"
+                if diff:
+                    da, db_ = SM.describe(f), SM.describe(det.frame)
+                    if da != db_:
+                        keep = lambda fr: {k: v for k, v in fr.items() if k not in ("text",)}  # noqa: E731
+                        return {"action": "clarify", "text": "This could be read two ways, so nothing was run yet. Which did you mean?",
+                                "options": [{"label": da, "patch": keep(f)}, {"label": db_, "patch": keep(det.frame)}],
+                                "pending": {"kind": "frame_patch", "options": [{"label": da, "patch": keep(f)}, {"label": db_, "patch": keep(det.frame)}], "frame": f}}, None, name
+                reader = f"{name}, confirmed by the built-in reader"
+            if f.get("kind") == "frequency" and (f.get("outcome") or {}).get("key") == "event":
+                return {"action": "profile", "frame": f}, None, reader
+            route = SM.to_route(SM.Reading(text=text, frame=f, mentions=[]))
+            route["frame"] = f
+            return route, None, reader
+        return None, None, "built-in rules"
+
+    def _model_failed(self, name: str, why: str, text: str) -> tuple[dict | None, str | None, str]:
+        """The model gave no usable reading. The built-in reader reads the message and the reply says so, or, with the
+        fallback turned off in Settings, nothing runs and the reply says why."""
+        from strata.api.settings import get_setting
+        from strata.ai.agent import is_complex
+        if str(get_setting("llm.fallback") or "rules") == "none":
+            return {"action": "failed", "text": f"The language model ({name}) could not interpret this request: {why}. Falling back to the built-in interpreter is turned off in Settings, so nothing was run."}, None, name
+        return None, (f"The language model ({name}) did not return a usable interpretation ({why}). The built-in interpreter read this request instead"
+                      + (" - it understands fewer phrasings, so check the interpretation below before relying on it." if is_complex(text) else ".")), "built-in rules"
+
     def _v8_route(self, text: str, current, known: list[str], default_symbol: str) -> dict | None:
         self._tl.v8_partial = self._tl.v8_unplaced = None  # what this layer read of the PREVIOUS message never carries over
         sid, st = self._v8_state()
@@ -103,6 +307,10 @@ class ResearchV8:
         if (frame or current) and EXPLAIN_TRADE.search(text):
             w = WHICH_TRADE.search(text)
             return {"action": "explain_trade", "which": (w.group(1).lower() if w else "worst")}
+        if (frame or current) and NEXT_STEPS.search(text):
+            return {"action": "next_steps"}
+        if (frame or current) and ABOUT_SELECTION.search(text):
+            return {"action": "about_selection", "filter": _selection_filter(text), "question": text}
         if (frame or current) and CV.EXPLORE.search(text) and not re.search(r"could ?n[o']t|cannot|can'?t|not (?:be )?(?:tested|priced)|untested|missing|skipped|not taken|unexecuted|\bwhy\b|\bfills?\b", text.lower()):
             k = (frame or {}).get("kind") or ("strategy" if current is not None and current.kind == "options" else "frequency")
             f = _explore_filter(text, k)
@@ -119,6 +327,12 @@ class ResearchV8:
                 e = CV.edit_question(text, frame, tick, st.get("last_slot"))
                 if e["action"] == "edit":
                     nf = e["frame"]
+                    if nf.get("kind") != frame.get("kind") and frame.get("kind") in CV.QUESTION_KINDS and not _names_a_kind(text):
+                        nf = {**nf, "kind": frame["kind"], **({"outcome": frame["outcome"]} if frame.get("outcome") else {})}
+                        for k_ in ("measure", "bucket", "by", "focus", "candle", "scope", "predictor"):
+                            if frame.get(k_) is not None:
+                                nf[k_] = frame[k_]
+                        e["changes"] = CV.summary(frame, nf)
                     if nf.get("kind") == "movement" and nf.get("outcome", {}).get("key") in ("close_vs", "touch", "touch_level"):
                         nf["kind"] = "frequency"
                     route = SM.to_route(SM.Reading(text=nf.get("text") or text, frame=nf, mentions=[]))
@@ -141,8 +355,15 @@ class ResearchV8:
                     self._tl.v8_unplaced = {"action": "clarify", "text": f"I took \"{text.strip()}\" as a change to the current question, but could not tell which part it changes, so nothing was changed. "
                                                         "Name the part, for example \"use the 15-minute candle\", \"do QQQ instead\" or \"only when yesterday was red\"." + (f" (Not understood: {', '.join(unread[:4])}.)" if unread else "")}
                     return None
-        # 3. the current strategy: a bare number, or a time moved relative to itself
+        # 3. the current strategy: its sizing in a trader's words, a bare number, or a time moved relative to itself
         if current is not None and current.kind == "options":
+            sz = CV.sizing_from_text(text, current)
+            if sz is not None and not re.search(r"\b(?:calls?|puts?|straddles?|strangles?|spreads?|condors?)\b", text.lower()):
+                d2 = current.model_copy(deep=True)
+                d2.sizing = sz[0]
+                if sz[1]:
+                    d2.quantity = sz[1]
+                return {"action": "modify", "draft": d2, "changed": ["sizing"], "edit": True}
             m = CV.NUMBER_ONLY.match(text)
             if m:
                 # the V7 correction reader first: it replaces the one value a unit can replace ("no, 2%" -> the 2% decline)
@@ -178,9 +399,9 @@ class ResearchV8:
             # then held against what this layer did recognise (_v8_check_reading); if they know nothing either, it is said.
             self._tl.v8_partial = r
             return None
-        if k == "agreement" and r.complete and r.frame.get("predictor") == "first_candle" and r.frame.get("scope") == "rest" and r.frame.get("candle_stated") and \
-                not re.match(r"(?:so\s+|and\s+|ok(?:ay)?,?\s+)?(?:how (?:often|frequently|reliabl\w+|accurate\w*|many times|much of the time)|what (?:percent\w*|share|fraction|proportion)|in what)\b", text.lower().strip()):
-            return None
+        # V9: every first-candle prediction question is answered by the agreement frame (one question type, one engine). Until
+        # V9 "does the first N-minute candle predict the REST of the session" went to the hypothesis lab instead, with a
+        # different answer for the same question; the lab keeps explicit "investigate whether ..." hypotheses.
         if k in CV.QUESTION_KINDS:
             if r.clarify:
                 return {"action": "clarify", "text": r.clarify["text"], "options": r.clarify.get("options") or [],
@@ -269,6 +490,16 @@ class ResearchV8:
         notes += _fill_exits(text, d, n, ms)
         notes += _fix_sizes(d, ms)
         missing = SM.strategy_coverage(text, d, known)
+        if d.unsupported:
+            held = {round(abs(float(v)), 6) for v in (d.premium_target_pct, d.premium_stop_pct, d.underlying_target_pct, d.underlying_stop_pct) if v is not None}
+            held |= {round(abs(float(x)), 6) for c in d.conditions for x in re.findall(r"-?\d+(?:\.\d+)?", c.expr)}
+            def placed(u: str) -> bool:
+                xs = re.findall(r"\d+(?:\.\d+)?", u)
+                # only an exit phrase ("100% stop") whose number the draft holds: a condition the reader misread into a target
+                # ("dropped at least 3.5%" as a 3.5% target) must stay flagged
+                return bool(xs) and all(round(float(x), 6) in held for x in xs) and bool(re.search(r"\bstop|\btarget|\bprofit|\bloss|\btp\b|\bsl\b", u.lower())) \
+                    and not re.search(r"\b(?:drop|fell|fall|decline|rall|rose|gap|session|day|yesterday|previous)\w*", u.lower())
+            d.unsupported = [u for u in d.unsupported if not placed(u)]
         if missing:
             d.unsupported = list(dict.fromkeys(list(d.unsupported) + [f"{x}" for x in missing]))
         elif d.unsupported and notes:
@@ -347,6 +578,157 @@ class ResearchV8:
             if m["kind"] == "result" and c.get("view") in ("single", "investigation", "profile", "compare", "sweep"):
                 return m
         return None
+
+    # ------------------------------------------------------------------------------------- V9: exploring a result further
+    def _observations_of(self, sid: str, flt: str) -> tuple[str, list[dict], list[dict], str, str] | None:
+        """The latest result's observations split into (kind, group, rest, group_name, rest_name): its trades, or its days.
+        A selection made in the explore sheet (session state) wins over the words' filter."""
+        from strata.research import explore as XP
+        m = self._latest_result(sid)
+        c = (m or {}).get("content") or {}
+        _, st = self._v8_state()
+        sl = st.get("selection") or {}
+        sel = set(sl.get("ids") or []) if (m is not None and sl.get("result") == m["id"]) else set()  # a selection made on an earlier result does not apply
+        view = c.get("view")
+        if view == "single" and c.get("run_id"):
+            run = db.get_run(c["run_id"]) or {}
+            if run.get("kind") == "backtest":
+                from strata.api.results import load_trades
+                trades = load_trades(run["id"])
+                rows = []
+                for t in trades:
+                    leg = next((x for x in t.get("legs") or [] if x.get("kind") == "option"), {})
+                    es, xs = t.get("entry_spot"), t.get("exit_spot")
+                    rows.append({"id": t["id"], "date": t.get("entry_date"), "pnl": float(t.get("pnl") or 0), "premium": leg.get("entry_price"), "held": t.get("holding_minutes"),
+                                 "entry_minute": t.get("entry_minute"), "exit_reason": str(t.get("exit_reason") or "").replace("_", " "), "vix": t.get("entry_vix"),
+                                 "underlying_move": ((xs / es - 1) * 100) if es and xs else None})
+                if sel:
+                    g = [r for r in rows if str(r["id"]) in sel or r["date"] in sel]
+                    names = (f"the {len(g)} selected trades", "the other trades")
+                elif flt in ("winning", "best", "hit"):
+                    g = [r for r in rows if r["pnl"] > 0] if flt != "best" else sorted(rows, key=lambda r: -r["pnl"])[:max(5, len(rows) // 5)]
+                    names = ("the winning trades" if flt != "best" else "the best trades", "the others")
+                else:
+                    g = [r for r in rows if r["pnl"] <= 0] if flt != "worst" else sorted(rows, key=lambda r: r["pnl"])[:max(5, len(rows) // 5)]
+                    names = ("the losing trades" if flt != "worst" else "the worst trades", "the others")
+                ids = {r["id"] for r in g}
+                return "trades", g, [r for r in rows if r["id"] not in ids], names[0], names[1]
+            if run.get("kind") == "study":
+                ss = XP.sessions(run["id"], "all").get("rows") or []
+                rows = [{"date": r["date"], "hit": r.get("happened") not in ("no", "unclear")} for r in ss]
+                return self._split_days(rows, sel, flt, "the days it happened", "the days it did not")
+        if view == "investigation":
+            rows_ = ((c.get("report") or {}).get("agreement") or [])
+            rest = [x for x in rows_ if x["scope"] == "rest"] or rows_
+            if rest:
+                x = sorted(rest, key=lambda z: z["minutes"])[0]
+                cl = XP.classification([x["up"]["run_id"], x["down"]["run_id"]], "all").get("rows") or []
+                rows = [{"date": r["date"], "hit": r.get("matched") == "yes"} for r in cl]
+                return self._split_days(rows, sel, flt, "the days the candle was right", "the days it was wrong")
+        if view == "profile":
+            pr = XP.profile(self.store, c.get("frame") or {}, "all").get("rows") or []
+            rows = [{"date": r.get("date"), "hit": str(r.get("happened", "yes")) != "no"} for r in pr if r.get("date")]
+            return self._split_days(rows, sel, flt, "the days it happened", "the days it did not")
+        return None
+
+    def _split_days(self, rows: list[dict], sel: set, flt: str, hit_name: str, miss_name: str):
+        if sel:
+            g = [r for r in rows if r["date"] in sel]
+            return "days", g, [r for r in rows if r["date"] not in sel], f"the {len(g)} selected days", "the other days"
+        miss = flt in ("losing", "miss", "worst", "all", None)
+        g = [r for r in rows if (not r["hit"]) == miss]
+        return "days", g, [r for r in rows if (not r["hit"]) != miss], (miss_name if miss else hit_name), (hit_name if miss else miss_name)
+
+    def _about_selection(self, sid: str, r: dict) -> list[dict]:
+        """"Is there anything interesting about the losing trades?": the group against the rest of the same result."""
+        from strata.research import contrast as CT
+        got = self._observations_of(sid, r.get("filter") or "all")
+        if got is None:
+            return [self._say(sid, "There is no result in this conversation to look into yet. Ask a question or run a strategy first.")]
+        kind, g, rest, gname, rname = got
+        m = self._latest_result(sid)
+        c = (m or {}).get("content") or {}
+        sym = ((c.get("frame") or {}).get("symbol")) or (db.get_run(c.get("run_id")) or {}).get("config", {}).get("symbol") if c.get("run_id") else ((c.get("frame") or {}).get("symbol") or "SPY")
+        sym = sym or "SPY"
+        try:
+            ctx = CT.day_context(self.store, sym, [x["date"] for x in g + rest if x.get("date")])
+        except Exception:  # noqa: BLE001
+            ctx = {}
+        def feat(x):
+            d = ctx.get(str(x.get("date"))[:10], {})
+            out = {k: v for k, v in x.items() if k not in ("id", "date", "hit", "pnl")}
+            out.update({"gap": d.get("gap"), "prev": d.get("prev"), "weekday": d.get("weekday"), "year": d.get("year")})
+            if out.get("vix") is None:
+                out["vix"] = d.get("vix")
+            if kind == "trades":
+                out["oc"] = d.get("oc")
+            return out
+        res = CT.compare([feat(x) for x in g], [feat(x) for x in rest], kind, gname, rname)
+        head = res["lines"][0] if res["lines"] else f"Nothing sets {gname} apart."
+        ans = {"kind": "contrast", "headline": head, "happened": [l for l in res["lines"][1:] if "compared" not in l and "small sample" not in l], "matters": None,
+               "limits": [l for l in res["lines"] if "compared" in l or "small sample" in l],
+               "numbers": [], "followups": [{"text": "Show me those " + kind, "why": "The observations behind this comparison."}, {"text": "What would you investigate next?", "why": "Suggestions from this result."}],
+               "viz": {"kind": "contrast", "rows": res["rows"][:8], "group": gname, "rest": rname}, "details": {"compared": res["compared"], "group": len(g), "rest": len(rest)}}
+        return [db.add_message(sid, "assistant", "result", {"view": "contrast", "answer": ans, "text": head, "frame": c.get("frame")})]
+
+    def _next_steps(self, sid: str, version) -> list[dict]:
+        """"What would you investigate next?": suggestions chosen from what this result showed, each with its reason and the
+        message that runs it. Deterministic: no number is stated that the result does not hold."""
+        m = self._latest_result(sid)
+        c = (m or {}).get("content") or {}
+        if not c:
+            return [self._say(sid, "There is no result in this conversation yet. Ask a question first, and I will suggest where to look next.")]
+        a = c.get("answer") or {}
+        f = c.get("frame") or {}
+        view = c.get("view")
+        sugg: list[dict] = []
+        asked = {re.sub(r"\W+", " ", ((mm.get("content") or {}).get("text") or "").lower()).strip() for mm in db.list_messages(sid) if mm["role"] == "user"}
+        def add(ask, why):
+            if ask not in [x["ask"] for x in sugg] and re.sub(r"\W+", " ", ask.lower()).strip() not in asked:  # not what was already asked here
+                sugg.append({"ask": ask, "why": why})
+        run = db.get_run(c.get("run_id")) if c.get("run_id") else None
+        if run and run.get("kind") == "backtest":
+            from strata.api.results import load_trades
+            tr = load_trades(run["id"])
+            n = len(tr)
+            losers = sum(1 for t in tr if (t.get("pnl") or 0) <= 0)
+            if n < 30:
+                add("Try the same strategy on QQQ and IWM", f"{n} trades is too few to tell a real edge from luck; the same rule on other index funds adds observations.")
+            add("Is this just luck?", "Checks whether the result stands out from what random entries on the same days would give, accounting for how many versions were tried.")
+            if losers:
+                add("Is there anything interesting about the losing trades?", f"{losers} of the {n} trades lost money; comparing them with the winners can point to a filter worth testing.")
+            d = version.get("draft") if version else {}
+            et = (d or {}).get("entry_time")
+            if et and et not in ("open", "close"):
+                h, mi = int(et[:2]), int(et[3:])
+                a1, a2 = f"{(h * 60 + mi - 15) // 60:02d}:{(h * 60 + mi - 15) % 60:02d}", f"{(h * 60 + mi + 15) // 60:02d}:{(h * 60 + mi + 15) % 60:02d}"
+                add(f"Compare entries at {a1}, {et} and {a2} ET", "Whether the result depends on the exact entry minute: a real effect should not vanish 15 minutes away.")
+            if not (d or {}).get("sizing"):
+                add("What if I risked a fixed $500 per trade?", "Sizing by risk instead of a fixed number of contracts changes how much each trade can lose.")
+        else:
+            st = (a.get("details") or {}) if isinstance(a.get("details"), dict) else {}
+            nums = {x.get("key"): x for x in a.get("numbers") or [] if isinstance(x, dict)}
+            n = None
+            for x in a.get("numbers") or []:
+                if isinstance(x, dict) and isinstance(x.get("n"), (int, float)):
+                    n = x["n"]
+                    break
+            text = " ".join([a.get("headline") or ""] + list(a.get("limits") or []))
+            if n is not None and n < 40 or re.search(r"aren't enough|not enough|small sample|too few", text):
+                others = [s_ for s_ in ("SPY", "QQQ", "IWM") if s_ != (f.get("symbol") or "SPY")]
+                add(("Drop the period limit and try " if any(f.get("period") or []) else "Try ") + f"{others[0]} and {others[1]} too", "The sample is small; more sessions make the estimate firmer.")
+            weak = bool(re.search(r"within what chance|not distinguishable|little evidence|about what|no clear", text))
+            for fu in ANS.followups(f, f.get("kind") or "frequency")[:4]:
+                add(fu["text"], fu.get("why") or "")
+            if not weak and f.get("kind") in ("frequency", "agreement", "movement"):
+                add("Does this still hold since 2022?", "A pattern that is real should also show in the recent years, not only in the early data.")
+            if weak:
+                add("Is a bigger move any different?", "The effect is weak at this size; a larger move may separate from chance, or show there is nothing there.")
+        sugg = sugg[:5]
+        if not sugg:
+            return [self._say(sid, "I have no specific suggestion for this result.")]
+        lines = [f"{i + 1}. {x['ask']} - {x['why']}" for i, x in enumerate(sugg)]
+        return [self._say(sid, "Where I would look next, given this result:\n" + "\n".join(lines), "text", options=[{"label": x["ask"], "ask": x["ask"]} for x in sugg], next_steps=sugg)]
 
     def _explore(self, sid: str, version, r: dict) -> list[dict]:
         """The observations behind the latest answer: the days of a study, the trades of a backtest, the classified days of an
@@ -448,6 +830,8 @@ class ResearchV8:
         if out:
             c = out[0]["content"]
             c["change"] = {"lines": lines, "text": txt, "undo": bool(log), "undone": True}
+            if prev.get("kind") in CV.QUESTION_KINDS:
+                c["frame"] = prev  # the restored question's own frame: its answer is worded from it (without it, "the outcome happened ...")
             db.update_message(out[0]["id"], c)
         s2, _, _ = self._state(sid)
         db.update_session(sid, state={**s2["state"], "frame": prev, "frame_log": log, "undoing": False})
@@ -493,7 +877,7 @@ class ResearchV8:
                 upd["pending"] = r.get("pending")
                 if first is not None and r.get("options"):
                     c = first["content"]
-                    c["options"] = [{"label": o["label"]} for o in r["options"]]
+                    c["options"] = [{"label": o["label"], **({"ask": o["ask"]} if o.get("ask") else {})} for o in r["options"]]
                     c["clarify"] = True
                     db.update_message(first["id"], c)
                 db.update_session(sid, state={**st, **upd})
@@ -558,10 +942,50 @@ class ResearchV8:
                 rep = content["report"]
                 if rep.get("agreement") is not None or (c.get("plan") or {}).get("kind") in ("first_candle", "agreement"):
                     content["answer"] = ANS.agreement(rep, frame or (c.get("plan") or {}).get("frame"))
+                    ov = self._candle_overlay(rep)
+                    if ov:
+                        content["answer"]["overlay"] = ov
                 else:
                     content["answer"] = frequency_set(rep, frame or (c.get("plan") or {}).get("frame") or {})
         except Exception as ex:  # noqa: BLE001
             content["answer_error"] = f"{type(ex).__name__}: {ex}"[:300]
+        # V9: every answer carries an independent check of its numbers (strata.research.verify). It never changes the answer.
+        try:
+            a = content.get("answer")
+            if a is None:
+                return
+            from strata.research import verify as VF
+            if view == "single" and entries and entries[-1]["run"]["kind"] == "study":
+                a["check"] = VF.study(entries[-1]["result"], frame or None)
+            elif view == "single" and entries:
+                from strata.api.results import load_trades
+                draft = (c.get("draft") if isinstance(c.get("draft"), dict) else None) or (frame.get("draft") if isinstance(frame.get("draft"), dict) else None)
+                a["check"] = VF.backtest(entries[-1]["run"], load_trades(entries[-1]["run"]["id"]), draft)
+            elif view == "investigation" and content.get("report", {}).get("agreement"):
+                a["check"] = VF.agreement(content["report"], frame or (c.get("plan") or {}).get("frame"))
+        except Exception as ex:  # noqa: BLE001
+            content.setdefault("answer", {})["check"] = {"status": "not_covered", "text": f"The independent check could not run ({type(ex).__name__})."}
+
+    @staticmethod
+    def _candle_overlay(rep: dict) -> dict | None:
+        """The rest of the session after an up candle and after a down candle, from the candle's close: the median path and the
+        middle half of the days, from the two studies the agreement already ran (study path summaries). If the candle
+        predicted the rest of the day, the two would pull apart."""
+        from strata.api.results import load_run_result
+        rows = [x for x in rep.get("agreement") or [] if x.get("scope") == "rest"]
+        if not rows:
+            return None
+        x = sorted(rows, key=lambda z: z["minutes"])[0]
+        out = {"minutes_candle": x["minutes"]}
+        for side in ("up", "down"):
+            run = db.get_run((x.get(side) or {}).get("run_id") or "")
+            if not run:
+                return None
+            ps = (load_run_result(run) or {}).get("path_summary") or {}
+            if not ps.get("minutes"):
+                return None
+            out[side] = {k: ps.get(k) for k in ("minutes", "median", "p25", "p75", "days")}
+        return out
 
     def _run_descriptions(self) -> dict:
         """run id -> what that version asked, in words (its question frame, else its draft's title)."""

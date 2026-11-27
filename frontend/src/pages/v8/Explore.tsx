@@ -24,7 +24,7 @@ function cellText(v: any, unit?: string) {
   return String(v);
 }
 
-export function ExploreSheet({ spec, frame, onClose }: { spec: any; frame?: any; onClose: () => void }) {
+export function ExploreSheet({ spec, frame, onClose, onAsk }: { spec: any; frame?: any; onClose: () => void; onAsk?: (ids: string[], what: string, question?: string) => void }) {
   // the answer's own explore kinds for profile answers ("timing", "group", "dates") are the profile observations of its frame
   const base = useMemo(() => {
     if (!spec) return null;
@@ -102,7 +102,15 @@ export function ExploreSheet({ spec, frame, onClose }: { spec: any; frame?: any;
                 <div className="flex flex-col gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="small soft">{sel.size} selected</span>
-                    <button className="act primary" onClick={() => days.mutate(selDates)} disabled={days.isPending || !selDates.length} data-testid="days-common">What do these days have in common?</button>
+                    {onAsk && (() => {
+                      const what = t?.kind === "trades" ? "trades" : "days";
+                      const ids = rows.filter((r) => sel.has(keyOf(r))).map((r) => String(t?.kind === "trades" ? r.id : r.date));
+                      return <>
+                        <button className="act primary" onClick={() => onAsk(ids, what, `What sets the selected ${what} apart from the others?`)} data-testid="selection-ask">What sets them apart?</button>
+                        <button className="act" onClick={() => onAsk(ids, what)} data-testid="selection-keep">Ask about them in the notebook</button>
+                      </>;
+                    })()}
+                    <button className="act" onClick={() => days.mutate(selDates)} disabled={days.isPending || !selDates.length} data-testid="days-common">Against every stored day</button>
                     <button className="link tiny" onClick={() => setSel(new Set())}>clear</button>
                   </div>
                   {days.isPending && <div className="tiny mute flex items-center gap-2"><Loader2 className="size-3.5 animate-spin" />Comparing them with every stored day…</div>}

@@ -221,9 +221,11 @@ class Ollama(LLM):
         # models), which makes a 6 GB model occupy over 13 GB and answer in minutes on a 16 GB machine; one fixed size also
         # keeps the server from reloading the model between calls
         body = {"model": self.model, "stream": False, "messages": [{"role": "system", "content": system}] + messages,
-                "options": {"temperature": 0, "num_predict": max_tokens, "num_ctx": self.context_tokens}}
+                "options": {"temperature": 0, "num_predict": max_tokens, "num_ctx": self.context_tokens}, "keep_alive": "30m"}
         if fmt is not None:
             body["format"] = fmt
+        if re.match(r"(?:qwen3|deepseek-r1|qwq|magistral|cogito)", self.model or ""):
+            body["think"] = False  # a reasoning model's thinking is spent before the JSON it is asked for; the reply is checked anyway
         j = _http("POST", f"{self.url}/api/chat", headers={}, body=body, timeout=self.timeout, provider="Ollama", retries=0, cancel=self.cancel)
         record_usage(self, j.get("prompt_eval_count"), j.get("eval_count"))
         return (j.get("message") or {}).get("content") or ""
@@ -294,14 +296,17 @@ class Anthropic(LLM):
         out_cfg: dict = {"effort": self.effort}
         if schema is not None:
             out_cfg["format"] = {"type": "json_schema", "schema": schema}
+        # the instructions and the worked examples are the same on every call (V9's reader sends about 3,000 tokens of them):
+        # automatic prompt caching bills them at the cached rate after the first call of each few minutes
+        cache = {"type": "ephemeral"}
         try:
             try:
                 return self.client.beta.messages.create(model=self.model, max_tokens=max_tokens, system=system, messages=messages, output_config=out_cfg,
-                                                        betas=[self.FALLBACK_BETA], fallbacks="default")
+                                                        betas=[self.FALLBACK_BETA], fallbacks="default", cache_control=cache)
             except a.BadRequestError:
                 # e.g. a schema the structured-output grammar cannot express, or a platform without
                 # server-side fallbacks: retry as a plain request and validate the JSON ourselves
-                return self.client.messages.create(model=self.model, max_tokens=max_tokens, system=system, messages=messages, output_config={"effort": self.effort})
+                return self.client.messages.create(model=self.model, max_tokens=max_tokens, system=system, messages=messages, output_config={"effort": self.effort}, cache_control=cache)
         except a.AuthenticationError:
             raise LLMError("Anthropic: the API key was rejected") from None
         except a.PermissionDeniedError:

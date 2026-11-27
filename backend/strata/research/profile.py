@@ -22,10 +22,41 @@ WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 
 
+def _whole_sessions(m: pl.DataFrame) -> pl.Series:
+    """Dates whose one-minute bars cover the session: the first bar within 15 minutes of the open and the last ending within
+    15 minutes of the close (13:00 on an early-close day). The study engine's bar store applies the same rule; a session
+    that starts late or ends early would put its high in the wrong bucket and give a wrong open."""
+    from strata.core import calendar as cal
+    g = m.group_by("d").agg(first=pl.col("mod").min(), last=pl.col("mod").max())
+    if g.is_empty():
+        return pl.Series("d", [], dtype=pl.Date)
+    close = [cal.session_close_time(x) for x in g["d"].to_list()]
+    g = g.with_columns(cm=pl.Series([c.hour * 60 + c.minute for c in close], dtype=pl.Int32))
+    return g.filter((pl.col("first") <= 585) & (pl.col("last") + 1 >= pl.col("cm") - 15))["d"]
+
+
+def _minutes(store: MarketStore, sym: str) -> pl.DataFrame:
+    m = store.read_minutes(sym, provider="alpaca")
+    if m.is_empty():
+        m = store.read_minutes(sym)
+    if m.is_empty():
+        return m
+    m = m.with_columns(et=pl.col("ts").dt.convert_time_zone("America/New_York"))
+    return m.with_columns(d=pl.col("et").dt.date(), mod=pl.col("et").dt.hour().cast(pl.Int32) * 60 + pl.col("et").dt.minute().cast(pl.Int32)).filter((pl.col("mod") >= 570) & (pl.col("mod") < 960))
+
+
 def _daily(store: MarketStore, sym: str) -> pl.DataFrame:
     d = store.read_daily(sym).sort("date")
     if d.is_empty():
         raise LookupError(f"No daily history is stored for {sym}.")
+    # The session's open is the engine's: the first one-minute bar's open where whole sessions of minute bars are stored, the
+    # daily record's open before that. (Until V9 these profiles used the daily open throughout while studies used the
+    # minute open, so "how often does SPY gap up 1%" gave 352 here and 353 in a study; the reference check found it.)
+    m = _minutes(store, sym)
+    if not m.is_empty():
+        whole = _whole_sessions(m)
+        fo = m.filter(pl.col("d").is_in(whole.implode())).sort(["d", "mod"]).group_by("d", maintain_order=True).agg(pl.col("open").first().alias("_mo")).rename({"d": "date"})
+        d = d.join(fo, on="date", how="left").with_columns(open=pl.coalesce(pl.col("_mo"), pl.col("open"))).drop("_mo")
     d = d.with_columns(prev_close=pl.col("close").shift(1), prev2_close=pl.col("close").shift(2))
     d = d.with_columns(gap=(pl.col("open") / pl.col("prev_close") - 1) * 100, prev_return=(pl.col("prev_close") / pl.col("prev2_close") - 1) * 100,
                        oc=(pl.col("close") / pl.col("open") - 1) * 100, cc=(pl.col("close") / pl.col("prev_close") - 1) * 100, wd=pl.col("date").dt.weekday() - 1, mo=pl.col("date").dt.month())
@@ -79,23 +110,16 @@ def _period(d: pl.DataFrame, period) -> pl.DataFrame:
 
 def timing(store: MarketStore, symbol: str, measure: str = "abs_move", bucket: int = 30, period=None, conditions: list[dict] | None = None) -> dict:
     """When during the session: the bucket of the day's high or low, or the average absolute move per bucket."""
-    m = store.read_minutes(symbol, provider="alpaca")
+    m = _minutes(store, symbol)
     source = "alpaca 1-minute bars (consolidated tape)"
     if m.is_empty():
-        m = store.read_minutes(symbol)
-        source = "1-minute bars"
-    if m.is_empty():
         raise LookupError(f"No intraday history is stored for {symbol}: when something happens during the day cannot be measured.")
-    m = m.with_columns(et=pl.col("ts").dt.convert_time_zone("America/New_York"))
-    m = m.with_columns(d=pl.col("et").dt.date(), mod=pl.col("et").dt.hour().cast(pl.Int32) * 60 + pl.col("et").dt.minute().cast(pl.Int32)).filter((pl.col("mod") >= 570) & (pl.col("mod") < 960))
     days = _period(_daily(store, symbol), period)
     days, cannot = _filter_days(store, days, conditions or [])
     m = m.filter(pl.col("d").is_in(days["date"].implode()))
-    # whole sessions only: a session that starts late or ends early would put its high in the wrong bucket
-    g = m.group_by("d").agg(first=pl.col("mod").min(), last=pl.col("mod").max(), n=pl.len())
-    full = g.filter((pl.col("first") == 570) & (pl.col("last") >= 959))
-    early = g.filter((pl.col("first") == 570) & (pl.col("last") < 959) & (pl.col("last") >= 779))  # early closes (13:00) kept: their buckets end sooner
-    keep = pl.concat([full, early])["d"]
+    # whole sessions only (early closes kept: their buckets end sooner). Until V9 any session reaching 13:00 counted as an
+    # early close, so SPY 2019-08-12, whose bars stop at 15:31, was counted with its high possibly missing.
+    keep = _whole_sessions(m)
     m = m.filter(pl.col("d").is_in(keep.implode())).sort(["d", "mod"])
     m = m.with_columns(b=((pl.col("mod") - 570) // bucket).cast(pl.Int32))
     nb = (390 + bucket - 1) // bucket

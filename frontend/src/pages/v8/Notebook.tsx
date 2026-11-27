@@ -51,13 +51,13 @@ function Needs({ m, sid, nb }: { m: AiMessage; sid: string; nb: ReturnType<typeo
   );
 }
 
-type Ctx = { latestResult?: number; latestPlan?: number; prevDraft: Record<number, any>; expanded: Set<number>; toggle: (id: number) => void };
+type Ctx = { latestResult?: number; latestPlan?: number; prevDraft: Record<number, any>; prevAnswer: Record<number, any>; expanded: Set<number>; toggle: (id: number) => void };
 
 function Reply({ m, sid, nb, open, onOpen, onTrade, symbols, ctx }: { m: AiMessage; sid: string; nb: ReturnType<typeof useNotebook>; open: boolean; onOpen: (s: any) => void; onTrade: (r: string, id: number) => void; symbols: string[]; ctx: Ctx }) {
   const c = m.content || {};
   if (m.kind === "result") {
     const full = open && (m.id === ctx.latestResult || ctx.expanded.has(m.id));
-    if (full) return <AnswerView m={m} sid={sid} onOpen={onOpen} onAsk={nb.send} onTrade={onTrade} />;
+    if (full) return <AnswerView m={m} sid={sid} onOpen={onOpen} onAsk={nb.send} onTrade={onTrade} prev={ctx.prevAnswer[m.id]} />;
     return (
       <button className="flex items-start gap-2 border-0 bg-transparent p-0 text-left" style={{ cursor: "pointer", color: "inherit" }} onClick={() => ctx.toggle(m.id)} data-testid="folded-result">
         <ChevronRight size={15} className="mt-1 shrink-0 faint" /><span className="serif text-[18px] leading-snug soft">{c.answer?.headline || String(c.text || "").split(". ")[0]}</span>
@@ -89,11 +89,26 @@ function Reply({ m, sid, nb, open, onOpen, onTrade, symbols, ctx }: { m: AiMessa
       </div>
     );
   }
-  // a question back (clarify), a refusal, a note
+  // suggestions of what to look at next, each with its reason; a click asks it
+  if ((c.next_steps || []).length > 0) {
+    return (
+      <div data-testid="next-steps">
+        <p className="lede">Where I would look next, given this result:</p>
+        <div className="qlist mt-2">
+          {c.next_steps.map((x: any, i: number) => (
+            <button key={i} className="qrow" onClick={() => nb.send(x.ask)} data-testid="next-step">
+              <span className="q" style={{ fontSize: 16.5 }}>{x.ask}</span><span className="tiny faint text-right">{x.why}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  // a question back (clarify), a refusal (with the closest question that can be answered, when there is one), a note
   return (
-    <div data-testid={c.clarify ? "clarify" : "note"}>
+    <div data-testid={c.declined ? "declined" : c.clarify ? "clarify" : "note"}>
       <p className={c.declined ? "lede soft" : "lede"}>{c.text}</p>
-      {(c.options || []).length > 0 && <div className="mt-3 flex flex-wrap gap-2">{c.options.map((o: any, i: number) => <button key={i} className="act" onClick={() => nb.send(o.label)} data-testid="clarify-option">{o.label}</button>)}</div>}
+      {(c.options || []).length > 0 && <div className="mt-3 flex flex-wrap gap-2">{c.options.map((o: any, i: number) => <button key={i} className={o.ask ? "act primary" : "act"} onClick={() => nb.send(o.ask || o.label)} data-testid={o.ask ? "closest-question" : "clarify-option"}>{o.label}</button>)}</div>}
     </div>
   );
 }
@@ -104,6 +119,7 @@ export function Notebook({ sid }: { sid: string }) {
   const [spec, setSpec] = useState<any>(null);
   const [frame, setFrame] = useState<any>(null);
   const [opened, setOpened] = useState<Set<number>>(new Set());
+  const [selection, setSelection] = useState<{ count: number; what: string } | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
   const meta = useQuery({ queryKey: ["v8-symbols"], queryFn: () => api.get<any[]>("/api/data/coverage"), staleTime: 300_000 });
@@ -120,7 +136,17 @@ export function Notebook({ sid }: { sid: string }) {
     const prevDraft: Record<number, any> = {};
     let last: any = null;
     for (const p of plans) { if (last) prevDraft[p.id] = last; if (p.content?.draft) last = p.content.draft; }
-    return { latestResult: [...nb.messages].reverse().find((m) => m.kind === "result")?.id, latestPlan: plans[plans.length - 1]?.id, prevDraft, expanded,
+    // an answer that follows a change (a turn with a change line) is shown against the answer before it
+    const prevAnswer: Record<number, any> = {};
+    const lastOfKind: Record<string, any> = {};
+    let changed = false;
+    for (const m of nb.messages) {
+      if (m.role === "user") changed = false;
+      if (m.content?.change) changed = true;
+      const a = m.kind === "result" ? m.content?.answer : null;
+      if (a?.viz?.kind) { if (changed && lastOfKind[a.viz.kind]) prevAnswer[m.id] = lastOfKind[a.viz.kind]; lastOfKind[a.viz.kind] = a; }
+    }
+    return { latestResult: [...nb.messages].reverse().find((m) => m.kind === "result")?.id, latestPlan: plans[plans.length - 1]?.id, prevDraft, prevAnswer, expanded,
              toggle: (id: number) => setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; }) };
   }, [nb.messages, expanded]);
   // a new answer opens at its question, not at the bottom of the page; while a question is being read, the bottom is shown
@@ -197,6 +223,12 @@ export function Notebook({ sid }: { sid: string }) {
       <div className="fixed inset-x-0 bottom-0 z-20" style={{ background: "linear-gradient(to top, var(--ink-0) 72%, transparent)" }}>
         <div className="mx-auto w-full px-5 pb-5 pt-6 md:px-8" style={{ maxWidth: 820 + 230 + 40, paddingLeft: undefined }}>
           <div className="lg:ml-[270px]">
+            {selection && (
+              <div className="mb-2 flex items-center gap-2 tiny" data-testid="selection-chip">
+                <span className="soft" style={{ border: "1px solid var(--rule-2)", padding: "2px 8px" }}>Asking about {selection.count} selected {selection.what}</span>
+                <button className="link" onClick={() => { setSelection(null); api.post("/api/v8/selection", { session_id: sid, ids: [] }).catch(() => {}); }} aria-label="Clear the selection">clear</button>
+              </div>
+            )}
             <div className="ask compact">
               <textarea ref={box} rows={1} value={text} placeholder={typeof window !== "undefined" && window.innerWidth < 640 ? "Ask a follow-up or change something…" : "Ask a follow-up, or change something: “use 5 min”, “do QQQ”, “only when yesterday was red”…"} onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }} data-testid="composer" aria-label="Ask" />
@@ -206,7 +238,8 @@ export function Notebook({ sid }: { sid: string }) {
           </div>
         </div>
       </div>
-      {spec && <ExploreSheet spec={spec} frame={frame} onClose={() => setSpec(null)} />}
+      {spec && <ExploreSheet spec={spec} frame={frame} onClose={() => setSpec(null)}
+        onAsk={(ids, what, q) => { api.post("/api/v8/selection", { session_id: sid, ids, what }).then(() => { setSelection({ count: ids.length, what }); setSpec(null); if (q) nb.send(q); }).catch(() => {}); }} />}
     </div>
   );
 }

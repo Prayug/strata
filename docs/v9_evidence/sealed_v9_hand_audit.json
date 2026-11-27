@@ -1,0 +1,285 @@
+{
+ "rules": "Post-hoc hand audit of the sealed V9 results (same author, after scoring; nothing in the readers changed because of it).\n\nTwo rules, applied to every configuration:\n  R1 demote: on an item where a question is acceptable (clarify_ok), the pre-registered scorer counts ANY flag or question\n     as correct. Here it counts only when it asks about what is actually ambiguous, with a correct partial reading.\n  R2 promote: a reading the scorer marked silent that is mathematically the same as an accepted one.\nPrints strict counts next to the pre-registered ones and writes docs/v9_evidence/sealed_v9_hand_audit.json.",
+ "configs": [
+  {
+   "config": "A",
+   "pre_registered": {
+    "single": {
+     "n": 62,
+     "correct": 20,
+     "asked": 29,
+     "silent": 13
+    },
+    "supported": {
+     "n": 55,
+     "correct": 19,
+     "silent": 11
+    },
+    "turns": {
+     "n": 31,
+     "correct": 20,
+     "asked": 10,
+     "silent": 1,
+     "context_kept": "8 of 9"
+    },
+    "seconds": {
+     "median": 0.08,
+     "p90": 11.42,
+     "max": 28.6
+    }
+   },
+   "strict": {
+    "single": {
+     "n": 62,
+     "correct": 19,
+     "asked": 31,
+     "silent": 12
+    },
+    "supported": {
+     "n": 55,
+     "correct": 18,
+     "silent": 10
+    },
+    "turns": {
+     "n": 31,
+     "correct": 18,
+     "asked": 13,
+     "silent": 0
+    }
+   },
+   "changes": [
+    {
+     "item": "average move from 10am to the close on fridays for IWM",
+     "from": "correct",
+     "to": "asked",
+     "rule": "R1",
+     "response": "I understood part of this (On IWM, after on Fridays: how the price moved from 13:00 to the close) but not 'close', so nothing was run. Rephrase that part, or leave it out if it does not matter."
+    },
+    {
+     "item": "what happens when the market tanks",
+     "from": "correct",
+     "to": "asked",
+     "rule": "R1",
+     "response": "Here is how I read that question. Part of the request could not be represented: \"when the market tanks\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part."
+    },
+    {
+     "item": "iwm after 2 down days in a row, odds of a green day?",
+     "from": "silent",
+     "to": "correct",
+     "rule": "R2",
+     "why": "a positive day's return is a close above the previous close (accepted)"
+    },
+    {
+     "item": "v9c1 turn 3",
+     "from": "silent",
+     "to": "correct",
+     "rule": "R2",
+     "why": "return_pct(1) is the last completed session's close-to-close return: the same days as prev_return<=-1.5"
+    },
+    {
+     "item": "v9c5 turn 1",
+     "from": "correct",
+     "to": "asked",
+     "rule": "R1",
+     "response": "Here is how I read that strategy. The entry rule fires on 4,000 sessions (1993-01-29 to 2008-12-12). None passes every check on stored option observations: 0.0% of them. 4,000 have no stored option pr"
+    },
+    {
+     "item": "v9c5 turn 3",
+     "from": "correct",
+     "to": "asked",
+     "rule": "R1",
+     "response": "I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after falling 3% or more the previous trading day?"
+    },
+    {
+     "item": "v9c7 turn 1",
+     "from": "correct",
+     "to": "asked",
+     "rule": "R1",
+     "response": "I understood part of this (On QQQ: the average move from open to close, by weekday, when the first 60-minute candle) but not 'strong', so nothing was run. Rephrase that part, or leave it out if it doe"
+    }
+   ]
+  },
+  {
+   "config": "B",
+   "pre_registered": {
+    "single": {
+     "n": 62,
+     "correct": 22,
+     "asked": 24,
+     "silent": 16
+    },
+    "supported": {
+     "n": 55,
+     "correct": 21,
+     "silent": 14
+    },
+    "turns": {
+     "n": 31,
+     "correct": 21,
+     "asked": 9,
+     "silent": 1,
+     "context_kept": "8 of 9"
+    },
+    "seconds": {
+     "median": 2.7,
+     "p90": 13.93,
+     "max": 29.01
+    }
+   },
+   "strict": {
+    "single": {
+     "n": 62,
+     "correct": 22,
+     "asked": 25,
+     "silent": 15
+    },
+    "supported": {
+     "n": 55,
+     "correct": 21,
+     "silent": 13
+    },
+    "turns": {
+     "n": 31,
+     "correct": 19,
+     "asked": 12,
+     "silent": 0
+    }
+   },
+   "changes": [
+    {
+     "item": "what happens when the market tanks",
+     "from": "correct",
+     "to": "asked",
+     "rule": "R1",
+     "response": "Here is how I read that question. Part of the request could not be represented: \"when the market tanks\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part."
+    },
+    {
+     "item": "iwm after 2 down days in a row, odds of a green day?",
+     "from": "silent",
+     "to": "correct",
+     "rule": "R2",
+     "why": "a positive day's return is a close above the previous close (accepted)"
+    },
+    {
+     "item": "v9c1 turn 3",
+     "from": "silent",
+     "to": "correct",
+     "rule": "R2",
+     "why": "return_pct(1) is the last completed session's close-to-close return: the same days as prev_return<=-1.5"
+    },
+    {
+     "item": "v9c5 turn 1",
+     "from": "correct",
+     "to": "asked",
+     "rule": "R1",
+     "response": "Here is how I read that strategy. The entry rule fires on 4,000 sessions (1993-01-29 to 2008-12-12). None passes every check on stored option observations: 0.0% of them. 4,000 have no stored option pr"
+    },
+    {
+     "item": "v9c5 turn 3",
+     "from": "correct",
+     "to": "asked",
+     "rule": "R1",
+     "response": "I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after falling 3% or more the previous trading day?"
+    },
+    {
+     "item": "v9c7 turn 1",
+     "from": "correct",
+     "to": "asked",
+     "rule": "R1",
+     "response": "I understood part of this (On QQQ: the average move from open to close, by weekday, when the first 60-minute candle) but not 'strong', so nothing was run. Rephrase that part, or leave it out if it doe"
+    }
+   ]
+  },
+  {
+   "config": "C",
+   "pre_registered": {
+    "single": {
+     "n": 62,
+     "correct": 32,
+     "asked": 14,
+     "silent": 16
+    },
+    "supported": {
+     "n": 55,
+     "correct": 26,
+     "silent": 15
+    },
+    "turns": {
+     "n": 31,
+     "correct": 24,
+     "asked": 6,
+     "silent": 1,
+     "context_kept": "9 of 10"
+    },
+    "seconds": {
+     "median": 4.88,
+     "p90": 17.35,
+     "max": 39.53
+    }
+   },
+   "strict": {
+    "single": {
+     "n": 62,
+     "correct": 32,
+     "asked": 15,
+     "silent": 15
+    },
+    "supported": {
+     "n": 55,
+     "correct": 26,
+     "silent": 14
+    },
+    "turns": {
+     "n": 31,
+     "correct": 22,
+     "asked": 9,
+     "silent": 0
+    }
+   },
+   "changes": [
+    {
+     "item": "what happens when the market tanks",
+     "from": "correct",
+     "to": "asked",
+     "rule": "R1",
+     "response": "Here is how I read that question. Part of the request could not be represented: \"when the market tanks\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part."
+    },
+    {
+     "item": "iwm after 2 down days in a row, odds of a green day?",
+     "from": "silent",
+     "to": "correct",
+     "rule": "R2",
+     "why": "a positive day's return is a close above the previous close (accepted)"
+    },
+    {
+     "item": "v9c1 turn 3",
+     "from": "silent",
+     "to": "correct",
+     "rule": "R2",
+     "why": "return_pct(1) is the last completed session's close-to-close return: the same days as prev_return<=-1.5"
+    },
+    {
+     "item": "v9c5 turn 1",
+     "from": "correct",
+     "to": "asked",
+     "rule": "R1",
+     "response": "Here is how I read that strategy. The entry rule fires on 4,000 sessions (1993-01-29 to 2008-12-12). None passes every check on stored option observations: 0.0% of them. 4,000 have no stored option pr"
+    },
+    {
+     "item": "v9c5 turn 3",
+     "from": "correct",
+     "to": "asked",
+     "rule": "R1",
+     "response": "I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after falling 3% or more the previous trading day?"
+    },
+    {
+     "item": "v9c7 turn 1",
+     "from": "correct",
+     "to": "asked",
+     "rule": "R1",
+     "response": "I understood part of this (On QQQ: the average move from open to close, by weekday, when the first 60-minute candle) but not 'strong', so nothing was run. Rephrase that part, or leave it out if it doe"
+    }
+   ]
+  }
+ ]
+}

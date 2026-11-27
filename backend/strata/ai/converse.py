@@ -41,8 +41,15 @@ def facts(frame: dict | None) -> dict:
             out[k] = tuple(f[k]) if isinstance(f[k], list) else f[k]
     d = f.get("draft")
     if d:
-        for k in ("structure", "dte", "quantity", "entry_time", "exit_time", "premium_target_pct", "premium_stop_pct", "underlying_target_pct", "underlying_stop_pct", "hold_minutes", "hold_sessions", "strike"):
+        for k in ("structure", "dte", "quantity", "entry_time", "exit_time", "premium_target_pct", "premium_stop_pct", "underlying_target_pct", "underlying_stop_pct", "hold_minutes", "hold_sessions", "strike", "sizing"):
             if d.get(k) not in (None, [], {}):
+                if k == "sizing":
+                    try:
+                        from strata.ai.draft import Draft, sizing_short
+                        out["strategy:sizing"] = sizing_short(Draft.model_validate(d))
+                    except Exception:  # noqa: BLE001
+                        out["strategy:sizing"] = str(d.get(k))
+                    continue
                 out[f"strategy:{k}"] = str(d.get(k)) if not isinstance(d.get(k), (str, int, float)) else d.get(k)
         for c in d.get("conditions") or []:
             out[f"rule:{c.get('expr')}"] = c.get("text") or c.get("expr")
@@ -53,7 +60,8 @@ NAMES = {"symbol": "the ticker", "period": "the period", "outcome": "what is cou
          "end": "when the measurement ends", "by": "the breakdown", "measure": "what is measured", "bucket": "the time buckets", "predictor": "what does the predicting",
          "strategy:structure": "the position", "strategy:dte": "the expiration", "strategy:quantity": "the number of contracts", "strategy:entry_time": "the entry time", "strategy:exit_time": "the exit time",
          "strategy:premium_target_pct": "the profit target on the option", "strategy:premium_stop_pct": "the stop on the option", "strategy:underlying_target_pct": "the target on the underlying",
-         "strategy:underlying_stop_pct": "the stop on the underlying", "strategy:hold_minutes": "the holding time", "strategy:hold_sessions": "the holding period", "strategy:strike": "the strike"}
+         "strategy:underlying_stop_pct": "the stop on the underlying", "strategy:hold_minutes": "the holding time", "strategy:hold_sessions": "the holding period", "strategy:strike": "the strike",
+         "strategy:sizing": "the size of each trade"}
 STRUCT = {"long_call": "buying calls", "long_put": "buying puts", "short_call": "selling calls", "short_put": "selling puts"}
 
 
@@ -284,6 +292,13 @@ def edit_question(text: str, frame: dict, known: list[str], last_slot: str | Non
             changed_slot = changed_slot or "condition"
             continue
         if same:
+            old = conds[same[-1]]
+            restated = (not v.get("value") and old.get("value") and v.get("size") in (None, "unstated") and not correction
+                        and (v.get("op") in ("<", "<=")) == (old.get("op") in ("<", "<=")))
+            if restated:
+                # "what if it gapped down but yesterday was green" after "gaps down more than 1%": the condition is restated, not
+                # resized: it keeps its size (until V9 it became "any gap down", said, but not what was meant)
+                continue
             conds[same[-1]] = v
             changed_slot = changed_slot or f"condition#{same[-1]}"
         else:
@@ -460,3 +475,86 @@ def relative_shift(text: str, draft) -> tuple | None:
         cur = "15:55" if cur == "close" or cur is None else cur
     new = _shift(cur, sign * mins)
     return field, new, cur
+
+
+# ------------------------------------------------------------------------------------------------- position sizing (V9)
+_AMT = r"\$?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|K|thousand|grand)?"
+
+
+def _amount(num: str, k: str | None) -> float:
+    v = float(num.replace(",", ""))
+    return v * 1000 if k else v
+
+
+def sizing_from_text(text: str, base=None):
+    """Position sizing said in a trader's words, read deterministically (the built-in readers' counterpart of the model
+    reader's `size` part). Returns (DraftSizing | None, quantity | None, [the words read]) or None when nothing is said.
+
+      "spend $500 a trade", "put 5% of the account into ...", "risk $300 per trade", "risk 2% of a $25k account",
+      "start with 10k", "reinvest(ing) profits", "stop (trading) for the day after losing $200", "buy 3 contracts"
+    """
+    from strata.ai.draft import DraftSizing
+    low = text.lower()
+    said = []
+    prev = base.sizing.model_copy() if (base is not None and getattr(base, "sizing", None)) else None
+    mode = value = None
+    qty = None
+    m = re.search(r"\b(?:spend(?:ing)?|use|using|put(?:ting)?|allocat\w*|invest\w*|budget(?: of)?)\s+(?:up to |about |around )?" + _AMT + r"\s*(?:dollars?\s*)?(?:of premium\s*)?(?:per|a|each|every|on each|for each)\s+(?:trade|time|position|entry)", low)
+    if m:
+        mode, value = "dollars", _amount(m.group(1), m.group(2))
+        said.append(m.group(0))
+    m = re.search(r"\b(?:put(?:ting)?|spend(?:ing)?|use|using|allocat\w*|invest\w*)\s+(\d+(?:\.\d+)?)\s*%\s*of\s+(?:the|my|an?)\s+(?:\$?[\d,.]+k?\s+)?(?:account|equity|portfolio|capital|balance)\b", low)
+    if m:
+        mode, value = "equity_pct", float(m.group(1))
+        said.append(m.group(0))
+    m = re.search(r"\brisk(?:ing)?\s+(?:up to |about |around )?\$\s*(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|grand)?|\brisk(?:ing)?\s+(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|grand)?\s+dollars", low)
+    if m:
+        mode = "risk_dollars"
+        value = _amount(m.group(1) or m.group(3), m.group(2) or m.group(4))
+        said.append(m.group(0))
+    m = re.search(r"\brisk(?:ing)?\s+(?:up to |about |around )?(\d+(?:\.\d+)?)\s*%(?:\s*of\s+(?:the|my|an?)\s+(?:\$?\s*[\d,.]+\s*k?\s+)?(?:account|equity|portfolio|capital|balance))?", low)
+    if m:
+        mode, value = "risk_pct", float(m.group(1))
+        said.append(m.group(0))
+    m = re.search(r"\b(?:buy(?:ing)?|get|trade|use)\s+(\d+)\s+contracts?\b|\b(\d+)\s+contracts?\s+(?:per|a|each|every)\s+(?:trade|time)", low)
+    if m:
+        qty = int(m.group(1) or m.group(2))
+        said.append(m.group(0))
+    cap = None
+    m = re.search(r"\b(?:start(?:ing)?|begin(?:ning)?|begins)\s+with\s+(?:a\s+)?" + _AMT + r"(?:\s+account)?", low) or re.search(r"\b(?:of\s+)?(?:a|an|my)\s+\$?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|grand)?\s+(?:account|portfolio)\b", low)
+    if m:
+        cap = _amount(m.group(1), m.group(2))
+        said.append(m.group(0))
+    reinvest = None
+    if re.search(r"\b(?:don'?t|do not|without|no)\s+(?:re-?invest\w*|compound\w*)", low):
+        reinvest = False
+        said.append("no reinvesting")
+    elif re.search(r"\bre-?invest\w*|\bcompound\w*", low):
+        reinvest = True
+        said.append("reinvest")
+    stop = None
+    m = re.search(r"\b(?:stop|quit|done|no more trades?|halt)\s+(?:trading\s+)?(?:for the day|for that day|that day|for the session)\s+(?:after|once|when|if)\s+(?:i(?:'m| am)?\s+|it(?:'s| is)?\s+|losses?\s+(?:reach|hit)\s+)?(?:los(?:e|ing|t)|down|lost)?\s*" + _AMT, low)
+    if m:
+        stop = _amount(m.group(1), m.group(2))
+        said.append(m.group(0))
+    if not said:
+        return None
+    if mode is None and qty is None and prev is None and not (cap or stop or reinvest is not None):
+        return None
+    s = prev or DraftSizing(mode="contracts", value=float(qty or (getattr(base, "quantity", 1) if base is not None else 1)))
+    upd = {}
+    if mode:
+        upd.update(mode=mode, value=float(value))
+    elif qty:
+        upd.update(mode="contracts", value=float(qty))
+    if cap:
+        upd["capital"] = cap
+    if reinvest is not None:
+        upd["reinvest"] = reinvest
+    if stop:
+        upd["daily_loss_stop"] = stop
+    s = s.model_copy(update=upd)
+    s.text = "; ".join(said)
+    if s.mode == "contracts" and not (s.capital or s.daily_loss_stop or s.reinvest):
+        return None, int(s.value), said  # a plain number of contracts is the draft's quantity
+    return s, (int(s.value) if s.mode == "contracts" else None), said

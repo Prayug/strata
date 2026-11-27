@@ -1,0 +1,23 @@
+API endpoints that neither the frontend nor the test suite calls (2026-11-27). Kept for backward compatibility: scripts and
+the CLI may call them. Candidates for removal once nothing outside this repository is known to use them.
+
+GET    /api/overview                            (app.py)
+GET    /api/data/events                         (app.py)
+GET    /api/research/runs                       (app.py)
+POST   /api/hypothesis/plan                     (v4_api.py)
+POST   /api/hypothesis/run                      (v4_api.py)
+GET    /api/ledger                              (v4_api.py)
+GET    /api/features                            (v4_api.py)
+POST   /api/collector/cleanup                   (v4_api.py)
+GET    /api/data/providers/catalog              (v4_api.py)
+POST   /api/data/providers/benchmark            (v4_api.py)
+GET    /api/bench                               (v4_api.py)
+GET    /api/graph/primitives                    (v5_api.py)
+POST   /api/graph/plan                          (v5_api.py)
+POST   /api/graph/validate                      (v5_api.py)
+POST   /api/graph/run                           (v5_api.py)
+GET    /api/signals                             (v5_api.py)
+DELETE /api/signals/{name}                      (v5_api.py)
+POST   /api/data/precheck                       (v6_api.py)
+GET    /api/compare/observations/{symbol}       (v7_api.py)
+POST   /api/compare/observations                (v7_api.py)

@@ -778,8 +778,11 @@ class Backtester:
         t = ctx.t
         if units is not None:
             return self._scale_out(pos, reason, ctx, int(units), explain)
-        # legs at/after their expiration close cannot be traded; they settle after the close
-        targets = [i for i, l in enumerate(pos.legs) if l.is_open and (leg_idx is None or i in leg_idx) and t < l.exp_close]
+        # legs at/after their expiration close cannot be traded; they settle after the close. One exception: a clock exit that
+        # was moved to an early close (13:00) fills at that instant, at the session's last print, as the trader asked for a sale
+        # and not an exercise (see RuleStrategy.check_exits)
+        at_close = bool(pos.meta.get("exit_at_close")) and ctx.is_last_tick
+        targets = [i for i, l in enumerate(pos.legs) if l.is_open and (leg_idx is None or i in leg_idx) and (t < l.exp_close or (at_close and t == l.exp_close))]
         if not targets:
             return True
         blocked = [pos.legs[i] for i in targets if pos.legs[i].stale or not math.isfinite(pos.legs[i].mid)]

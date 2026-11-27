@@ -10,7 +10,7 @@ import type { AiMessage } from "@/lib/lab";
 import { Report } from "@/pages/lab/Report";
 import { InvestigationView, SweepView } from "@/pages/lab/Views";
 import { type Level, fmtDate, useLevel, useObservations } from "./data";
-import { PayoffViz, Viz } from "./Viz";
+import { BeforeAfter, CandleOverlay, PayoffViz, Viz } from "./Viz";
 
 type Open = (spec: any) => void;
 
@@ -51,10 +51,18 @@ function TechnicalLevel({ m, a, sid }: { m: AiMessage; a: any; sid: string }) {
   const [day, setDay] = useState<string | null>(null);
   return (
     <div data-testid="content-technical">
-      {(a?.details || []).length > 0 && (
+      {Array.isArray(a?.details) && a.details.length > 0 && (
         <dl className="mb-6 grid gap-x-8 gap-y-2 small" style={{ gridTemplateColumns: "minmax(160px, 260px) 1fr" }}>
           {a.details.map((d: any, i: number) => <div key={i} className="contents"><dt className="mute">{d.label}</dt><dd className="num soft">{d.value}</dd></div>)}
         </dl>
+      )}
+      {a?.check && (
+        <div className="mb-6 small" data-testid="check-technical">
+          <div className="kicker mb-1">Independent check</div>
+          <p className="soft">{a.check.text}</p>
+          <p className="tiny mute">Method: {a.check.method}. The open of a session is its first regular-hours trade (the 9:30 one-minute bar) where minute bars are stored, the daily record's open before that; the close is the official closing print.</p>
+          {(a.check.dates || []).length > 0 && <p className="tiny mute">Sessions that differ: {a.check.dates.slice(0, 20).join(", ")}</p>}
+        </div>
       )}
       {(a?.terms || []).length > 0 && (
         <div className="mb-6">
@@ -84,7 +92,7 @@ function TechnicalLevel({ m, a, sid }: { m: AiMessage; a: any; sid: string }) {
   );
 }
 
-export function AnswerView({ m, sid, onOpen, onAsk, onTrade }: { m: AiMessage; sid: string; onOpen: Open; onAsk: (t: string) => void; onTrade: (runId: string, id: number) => void }) {
+export function AnswerView({ m, sid, onOpen, onAsk, onTrade, prev }: { m: AiMessage; sid: string; onOpen: Open; onAsk: (t: string) => void; onTrade: (runId: string, id: number) => void; prev?: any }) {
   const [level, setLevel] = useLevel();
   const c = m.content || {};
   const a = c.answer;
@@ -111,8 +119,21 @@ export function AnswerView({ m, sid, onOpen, onAsk, onTrade }: { m: AiMessage; s
               {a.numbers.slice(0, 5).map((n: any, i: number) => <Figure key={i} n={n} onOpen={onOpen} />)}
             </div>
           )}
+          {a.check && a.check.status !== "not_covered" && (
+            <p className="tiny mt-3" style={{ color: a.check.status === "same" ? "var(--mute)" : "var(--down)" }} data-testid="check" title={a.check.method}>
+              {a.check.status === "same" ? "✓ " : "⚠ "}{a.check.text}
+            </p>
+          )}
           {a.viz && <div className="mt-8"><Viz a={a} onOpen={onOpen} onTrade={(id) => onTrade(runId, id)} /></div>}
+          {a.overlay && <CandleOverlay o={a.overlay} />}
+          {prev && <BeforeAfter before={prev} after={a} />}
           {a.illustration && <div className="mt-8"><PayoffViz ill={a.illustration} /></div>}
+          {(a.sizing?.lines || []).length > 2 && (
+            <div className="mt-8 rule pt-5" data-testid="sizing">
+              <div className="kicker mb-2">The money at risk</div>
+              {a.sizing.lines.map((l: string, i: number) => <p key={i} className="small soft mb-1.5">{l}</p>)}
+            </div>
+          )}
           {(a.story?.lines || []).length > 0 && <div className="mt-6 flex flex-col gap-2">{a.story.lines.map((l: string, i: number) => <p key={i} className="lede">{l}</p>)}</div>}
           {(a.trade || c.trade_id != null) && <button className="link small mt-3" onClick={() => onTrade(a.trade?.run_id || c.run_id, a.trade?.trade_id ?? c.trade_id)}>Replay this trade</button>}
           {a.example && (

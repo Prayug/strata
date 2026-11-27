@@ -226,6 +226,15 @@ def run_study(cfg: StudyConfig | dict, store: MarketStore | None = None, max_ses
                     return False
                 excluded.setdefault("no bars between entry and horizon", []).append(d.isoformat())
                 return False
+            # A horizon that ends at a session's close ends at the OFFICIAL close (the daily record's closing print), as every
+            # session close in the engine does: the last intraday bar can differ from it. Until V9 the study read the last bar
+            # here, and an independent recalculation found the one session that changed (SPY 2020-04-16: official close 279.10
+            # below the 279.15 open, last minute bar 279.21 above it). The closing print is appended as the path's final price.
+            if cfg.horizon.kind in ("session", "sessions") and int(ser.res[i1 - 1]) < 86400:
+                dj = di if cfg.horizon.kind == "session" else min(di + cfg.horizon.sessions, len(ser.days) - 1)
+                oc = float(ser.d_c[dj])
+                if math.isfinite(oc) and oc > 0 and oc != float(c[-1]):
+                    h, l, o, c = np.append(h, oc), np.append(l, oc), np.append(o, oc), np.append(c, oc)
             up = (cfg.direction == "up") if cfg.direction else (tgt is None or tgt >= entry_px)
             stop_up = stp is not None and stp > entry_px
             it, is_ = _first_touch(h, l, o, tgt, stp, up, stop_up)
@@ -249,7 +258,8 @@ def run_study(cfg: StudyConfig | dict, store: MarketStore | None = None, max_ses
                 first_ = "neither"
             t_tgt = None
             if it is not None and path_res < 86400:
-                t_tgt = (int(ser.end[i0 + it]) - t_e) / 60.0 if not ((o[it] >= tgt) if up else (o[it] <= tgt)) else (int(ser.ts[i0 + it]) - t_e) / 60.0
+                ib = min(i0 + it, i1 - 1)  # the closing print appended above belongs to the session's last bar
+                t_tgt = (int(ser.end[ib]) - t_e) / 60.0 if not ((o[it] >= tgt) if up else (o[it] <= tgt)) else (int(ser.ts[ib]) - t_e) / 60.0
             sign = 1.0 if up else -1.0
             mfe = float(((h.max() if up else -l.min()) - sign * entry_px) / entry_px * 100)
             mae = float(((l.min() if up else -h.max()) - sign * entry_px) / entry_px * 100)
@@ -276,7 +286,10 @@ def run_study(cfg: StudyConfig | dict, store: MarketStore | None = None, max_ses
                 "vix_prev": _f(vix), "trend": trend, "weekday": d.weekday(), "why": [x["text"] for x in explain if not x.get("group")][:6],
             })
             if h.size <= 800:
-                paths.append((h / entry_px - 1, l / entry_px - 1, o / entry_px - 1, (ser.end[i0:i1] - t_e) / 60.0, path_res, c / entry_px - 1, d.isoformat()))
+                tt = (ser.end[i0:i1] - t_e) / 60.0
+                if tt.size < h.size:  # the official closing print, at the session's last bar end
+                    tt = np.append(tt, tt[-1])
+                paths.append((h / entry_px - 1, l / entry_px - 1, o / entry_px - 1, tt, path_res, c / entry_px - 1, d.isoformat()))
             return True
 
         if signal_mode:

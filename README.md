@@ -14,6 +14,7 @@ limits stated next to every number.
 
 ## Contents
 - [Quick start](#quick-start)
+- [What V9 adds](#what-v9-adds)
 - [What V8 adds](#what-v8-adds)
 - [What V7 adds](#what-v7-adds)
 - [What V6 adds](#what-v6-adds)
@@ -79,6 +80,37 @@ main path through each; *Advanced* adds the specialist tools. The calculations a
    option contract's own prints underneath; press `?` for the keyboard shortcuts.
 5. **Market Explorer**, **Strategy Builder**, **Backtests** and **Data** remain for working
    by hand. Everything the lab runs appears there too.
+
+## What V9 adds
+V9 improves what exists rather than adding another workspace: the question reader, the checking of every answer, the
+conversation, position sizing and the charts. The full record, with what was measured and what was not, is
+[docs/V9_REPORT.md](docs/V9_REPORT.md).
+
+- **A language model can read every message, and every part of its reading is checked** (`strata/ai/model_reader.py`).
+  One reader for every provider (a hosted model or a local Ollama model) returns Strata's question language as JSON
+  under a schema; each part quotes the message, numbers and clock times are re-read from the quoted words by the
+  deterministic readers (the model's own numbers are never used), anything in the message no part holds is a clause
+  not placed, and when the built-in reader reads the same sentence completely and differently, the user is asked.
+  `llm.mode`: `rules` (built-in readers only), `model_first`, `rules_first`, or `auto` (rules first with a local model,
+  model first with a hosted one). V6's tool-loop planner and V7's form planner are no longer on the request path.
+  **Measured once on a set written before V9, it is far from the target:** 21 of 55 answerable messages read correctly
+  with the local model (qwen3:8b) consulted second, 26 with it reading first, 19 without it, against a target of 90%;
+  a fifth to a quarter were answered as a different question without saying so. Hosted models were not measured.
+- **Every answer is recalculated independently** (`strata/research/reference.py`, `reference_options.py`, `verify.py`):
+  a second calculation in DuckDB SQL on the stored files, written apart from the engines, checks each frequency,
+  movement and agreement count, and re-prices simple option backtests trade by trade from the raw prints. The answer
+  says "Recalculated independently ... the same 357 of 687 sessions" or names the sessions that differ. It found four
+  calculation and definition errors, now fixed (see the report).
+- **Position sizing in a trader's terms**: spend $500 a trade, buy one contract, risk $300 or 2% of the account (risk is
+  the loss at the stop when there is one, the premium otherwise), start with $10,000, reinvest, stop for the day after
+  losing $200; typed or set in the strategy sentence, run on the existing engine, and answered with the premium paid,
+  the most each trade could lose, the loss the stop allowed and what was actually lost, kept apart.
+- **A conversation about the result**: "what would you investigate next?" (suggestions from the result itself), "is
+  there anything interesting about the losing trades?" (the group against the rest of the same result, with a
+  permutation test and the number of things compared), questions about rows selected in the explore sheet, and a
+  question that cannot be answered says why and offers the closest one that can, as a button, without running it.
+- **Charts that answer the question**: the rest of the session after up and after down first candles, the spread of
+  trade results, the question before and after a change, and a comparison table for a selected group.
 
 ## What V8 adds
 V8 changes how Strata is used, not what it computes. The first screen is a question box; the answer comes first, in
@@ -1102,11 +1134,13 @@ scripts/       setup.sh · dev.sh · init_db.sh · docker-entrypoint.sh
   it. Everything earlier waits on intraday option prices no free source holds: see
   [What is still out of reach](#what-is-still-out-of-reach). Alpaca is the only key-gated provider
   reached from this installation; the others' coverage is what they publish, not what was measured.
-- **The reader is right about one time in two on harder wording it has not seen** (V7: 16 of 34
-  sealed sentences with several conditions, a second symbol, time limits; 9 of the 34 answered
-  with a different question and nothing flagged), and about three times in four on V6's simpler
-  held-out set. A local model cross-checking the reading brings the silent ones down to 2 or 3 of
-  34 by asking. Read the ticket under the command line before relying on a run.
+- **The reader is right about two times in five on wording it has not seen.** On V9's sealed set
+  (55 answerable messages, written before V9 and scored once): 19 read correctly by the built-in
+  readers, 21 with the local model consulted second, 26 with it reading first; 11 to 15 were
+  answered as a different question without saying so (V7's sealed set: 16 of 34). The worst kinds:
+  a question read as a different kind of question, a clock time or an option's gain read as a move
+  in the stock, and plain questions taken by the older research-plan readers. Check the reading
+  each answer states before relying on it ([docs/V9_REPORT.md](docs/V9_REPORT.md#the-sealed-v9-set)).
 - **No figure includes the bid/ask spread.** Every option result is on trade prints. The quote
   comparison is built and blocked on a Databento key; what was measured instead is the first
   individual print after each decision.

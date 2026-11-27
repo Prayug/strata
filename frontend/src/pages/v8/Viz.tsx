@@ -249,6 +249,127 @@ export function StrategyViz({ v, onTrade, onOpen }: { v: any; onTrade: (id: numb
   );
 }
 
+/* ---------------------------------------------------------------------------------- how results were spread */
+export function WinLossViz({ v, onOpen }: { v: any; onOpen: Open }) {
+  const [ref, w] = useWidth<HTMLDivElement>();
+  const t: any[] = v.trades || [];
+  const [hover, setHover] = useState<number | null>(null);
+  const bins = useMemo(() => {
+    if (t.length < 4) return [];
+    const p = t.map((x) => x.pnl);
+    const lo = Math.min(...p), hi = Math.max(...p);
+    const nb = Math.min(24, Math.max(8, Math.round(Math.sqrt(t.length) * 1.5)));
+    const step = (hi - lo) / nb || 1;
+    const out = Array.from({ length: nb }, (_, i) => ({ a: lo + i * step, b: lo + (i + 1) * step, n: 0 }));
+    for (const x of p) out[Math.min(nb - 1, Math.floor((x - lo) / step))].n += 1;
+    return out;
+  }, [t]);
+  if (!bins.length) return null;
+  const h = 120, padL = 8, bw = (w - padL * 2) / bins.length;
+  const mx = Math.max(...bins.map((b) => b.n));
+  const wins = t.filter((x) => x.pnl > 0).length;
+  return (
+    <div ref={ref} className="mt-6" data-testid="viz-winloss">
+      <div className="kicker mb-2">How the trades were spread</div>
+      <svg width={w} height={h + 22} onMouseLeave={() => setHover(null)}>
+        {bins.map((b, i) => {
+          const bh = (b.n / mx) * h;
+          const mid = (b.a + b.b) / 2;
+          return (
+            <g key={i} onMouseEnter={() => setHover(i)} onClick={() => onOpen({ kind: "trades", run_id: v.run_id, filter: mid > 0 ? "winners" : "losers" })} style={{ cursor: "pointer" }}>
+              <rect x={padL + i * bw + 1} y={h - bh} width={Math.max(1, bw - 2)} height={bh} fill={mid > 0 ? C.up : C.down} opacity={hover === null || hover === i ? 0.85 : 0.35} />
+              <rect x={padL + i * bw} y={0} width={bw} height={h} fill="transparent" />
+            </g>
+          );
+        })}
+        <line x1={padL} x2={w - padL} y1={h} y2={h} stroke={C.rule2} />
+        <text x={padL} y={h + 15} fontSize={11} fill={C.faint}>{fmtUsd(bins[0].a)}</text>
+        <text x={w - padL} y={h + 15} fontSize={11} fill={C.faint} textAnchor="end">{fmtUsd(bins[bins.length - 1].b)}</text>
+      </svg>
+      <div className="text-[12.5px] mute">{hover !== null ? <span className="soft">{bins[hover].n} trade{bins[hover].n === 1 ? "" : "s"} between {fmtUsd(bins[hover].a, 0)} and {fmtUsd(bins[hover].b, 0)}. Click to list them.</span> :
+        <span>{wins} of {t.length} trades made money. Each bar counts trades by their result after fees; click one to list them.</span>}</div>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------------------- a group against the rest of it */
+export function ContrastViz({ v }: { v: any }) {
+  const rows: any[] = (v.rows || []).slice(0, 6);
+  if (!rows.length) return null;
+  const fmt = (r: any, x: number) => r.kind === "share" ? `${(x * 100).toFixed(0)}%` : r.feature === "premium" ? `$${x.toFixed(2)}` : r.feature === "vix" ? x.toFixed(1) : r.feature === "held" ? `${x.toFixed(0)} min`
+    : r.feature === "entry_minute" ? `${String(Math.floor(x / 60)).padStart(2, "0")}:${String(Math.round(x % 60)).padStart(2, "0")}` : `${x > 0 ? "+" : ""}${x.toFixed(2)}%`;
+  return (
+    <div data-testid="viz-contrast">
+      <table className="obs">
+        <thead><tr><th>What was compared</th><th className="r">{v.group}</th><th className="r">{v.rest}</th><th className="r" title="How often random splits of the same observations give a difference at least this large">Random splits this different</th></tr></thead>
+        <tbody>{rows.map((r, i) => (
+          <tr key={i}><td>{r.label}{r.category ? <span className="faint"> · {r.category}</span> : null}</td><td className="r num amber">{fmt(r, r.group)}</td><td className="r num">{fmt(r, r.rest)}</td>
+            <td className="r num mute">{Number.isFinite(r.p) ? (r.p < 0.01 ? "under 1%" : `${(r.p * 100).toFixed(0)}%`) : "—"}</td></tr>
+        ))}</tbody>
+      </table>
+      <div className="tiny mute mt-2">Each row: the average (or share) in the group and in the rest of the same result. The last column is how often splitting the same observations at random gives a difference at least as large; it is not the chance that the difference is real.</div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------------- the question before and after a change */
+export function BeforeAfter({ before, after }: { before: any; after: any }) {
+  const num = (a: any) => {
+    const v = a?.viz || {};
+    if (v.kind === "frequency" && v.n) return { value: v.hits / v.n, text: `${((v.hits / v.n) * 100).toFixed(1)}%`, n: `${v.hits.toLocaleString()} of ${v.n.toLocaleString()}` };
+    if (v.kind === "strategy" && (v.trades || []).length) { const t = v.trades; const tot = t[t.length - 1].total; return { value: tot, text: fmtUsd(tot), n: `${t.length} trades` }; }
+    return null;
+  };
+  const a = num(before), b = num(after);
+  if (!a || !b || before?.viz?.kind !== after?.viz?.kind) return null;
+  const mx = Math.max(Math.abs(a.value), Math.abs(b.value)) || 1;
+  const bar = (x: any, label: string, now: boolean) => (
+    <div className="flex items-center gap-3">
+      <span className="w-[48px] shrink-0 tiny mute">{label}</span>
+      <div className="h-[10px] min-w-[90px] flex-1" style={{ background: "var(--rule)" }}><div className="h-full" style={{ width: `${(Math.abs(x.value) / mx) * 100}%`, background: now ? C.amber : C.mute }} /></div>
+      <span className={`num shrink-0 text-right ${now ? "amber" : "soft"}`}>{x.text}</span><span className="tiny faint hidden w-[120px] sm:inline">{x.n}</span>
+    </div>
+  );
+  return <div className="mt-6 flex flex-col gap-1.5" data-testid="before-after"><div className="kicker mb-1">Before and after the change</div>{bar(a, "Before", false)}{bar(b, "After", true)}</div>;
+}
+
+/* --------------------------------------------------------------- after an up candle, after a down candle */
+export function CandleOverlay({ o }: { o: any }) {
+  const [ref, w] = useWidth<HTMLDivElement>();
+  if (!o?.up?.minutes || !o?.down?.minutes) return null;
+  const h = 220, padL = 46, padB = 22;
+  const all = [o.up, o.down].flatMap((x: any) => [...(x.p25 || []), ...(x.p75 || [])]).filter((v: any) => v != null && Number.isFinite(v));
+  const lo = Math.min(0, ...all), hi = Math.max(0, ...all);
+  const mx = Math.max(o.up.minutes[o.up.minutes.length - 1], o.down.minutes[o.down.minutes.length - 1]) || 1;
+  const X = (m: number) => padL + (m / mx) * (w - padL - 10);
+  const Y = (v: number) => 8 + (1 - (v - lo) / (hi - lo || 1)) * (h - padB - 8);
+  const line = (x: any, k: string) => x.minutes.map((m: number, i: number) => (x[k][i] == null ? null : `${X(m).toFixed(1)},${Y(x[k][i]).toFixed(1)}`)).filter(Boolean).join(" L");
+  const band = (x: any) => {
+    const top = x.minutes.map((m: number, i: number) => (x.p75[i] == null ? null : `${X(m).toFixed(1)},${Y(x.p75[i]).toFixed(1)}`)).filter(Boolean);
+    const bot = x.minutes.map((m: number, i: number) => (x.p25[i] == null ? null : `${X(m).toFixed(1)},${Y(x.p25[i]).toFixed(1)}`)).filter(Boolean).reverse();
+    return `M${top.join(" L")} L${bot.join(" L")} Z`;
+  };
+  const hours = Array.from({ length: Math.floor(mx / 60) + 1 }, (_, i) => i * 60);
+  return (
+    <div ref={ref} className="mt-8" data-testid="viz-candle-overlay">
+      <div className="kicker mb-2">The rest of the session, after an up candle and after a down candle</div>
+      <svg width={w} height={h}>
+        {[lo, 0, hi].map((v, i) => <g key={i}><line x1={padL} x2={w - 10} y1={Y(v)} y2={Y(v)} stroke={v === 0 ? C.rule2 : C.rule} strokeDasharray={v === 0 ? undefined : "2 4"} /><text x={padL - 6} y={Y(v) + 4} fontSize={11} fill={C.faint} textAnchor="end">{v > 0 ? "+" : ""}{v.toFixed(2)}%</text></g>)}
+        {hours.map((m) => <text key={m} x={X(m)} y={h - 6} fontSize={11} fill={C.faint} textAnchor="middle">{m === 0 ? "candle close" : `+${m / 60}h`}</text>)}
+        <path d={band(o.up)} fill={C.up} opacity={0.12} />
+        <path d={band(o.down)} fill={C.down} opacity={0.12} />
+        <path d={`M${line(o.up, "median")}`} fill="none" stroke={C.up} strokeWidth={2} />
+        <path d={`M${line(o.down, "median")}`} fill="none" stroke={C.down} strokeWidth={2} />
+      </svg>
+      <div className="flex flex-wrap gap-x-5 gap-y-1 text-[12.5px]">
+        <span style={{ color: C.up }}>After an up first {o.minutes_candle}-minute candle ({(o.up.days || 0).toLocaleString()} days)</span>
+        <span style={{ color: C.down }}>After a down one ({(o.down.days || 0).toLocaleString()} days)</span>
+        <span className="mute">Lines: the median day, from the candle's close (0%). Shading: the middle half of the days. If the candle predicted the rest of the session, the two would pull apart.</span>
+      </div>
+    </div>
+  );
+}
+
 export function CompareViz({ v, onOpen }: { v: any; onOpen: Open }) {
   const [ref, w] = useWidth<HTMLDivElement>();
   const ser: any[] = v.series || [];
@@ -357,7 +478,8 @@ export function Viz({ a, onOpen, onTrade }: { a: any; onOpen: Open; onTrade: (id
     case "paths": return <PathsViz v={v} />;
     case "timing": return <TimingViz v={v} onOpen={onOpen} />;
     case "breakdown": return <BreakdownViz v={v} onOpen={onOpen} />;
-    case "strategy": return <StrategyViz v={v} onTrade={onTrade} onOpen={onOpen} />;
+    case "strategy": return <div><StrategyViz v={v} onTrade={onTrade} onOpen={onOpen} /><WinLossViz v={v} onOpen={onOpen} /></div>;
+    case "contrast": return <ContrastViz v={v} />;
     case "compare_strategies": return <CompareViz v={v} onOpen={onOpen} />;
     case "sweep": return <SweepViz v={v} onOpen={onOpen} />;
     case "variants": return <VariantsViz v={v} onOpen={onOpen} />;

@@ -372,7 +372,7 @@ def tag(text: str, known: list[str] | None = None) -> tuple[Norm, list[Mention]]
     t.each(rf"\b(?:a |an )?(?P<d>{DOWN}|{UP}|red|green|losing|winning) (?:day|session)\b",
            lambda m: {"key": "prev_return", "op": "<" if (re.match(DOWN, m.group("d")) or m.group("d") in ("red", "losing")) else ">", "value": 0.0}, "event")
     # an X% move with no time anchor ("after SPY drops 2%", "after falling 1%", "after a 1.5% drop"): read as a session's move, said
-    t.each(rf"\b(?:{SYM_RX} )?(?P<d>{DOWN}|{UP})s? (?:by )?(?:{ATLEAST}|{MORETHAN} )?(?P<num>\d+(?:\.\d+)?) ?%(?: ?\+| or more)?(?! (?:from|off|above|below|of|in the|by \d))",
+    t.each(rf"\b(?:{SYM_RX} )?(?P<d>{DOWN}|{UP})s? (?:by )?(?:{ATLEAST}|{MORETHAN} )?(?P<num>\d+(?:\.\d+)?) ?%(?: ?\+| or more)?(?! (?:from|off|above|below|of|in the|by \d|at \d|as of \d|by \d))(?<!is down)(?<!is up)",
            lambda m: {"key": "move", "op": "<=" if re.match(DOWN, m.group("d")) else ">=", "value": pct(m, bool(re.match(DOWN, m.group("d")))), "anchor": None}, "event")
     t.each(rf"\b(?:a |an )?(?P<d>drop|fall|decline|selloff|sell off|loss|rise|rally|gain|pop|jump|move down|move up) (?:of |by )?(?:{ATLEAST}|{MORETHAN} )?(?P<num>\d+(?:\.\d+)?) ?%(?: or more| or larger| or bigger| or worse|\+)?(?! (?:from|off|above|below|in the|by \d))",
            lambda m: {"key": "move", "op": "<=" if m.group("d") in ("drop", "fall", "decline", "selloff", "sell off", "loss", "move down") else ">=",
@@ -454,7 +454,7 @@ def tag(text: str, known: list[str] | None = None) -> tuple[Norm, list[Mention]]
     t.each(r"\b(?:average|mean|median) (?:return|move|change|result)\b|\b(?:return|returns|performance|perform)\b", lambda m: {"key": "measure", "measure": "return"}, "outcome")
 
     # ---- when the measurement starts and ends
-    t.each(r"\b(?:the )?rest of (?:the )?(?:day|session|trade)\b|\bremainder of (?:the )?(?:day|session)\b|\bremaining (?:session|day)\b|\bafter (?:the |that )?(?:candle|bar|first \d+ min) (?:close|closes|is done)\b|\bfrom there\b",
+    t.each(r"\b(?:the )?rest of (?:the )?(?:[a-z]{2,5}(?: ?'?s)? )?(?:day|session|trade)\b|\bremainder of (?:the )?(?:[a-z]{2,5}(?: ?'?s)? )?(?:day|session)\b|\bremaining (?:session|day)\b|\bafter (?:the |that )?(?:candle|bar|first \d+ min) (?:close|closes|is done)\b|\bfrom there\b",
            lambda m: {"anchor": "rest"}, "anchor", "scope")
     t.each(r"\b(?:the |its )?(?:whole|entire|full|overall) (?:day|session)\b|\bhow the (?:day|session) (?:ends|end|closes|goes|finishes)\b|\b(?:the )?(?:day|session) (?:as a whole)\b",
            lambda m: {"anchor": "day"}, "anchor", "scope")
@@ -733,8 +733,8 @@ def _frequency(r: Reading, kind: str, events, outcomes, anchors, clocks, use) ->
             m = ev[0]
             use(m, "outcome")
             v = dict(m.value)
-            if v.get("key") == "move":
-                v["key"] = "day_return"
+            if v.get("key") in ("move", "prev_return"):
+                v["key"] = "day_return"  # counted on its own, the session's own move: until V9 a "prev_return" event counted the day after
             f["outcome"] = {"key": "event", "event": v, "text": m.text}
             events = [e for e in events if e is not m]
     if kind == "movement":
@@ -1049,7 +1049,13 @@ def describe_condition(c: dict) -> str:
     if k == "weekday":
         return f"on {WEEK.get(v, v)}"
     if k == "vix":
+        if c.get("when") == "now":
+            return f"the VIX is {'above' if op in ('>', '>=') else 'below'} {v:g} at the time"
         return f"the VIX closed {'above' if op in ('>', '>=') else 'below'} {v:g} the session before"
+    if k == "prev_otc":
+        if not v:
+            return "the previous session closed " + ("below its open (a red candle)" if op in ("<", "<=") else "above its open (a green candle)")
+        return f"the previous session {'fell' if op in ('<', '<=') else 'rose'} {abs(v):g}% or more from its open to its close"
     if k in ("up_streak", "down_streak"):
         return f"{v:g} or more {'up' if k == 'up_streak' else 'down'} sessions in a row"
     if k == "vwap":
@@ -1156,7 +1162,12 @@ def cond_expr(c: dict) -> tuple[str, str] | None:
     if k == "change":
         return f"change_pct {op} {v:g}", describe_condition(c)
     if k == "vix":
-        return f"vix {op} {v:g}", describe_condition(c)
+        # the previous session's VIX close, which is what the reading says ("the VIX closed above 25 the session before"). Until
+        # V9 this compiled to `vix`, the level at the moment of entry (the day's own VIX open at 09:30): an independent
+        # recalculation found the reading and the run disagreeing on 50 QQQ sessions. "VIX is above 25 at 10:00" says when.
+        return (f"vix {op} {v:g}" if c.get("when") == "now" else f"vix_prev_close {op} {v:g}"), describe_condition(c)
+    if k == "prev_otc":
+        return f"previous_session.open_to_close_pct {op} {v:g}", describe_condition(c)
     if k == "up_streak":
         return f"consecutive_up_days() >= {int(v)}", describe_condition(c)
     if k == "down_streak":
@@ -1405,6 +1416,9 @@ def strategy_coverage(text: str, draft, known: list[str]) -> list[str]:
     for v in (draft.premium_target_pct, draft.premium_stop_pct, draft.underlying_target_pct, draft.underlying_stop_pct, draft.width):
         if v is not None:
             nums.add(round(abs(float(v)), 6))
+    sz = getattr(draft, "sizing", None)
+    if sz is not None and sz.mode in ("risk_pct", "equity_pct"):
+        nums.add(round(abs(float(sz.value)), 6))  # "risk 2% of the account": the sizing's own percentage
     for x in re.findall(r"-?\d+(?:\.\d+)?", conds):
         nums.add(round(abs(float(x)), 6))
     for pt in getattr(draft, "partials", []) or []:

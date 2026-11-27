@@ -1,0 +1,333 @@
+{
+ "which": "sealed",
+ "model": "qwen3:8b",
+ "policy": "auto",
+ "answers": [
+  {
+   "id": "v9a1",
+   "text": "How often has SPY closed above its open since 2016?",
+   "ok": true,
+   "checks": [
+    [
+     "pct",
+     true,
+     "reference 54.2138"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reference": {
+    "pct": 54.21379058737687,
+    "k": 1486,
+    "n": 2741
+   },
+   "reply": "Here is how I read that question.  Since 2016-01-01, SPY closed above its open in 2,741 sessions out of 2,741 evaluated, with no missing data. The frequency of closing above the open was 54.2%, with a 95% confidence interval between 52.3% and 56.1%. This result is not statistically different from the baseline frequency of 54.2%. The average best move after entry was +0.53%, while the average worst move was -0.57%. The average return at the end of the horizon was +0.02%, and 54.1% of sessions ended higher. The sample size is small, and the result is not distinguishable from chance. SPY closes above its open on 1,486 of 2,741 days (54.2%). Allowing for how few days there are, the true rate is likely between 52.3% and 56.1%. 2,741 Days that matched your rules 1,486 Days it happened 1,255 Days it didn't",
+   "seconds": 14.0
+  },
+  {
+   "id": "v9a2",
+   "text": "After QQQ gaps down 1% or more, how often does it fill the gap the same day?",
+   "ok": true,
+   "checks": [
+    [
+     "pct",
+     true,
+     "reference 39.3560"
+    ],
+    [
+     "k",
+     true,
+     "reference 220.0000"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reference": {
+    "pct": 39.355992844364934,
+    "k": 220,
+    "n": 559
+   },
+   "reply": "Here is how I read that question.  On QQQ, 220 of the 559 sessions that met the condition (1999-03-10 to 2026-11-25) saw the outcome - price reached prev_close - a historical frequency of 39.4% (95% confidence interval 35.4% to 43.5%). Across all 6,972 evaluated sessions the same outcome occurred 66.9% of the time, so the condition lowers it by 27.5 percentage points; the difference is statistically distinguishable from the other sessions (p < 0.001). After the starting point the average best move was +1.85% and the average worst move -1.48%; the horizon ended +0.16% on average and higher on 50.8% of sessions. Where intraday bars exist, the target was typically reached 157 min after the start. These are underlying price statistics, not option returns, and past frequency is not a forecast. QQQ trades back to the previous close (the gap fills) on 220 of 559 days when it opened 1% or more below the previous close (39.4%). There is no fair \"any day\" comparison for this: on days without the condition the price starts at that level, so reaching it is automatic. Allowing for how few days there are, the true rate is likely between 35.4% and 43.5%. 559 Days that matched your rules 220 Days it happened 339 Days it didn't",
+   "seconds": 12.5
+  },
+  {
+   "id": "v9a3",
+   "text": "How often does IWM close below its open the day after a 2% up day?",
+   "ok": true,
+   "checks": [
+    [
+     "pct",
+     true,
+     "reference 47.1491"
+    ],
+    [
+     "k",
+     true,
+     "reference 215.0000"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reference": {
+    "pct": 47.14912280701754,
+    "k": 215,
+    "n": 456
+   },
+   "reply": "Here is how I read that question.  After sessions where the previous session rose 2% or more on IWM between 2000-05-26 and 2026-11-25, the target level was reached in 47.1% of cases, with a 95% confidence interval between 42.6% and 51.7%. This is slightly below the baseline frequency of 48.6%, but the difference is not statistically significant (p = 0.526). The target was reached first in 215 sessions, while 241 sessions ended without reaching either level. The average return at the end of the horizon was -0.07%, with a median of +0.09%. The sample size is relatively small, and the result is not distinguishable from chance. IWM the next session closes below its open on 215 of 456 days when the previous session rose 2% or more (47.1%). That is about the same as on any day: 48.6% of all 6,663 days. Allowing for how few days there are, the true rate is likely between 42.6% and 51.7%. 456 Days that matched your rules 215 Days it happened 241 Days it didn't 48.6% On any day",
+   "seconds": 11.3
+  },
+  {
+   "id": "v9a4",
+   "text": "Does the first 15-minute candle predict the rest of SPY's session?",
+   "ok": false,
+   "checks": [
+    [
+     "rest_pct",
+     true,
+     "reference 50.4211"
+    ],
+    [
+     "day_pct",
+     false,
+     "reference 61.0399"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reference": {
+    "rest_pct": 50.42109117539363,
+    "day_pct": 61.03991212010253,
+    "n": 2740
+   },
+   "reply": "Research plan: 2 related configurations will be run and compared with their baselines. On every SPY session with intraday bars: the direction of the first 15 minutes (close against the open) is compared with the direction of the rest of the session (the candle's close to the session's close). Up and down candles are counted separately, each against all sessions.  The direction of SPY's first 15 minutes and the direction of the rest of the session: from the end of the candle to the close it matched on 50.4%, against 50.1% for unrelated directions: that is no more than chance produces. First 15 minutes: matched the rest of the session (09:45 to the close) on 50.4% of 2,731 sessions (95% interval 48.5% to 52.3%; 50.1% if unrelated). The first 15-minute candle matched the direction of the rest of the session 50.4% of the time, about what two unrelated directions would give. If the two directions were unrelated they would match about 50.1% of the time; the measured rate's likely range is 48.5% to 52.3%. Simply guessing \"up\" every day would have matched the rest of the session 53.9% of the time, which is better than following the candle. 50.4% Matched the rest of the day 1,354 Days the candle was wrong 50.1% If unrelated",
+   "seconds": 3.4
+  },
+  {
+   "id": "v9a5",
+   "text": "Which weekday has the best average open-to-close return for QQQ?",
+   "ok": false,
+   "checks": [
+    [
+     "mean",
+     false,
+     "reference 0.0355"
+    ],
+    [
+     "weekday",
+     false,
+     "reference Wednesday"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reference": {
+    "weekday": "Wednesday",
+    "mean": 0.035545943598176186
+   },
+   "reply": "I understood part of this (On QQQ: the average move from open to close, by weekday) but not 'open', 'close', so nothing was run. Rephrase that part, or leave it out if it does not matter. ",
+   "seconds": 2.0
+  },
+  {
+   "id": "v9a6",
+   "text": "On days SPY gaps up 0.5% or more, what is the average move from 10:00 ET to the close?",
+   "ok": false,
+   "checks": [
+    [
+     "mean",
+     false,
+     "reference 0.0917"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reference": {
+    "mean": 0.09170625949025027,
+    "n": 433
+   },
+   "reply": "Research graph: 6 steps, 2 analyses. Every condition is checked to be known before the outcome starts, and every analysis is reported, including any that find nothing. 1 configuration has been tested in this notebook so far.  SPY, sessions where SPY rose 0.5% or more overnight (open against the previous close): the outcome (the session closes above its entry price) occurred on 712 of 1261 (56.5%, 95% interval 53.5% to 59.5%), against 51.6% of the other 7,253 evaluated sessions. The difference is unlikely to be chance on its own (p below 0.005, weeks resampled), before any correction for other configurations tried. ",
+   "seconds": 0.4
+  },
+  {
+   "id": "v9a7",
+   "text": "In 2025, how many times did IWM gap down more than 1%?",
+   "ok": true,
+   "checks": [
+    [
+     "k",
+     true,
+     "reference 29.0000"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reference": {
+    "k": 29,
+    "n": 250,
+    "pct": 11.6
+   },
+   "reply": "IWM opened 1% or more below the previous close on 29 of 250 sessions (11.6%), from January 2, 2025 to December 31, 2025. IWM opened 1% or more below the previous close on 29 of 250 sessions (11.6%), from January 2, 2025 to December 31, 2025. About once every 9 sessions. 29 Sessions it happened 250 All sessions 11.6% Share",
+   "seconds": 0.1
+  },
+  {
+   "id": "v9a8",
+   "text": "When during the day does QQQ usually make its low?",
+   "ok": true,
+   "checks": [
+    [
+     "bucket",
+     true,
+     "reference 09:30"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reference": {
+    "bucket": "09:30",
+    "share": 34.4035023713973
+   },
+   "reply": "QQQ made its low of the day between 09:30 and 10:00 on 34.4% of sessions, more than any other half hour; the next most common was 15:30\u201316:00 (13.7%). QQQ made its low of the day between 09:30 and 10:00 on 34.4% of sessions, more than any other half hour; the next most common was 15:30\u201316:00 (13.7%). If the low could fall anywhere, each part of the day would hold about 7.7%. Counted on 2,741 sessions from Jan 2016 to Nov 2026 (New York time). 34.4% 09:30\u201310:00 13.7% 15:30\u201316:00 2,741 Sessions",
+   "seconds": 0.2
+  },
+  {
+   "id": "v9a9",
+   "text": "How often does SPY touch +0.5% from the open before 11am ET?",
+   "ok": true,
+   "checks": [
+    [
+     "pct",
+     true,
+     "reference 17.9562"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reference": {
+    "pct": 17.956204379562045,
+    "k": 492,
+    "n": 2740
+   },
+   "reply": "Here is how I read that question.  Over the period from 1993-01-29 to 2026-11-25, SPY traded 0.5% above its open in 2,740 sessions, out of a total of 2,740 evaluated sessions. The historical frequency of reaching the target level was 18.0%, with a 95% confidence interval between 16.6% and 19.4%. In 492 sessions, the target was reached first, while 2,248 sessions ended without either level being hit. The average best move after entry was +0.31%, and the average worst move was -0.34%. The median return at the end of the horizon was +0.02%, with 52.6% of sessions ending higher. The median time to reach the target was 35 minutes. The sample is small and the result is not statistically distinguishable from chance compared to the baseline. SPY trades 0.5% above its open at some point on 492 of 2,740 days (18.0%). Allowing for how few days there are, the true rate is likely between 16.6% and 19.4%. 2,740 Days that matched your rules 492 Days it happened 2,248 Days it didn't",
+   "seconds": 12.5
+  },
+  {
+   "id": "v9a10",
+   "text": "How often does QQQ close below the previous close the day after 3 up days in a row?",
+   "ok": true,
+   "checks": [
+    [
+     "pct",
+     true,
+     "reference 44.4345"
+    ],
+    [
+     "k",
+     true,
+     "reference 495.0000"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reference": {
+    "pct": 44.43447037701975,
+    "k": 495,
+    "n": 1114
+   },
+   "reply": "Here is how I read that question.  After 1,114 sessions where there were 3 or more up days in a row on QQQ between 1999-03-10 and 2026-11-25, the target level was reached in 495 sessions, which is 44.4% of the time. This is slightly below the baseline frequency of 45.2%, but the difference is not statistically significant, as the p-value is 0.585. The confidence interval for the target frequency ranges from 41.5% to 47.4%. In 619 sessions, neither level was reached, and there were no ambiguous cases. The average return at the end of the horizon was +0.02%, with a median of +0.08%. The average best move was +0.73%, while the average worst move was -0.67%. QQQ the next session closes below the previous session's close on 495 of 1,114 days when 3 or more up sessions in a row (44.4%). That is about the same as on any day: 45.2% of all 6,972 days. Allowing for how few days there are, the true rate is likely between 41.5% and 47.4%. 1,114 Days that matched your rules 495 Days it happened 619 Days it didn't 45.2% On any day",
+   "seconds": 11.0
+  },
+  {
+   "id": "v9a11",
+   "text": "Buy 1 ATM SPY 0DTE call at 10:00 ET after a 1% down day and sell at 15:30 ET, using option trade prices",
+   "ok": true,
+   "checks": [
+    [
+     "trades",
+     true,
+     "reference 75.0000"
+    ],
+    [
+     "pnl",
+     true,
+     "reference 4435.5000"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reference": {
+    "trades": 75,
+    "pnl": 4435.5,
+    "contracts_total": 75,
+    "signals": 306
+   },
+   "reply": "Here is how I read that strategy. The entry rule fires on 306 sessions (2016-01-04 to 2026-11-23). 75 pass every check on stored option observations (75 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 24.5% of them. 1 is held only in part by the provider. On 45 no contract with the required expiration was listed, so they cannot be tested with any data. 185 have no stored option prices. A run confirms each one: these are sessions the stored data supports, not trades. Not specified, so I assumed defaults you can edit: stop loss.  The strategy executed 75 trades over the period, generating a net profit of $4,435.50, which is a 4.4% return on starting capital. About 45.3% of trades were winning, with an average win of $327.46 and an average loss of -$163.37. The average profit per trade was $59.14, and the profit factor was 1.66, indicating more money made on winning trades than lost on losing ones. However, the t-statistic of 1.10 suggests the result may not be statistically significant, and the small sample size raises concerns about reliability. The largest winner was $3,387.70, while the largest loss was -$456.30, and the maximum drawdown was -2.0% or -$2,120.30. The Sharpe ratio of 0.67 indicates moderate risk-adjusted returns. Over 75 trades from Feb 2024 to Nov 2026, this made +$4,435.50 after $97.50 in fees: +$59.14 per trade on average. That average is not reliably different from zero. Given how much single trades ",
+   "seconds": 25.4
+  },
+  {
+   "id": "v9a12",
+   "text": "Buy ATM QQQ 0DTE calls at 10:00 ET after a 1% down day, sell at 15:30 ET, spending $500 per trade, using option trade prices",
+   "ok": true,
+   "checks": [
+    [
+     "trades",
+     true,
+     "reference 117.0000"
+    ],
+    [
+     "pnl",
+     true,
+     "reference -2712.2000"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reference": {
+    "trades": 117,
+    "pnl": -2712.2,
+    "contracts_total": 214,
+    "signals": 446
+   },
+   "reply": "Here is how I read that strategy. The entry rule fires on 446 sessions (2016-01-04 to 2026-11-25). 121 pass every check on stored option observations (121 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 27.1% of them. 325 have no stored option prices. A run confirms each one: these are sessions the stored data supports, not trades. Not specified, so I assumed defaults you can edit: stop loss.  The strategy involved 117 trades over the period, resulting in a net loss of $2,712.20, or -2.7% on starting capital. About 37.6% of trades were winners, with an average win of $389.11 and an average loss of $271.68. The average profit per trade was -$23.18, and the profit factor was 0.86, indicating the strategy underperformed. The largest winner was $1,179.40, while the largest loss was -$496.60. The maximum drawdown was -5.4%, or -$5,448.50 in dollars, and the Sharpe ratio was -0.38, suggesting poor risk-adjusted returns. The t-statistic of -0.65 implies the results are not statistically different from chance. The sample is small, and many sessions lacked usable option price data, making the results unreliable. Over 117 trades from Feb 2024 to Nov 2026, this made -$2,712.20 after $278.20 in fees: -$23.18 per trade on average. That average is not reliably different from zero. Given how much single trades vary, the average per trade is likely between -$90.63 and +$46.11: a range that includes losing money. 44 of 117 trades made m",
+   "seconds": 26.4
+  }
+ ],
+ "ok": 9,
+ "n": 12,
+ "sealed_hash": "868db97d358ffaadcca113cc37d48e37adc318237a87c28a5d0bd2bec389d1e9",
+ "wall_seconds": 119.5
+}

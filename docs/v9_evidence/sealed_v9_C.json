@@ -1,0 +1,2154 @@
+{
+ "singles": [
+  {
+   "text": "how many times since 2020 has QQQ opened down more than 1% and still closed green?",
+   "level": "intermediate",
+   "category": "frequency",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "QQQ",
+    "conditions": [
+     "gap<=-1"
+    ],
+    "outcome": "close>open",
+    "start": "open",
+    "end": "close",
+    "period": [
+     "2020-01-01",
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.85
+  },
+  {
+   "text": "When IWM gaps up half a percent or more, how often does the gap get filled the same day?",
+   "level": "intermediate",
+   "category": "frequency",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "IWM",
+    "conditions": [
+     "gap>=0.5"
+    ],
+    "outcome": "touch:prev_close",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.49
+  },
+  {
+   "text": "after 3 red days in a row how often is spy green the next day",
+   "level": "beginner",
+   "category": "informal",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "SPY",
+    "conditions": [
+     "down_streak>=3"
+    ],
+    "outcome": "close>prev_close",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.23
+  },
+  {
+   "text": "how often does qqq trade 1% below its open at some point in the session",
+   "level": "beginner",
+   "category": "frequency",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "QQQ",
+    "conditions": [],
+    "outcome": "touch:-1",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 3.91
+  },
+  {
+   "text": "is it common for SPY to drop 2% from the open and then finish the day green?",
+   "level": "intermediate",
+   "category": "multi_part",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "SPY",
+    "conditions": [
+     "from_open<=-2"
+    ],
+    "outcome": "close>open",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.41
+  },
+  {
+   "text": "what % of the time does IWM close higher than it opened when VIX was above 25 the day before",
+   "level": "intermediate",
+   "category": "frequency",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "IWM",
+    "conditions": [
+     "vix>25"
+    ],
+    "outcome": "close>open",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.72
+  },
+  {
+   "text": "how often does SPY hit +0.3% between 6:30 and 7:30 pacific",
+   "level": "intermediate",
+   "category": "timezone",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "end: expected '10:30', got 'close'"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "SPY",
+    "conditions": [],
+    "outcome": "touch:+0.3",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 6.0
+  },
+  {
+   "text": "chance qqq takes out yesterday's high in the first hour?",
+   "level": "intermediate",
+   "category": "informal",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "type: expected 'frequency', got 'movement'",
+    "conditions: expected [], got ['expr:crosses_above(price, prev_high']",
+    "outcome: expected 'touch:prev_high', got 'end_return'",
+    "start: expected 'open', got 'signal'",
+    "end: expected '10:30', got 'close'"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "movement",
+    "symbol": "QQQ",
+    "conditions": [
+     "expr:crosses_above(price, prev_high"
+    ],
+    "outcome": "end_return",
+    "start": "signal",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 4.7
+  },
+  {
+   "text": "after a 1%+ gap down on SPY, how often is it still below the open at noon ET?",
+   "level": "intermediate",
+   "category": "frequency",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "flag: Research graph: 6 steps, 2 analyses. Every condition is checked to be known before the outcome starts, and every analysis is reported, including any that find n"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "Research graph: 6 steps, 2 analyses. Every condition is checked to be known before the outcome starts, and every analysis is reported, including any that find nothing. 0 configurations have been tested in this notebook so far. The language model's reading (ollama:qwen3:8b) could not be checked (no size in \"still below the open at noon ET\"; nothing to count; not placed: \"below\"); the built-in reader read this message."
+   },
+   "reader": null,
+   "seconds": 5.95
+  },
+  {
+   "text": "how often is iwm lower 2 days after a 2% drop",
+   "level": "expert",
+   "category": "ambiguous",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "IWM",
+    "conditions": [
+     "prev_return<=-2"
+    ],
+    "outcome": "close<prev_close",
+    "start": "open",
+    "end": "sessions:2",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.71
+  },
+  {
+   "text": "what fraction of mondays does spy open above friday's close",
+   "level": "intermediate",
+   "category": "frequency",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "type: expected 'frequency', got 'agreement'",
+    "conditions: expected ['weekday=Mon'], got ['weekday=Mon', 'prev_return>0']",
+    "outcome: expected 'event:gap>0', got None"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "agreement",
+    "symbol": "SPY",
+    "candle": [
+     5,
+     15,
+     30
+    ],
+    "scope": "both",
+    "predictor": "first_candle",
+    "conditions": [
+     "weekday=Mon",
+     "prev_return>0"
+    ],
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.83
+  },
+  {
+   "text": "how often does qqq close in the green after the first 5 minute candle is red",
+   "level": "beginner",
+   "category": "frequency",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "flag: Here is how I read that question. Part of the request could not be represented: \"how often does qqq close in the green after the first 5 minute candle is red\". "
+   ],
+   "got": {
+    "response": "flag",
+    "text": "Here is how I read that question. Part of the request could not be represented: \"how often does qqq close in the green after the first 5 minute candle is red\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part. The language model's reading (ollama:qwen3:8b) could not be checked (not placed: \"the first 5 minute candle is red\"; not placed: \"close\"; not placed: \"green\"); the built-in reader read this message."
+   },
+   "reader": null,
+   "seconds": 4.31
+  },
+  {
+   "text": "does the first hour's direction predict the close for qqq?",
+   "level": "intermediate",
+   "category": "agreement",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "agreement",
+    "symbol": "QQQ",
+    "candle": [
+     60
+    ],
+    "scope": "both",
+    "predictor": "first_candle",
+    "conditions": [],
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 4.4
+  },
+  {
+   "text": "Is a green opening 15-min candle on IWM a good sign for the rest of the session?",
+   "level": "intermediate",
+   "category": "agreement",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "agreement",
+    "symbol": "IWM",
+    "candle": [
+     15
+    ],
+    "scope": "rest",
+    "predictor": "first_candle",
+    "conditions": [],
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 3.86
+  },
+  {
+   "text": "when yesterday was up, is today usually up too? spy",
+   "level": "beginner",
+   "category": "agreement",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "predictor: expected 'prev_direction', got 'first_candle'"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "agreement",
+    "symbol": "SPY",
+    "candle": [
+     5,
+     15,
+     30
+    ],
+    "scope": "both",
+    "predictor": "first_candle",
+    "conditions": [
+     "prev_return>0"
+    ],
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.39
+  },
+  {
+   "text": "how reliable is the 30 minute opening range direction at calling the day on SPY",
+   "level": "expert",
+   "category": "agreement",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "flag: Research plan: 40 explicitly listed configurations will be evaluated against their baselines - no more, and all of them will be reported. Selection uses a train"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "Research plan: 40 explicitly listed configurations will be evaluated against their baselines - no more, and all of them will be reported. Selection uses a training period, a validation period can only veto, and a final test period is scored once for whatever qualifies. 0 configurations have been tested in this session so far; significance is corrected for all of them plus these. The language model's reading (ollama:qwen3:8b) could not be checked (not placed: \"direction\"; not placed: \"reliable\"; not placed: \"minute\"); the built-in reader read this message."
+   },
+   "reader": null,
+   "seconds": 5.53
+  },
+  {
+   "text": "how often does the first 15 minute candle on qqq point the same way as the close?",
+   "level": "intermediate",
+   "category": "agreement",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "agreement",
+    "symbol": "QQQ",
+    "candle": [
+     15
+    ],
+    "scope": "both",
+    "predictor": "first_candle",
+    "conditions": [],
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 4.29
+  },
+  {
+   "text": "what does QQQ typically do in the first hour after a 1.5% gap down",
+   "level": "intermediate",
+   "category": "movement",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "movement",
+    "symbol": "QQQ",
+    "conditions": [
+     "gap<=-1.5"
+    ],
+    "outcome": "end_return",
+    "start": "open",
+    "end": "10:30",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.52
+  },
+  {
+   "text": "show me how spy trades the day after a 3% drop",
+   "level": "beginner",
+   "category": "movement",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "movement",
+    "symbol": "SPY",
+    "conditions": [
+     "prev_return<=-3"
+    ],
+    "outcome": "end_return",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.1
+  },
+  {
+   "text": "average move from 10am to the close on fridays for IWM",
+   "level": "intermediate",
+   "category": "timezone",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "movement",
+    "symbol": "IWM",
+    "conditions": [
+     "weekday=Fri"
+    ],
+    "outcome": "end_return",
+    "start": "13:00",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.79
+  },
+  {
+   "text": "how far does iwm usually run after gapping up 1%",
+   "level": "beginner",
+   "category": "movement",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "movement",
+    "symbol": "IWM",
+    "conditions": [
+     "gap>=1"
+    ],
+    "outcome": "end_return",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 4.88
+  },
+  {
+   "text": "typical spy path on days it opens more than 1% lower",
+   "level": "intermediate",
+   "category": "movement",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "flag: Research graph: 6 steps, 2 analyses. Every condition is checked to be known before the outcome starts, and every analysis is reported, including any that find n"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "Research graph: 6 steps, 2 analyses. Every condition is checked to be known before the outcome starts, and every analysis is reported, including any that find nothing. 0 configurations have been tested in this notebook so far. The language model's reading (ollama:qwen3:8b) could not be checked (\"opens more than 1% lower\" does not say what a gap condition is about; not placed: \"it opens more than 1% lower\"); the built-in reader read this message."
+   },
+   "reader": null,
+   "seconds": 5.81
+  },
+  {
+   "text": "what time of day does qqq usually bottom out",
+   "level": "beginner",
+   "category": "timing",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "timing",
+    "symbol": "QQQ",
+    "measure": "low_time",
+    "bucket": 30,
+    "conditions": [],
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 2.48
+  },
+  {
+   "text": "which half hour has the biggest moves in SPY on mondays",
+   "level": "intermediate",
+   "category": "timing",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "timing",
+    "symbol": "SPY",
+    "measure": "abs_move",
+    "bucket": 30,
+    "conditions": [
+     "weekday=Mon"
+    ],
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 2.78
+  },
+  {
+   "text": "when does IWM usually put in its high on gap up days",
+   "level": "intermediate",
+   "category": "timing",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "type: expected 'timing', got 'strategy'",
+    "measure: expected 'high_time', got None"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "IWM",
+    "structure": "long_put",
+    "dte": null,
+    "strike": null,
+    "quantity": 1,
+    "entry": "signal",
+    "exit": null,
+    "conditions": [
+     "gap>0"
+    ],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ],
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 9.48
+  },
+  {
+   "text": "is the last hour more volatile than the first for qqq",
+   "level": "intermediate",
+   "category": "timing",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "flag: I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after fall"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after falling 3% or more the previous trading day?\"\n- \"Wait until SPY drops 0.5% from the open, then buy calls when it recovers half of that decline\"\n- \"Find out whether SPY tends to reverse after large down days\" or \"Investigate mean reversion after unusually large SPY declines\"\n- then: \"compare that with 2% and 4% down days\", \"test ATM 0DTE calls on those days using option trade prices\", \"include commissions and conservative slippage\", \"show every skipped signal\", \"is this statistically significant?\", \"test out of sample\", \"export the report\".\n\nThe language model's reading (ollama:qwen3:8b) could not be checked (not placed: \"more volatile\"; not placed: \"last\"; not placed: \"hour\"); the built-in reader read this message."
+   },
+   "reader": null,
+   "seconds": 2.65
+  },
+  {
+   "text": "are fridays worse than other days for qqq?",
+   "level": "beginner",
+   "category": "breakdown",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "flag: I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after fall"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after falling 3% or more the previous trading day?\"\n- \"Wait until SPY drops 0.5% from the open, then buy calls when it recovers half of that decline\"\n- \"Find out whether SPY tends to reverse after large down days\" or \"Investigate mean reversion after unusually large SPY declines\"\n- then: \"compare that with 2% and 4% down days\", \"test ATM 0DTE calls on those days using option trade prices\", \"include commissions and conservative slippage\", \"show every skipped signal\", \"is this statistically significant?\", \"test out of sample\", \"export the report\".\n\nThe language model's reading (ollama:qwen3:8b) could not be checked (not placed: \"friday\"); the built-in reader read this message."
+   },
+   "reader": null,
+   "seconds": 2.96
+  },
+  {
+   "text": "IWM returns by month since 2018",
+   "level": "intermediate",
+   "category": "breakdown",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "breakdown",
+    "symbol": "IWM",
+    "by": "month",
+    "measure": "return",
+    "conditions": [],
+    "period": [
+     "2018-01-01",
+     null
+    ],
+    "focus": null
+   },
+   "reader": null,
+   "seconds": 4.69
+  },
+  {
+   "text": "best day of the week to be long spy at the open and sell at the close",
+   "level": "intermediate",
+   "category": "breakdown",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "flag: I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after fall"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after falling 3% or more the previous trading day?\"\n- \"Wait until SPY drops 0.5% from the open, then buy calls when it recovers half of that decline\"\n- \"Find out whether SPY tends to reverse after large down days\" or \"Investigate mean reversion after unusually large SPY declines\"\n- then: \"compare that with 2% and 4% down days\", \"test ATM 0DTE calls on those days using option trade prices\", \"include commissions and conservative slippage\", \"show every skipped signal\", \"is this statistically significant?\", \"test out of sample\", \"export the report\".\n\nThe language model's reading (ollama:qwen3:8b) could not be checked (not placed: \"week\"); the built-in reader read this message."
+   },
+   "reader": null,
+   "seconds": 2.96
+  },
+  {
+   "text": "do tuesdays tend to be green for qqq",
+   "level": "beginner",
+   "category": "breakdown",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "type: expected 'breakdown', got 'agreement'",
+    "by: expected 'weekday', got None",
+    "focus: expected 'Tue', got None"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "agreement",
+    "symbol": "QQQ",
+    "candle": [
+     5,
+     15,
+     30
+    ],
+    "scope": "both",
+    "predictor": "first_candle",
+    "conditions": [
+     "weekday=Tue"
+    ],
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 4.93
+  },
+  {
+   "text": "buy 1 SPY 0dte ATM call at 9:45 ET every day, take profit at 50%, stop at 25%, flat by 3:30pm ET",
+   "level": "intermediate",
+   "category": "strategy",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "exit: expected '15:30', got None"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "SPY",
+    "structure": "long_call",
+    "dte": 0,
+    "strike": "atm",
+    "quantity": 1,
+    "entry": "09:45",
+    "exit": null,
+    "conditions": [],
+    "premium_target": 50.0,
+    "premium_stop": 25.0,
+    "underlying_target": 3.0,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ],
+    "sizing": null,
+    "capital": null,
+    "reinvest": false,
+    "daily_loss_stop": null,
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 22.9
+  },
+  {
+   "text": "backtest selling qqq 0dte puts at 10am pacific when it's red on the day",
+   "level": "expert",
+   "category": "timezone",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "flag: Here is how I read that strategy. The entry rule fires on 2,778 sessions (1999-11-26 to 2026-11-25). 693 pass every check on stored option observations (693 on "
+   ],
+   "got": {
+    "response": "flag",
+    "text": "Here is how I read that strategy. The entry rule fires on 2,778 sessions (1999-11-26 to 2026-11-25). 693 pass every check on stored option observations (693 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 24.9% of them. 2 more have an entry that can be priced but no observation near the planned exit. 6 have the contract stored but no trade inside the entry window. 10 need a strike outside the stored range. 7 are held only in part by the provider. 2,060 have no stored option prices. 10 of the unpriced sessions can be downloaded from Alpaca Market Data at no cost. A run confirms each one: these are sessions the stored data supports, not trades. Part of the request could not be represented: \"when it's red on the day\"; \"selling qqq 0dte puts at 10am pacifi\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part. The language model's reading (ollama:qwen3:8b) left part of this unplaced (not placed: s red on the day), so the built-in reader read it."
+   },
+   "reader": null,
+   "seconds": 19.87
+  },
+  {
+   "text": "IWM 7dte puts 1% otm after any 2% up day, sell 2 days later",
+   "level": "intermediate",
+   "category": "strategy",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "flag: Here is how I read that strategy. The entry rule fires on 456 sessions (2000-05-31 to 2026-11-24). 27 pass every check on stored option observations (27 on trad"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "Here is how I read that strategy. The entry rule fires on 456 sessions (2000-05-31 to 2026-11-24). 27 pass every check on stored option observations (27 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 5.9% of them. 10 more have an entry that can be priced but no observation near the planned exit. 1 is held only in part by the provider. 418 have no stored option prices. 10 of the unpriced sessions can be downloaded from Alpaca Market Data at no cost. A run confirms each one: these are sessions the stored data supports, not trades. Part of the request could not be represented: \"1%\"; \"sell 2 days later\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part. The language model's reading (ollama:qwen3:8b) left part of this unplaced (could not tell the time in \"after any 2% up day\"; could not tell the time in \"sell 2 days later\"), so the built-in reader read it."
+   },
+   "reader": null,
+   "seconds": 15.14
+  },
+  {
+   "text": "what if I bought QQQ calls at the open only on gap ups bigger than half a percent and sold at noon ET",
+   "level": "beginner",
+   "category": "strategy",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "flag: Research plan: 22 explicitly listed configurations will be evaluated against their baselines - no more, and all of them will be reported. Selection uses a train"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "Research plan: 22 explicitly listed configurations will be evaluated against their baselines - no more, and all of them will be reported. Selection uses a training period, a validation period can only veto, and a final test period is scored once for whatever qualifies. 0 configurations have been tested in this session so far; significance is corrected for all of them plus these. The language model's reading (ollama:qwen3:8b) left part of this unplaced (not placed: only), so the built-in reader read it."
+   },
+   "reader": null,
+   "seconds": 7.38
+  },
+  {
+   "text": "buy spy puts at 10:30 ET if it gapped up but is now below vwap, 1dte, cut it at a 30% loss",
+   "level": "expert",
+   "category": "multi_part",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "flag: Here is how I read that strategy. The entry rule fires on 683 sessions (2016-01-05 to 2026-11-19). 181 pass every check on stored option observations (181 on tr"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "Here is how I read that strategy. The entry rule fires on 683 sessions (2016-01-05 to 2026-11-19). 181 pass every check on stored option observations (181 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 26.5% of them. 4 are held only in part by the provider. 498 have no stored option prices. A run confirms each one: these are sessions the stored data supports, not trades. Part of the request could not be represented: \"a 30% loss\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part. The language model's reading (ollama:qwen3:8b) left part of this unplaced (\"now below vwap\" does not say what a from_open condition is about; not placed: below vwap; not placed: now), so the built-in reader read it."
+   },
+   "reader": null,
+   "seconds": 19.57
+  },
+  {
+   "text": "buy spy 0dte calls at the open and sell when SPY is up half a percent",
+   "level": "intermediate",
+   "category": "underlying_vs_premium",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "flag: Here is how I read that strategy. The entry rule fires on 4,000 sessions (1993-01-29 to 2008-12-12). None passes every check on stored option observations: 0.0%"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "Here is how I read that strategy. The entry rule fires on 4,000 sessions (1993-01-29 to 2008-12-12). None passes every check on stored option observations: 0.0% of them. 4,000 have no stored option prices. A run confirms each one: these are sessions the stored data supports, not trades. Real historical option trades for SPY are stored from January 2024 to November 2026: option profits can be tested only in that span. Part of the request could not be represented: \"when SPY is up half a percent\"; \"h\"; \"sell when SPY is up h\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part. The language model's reading (ollama:qwen3:8b) left part of this unplaced (could not tell the time in \"when SPY is up half a percent\"), so the built-in reader read it."
+   },
+   "reader": null,
+   "seconds": 9.85
+  },
+  {
+   "text": "buy qqq calls at 10 ET and sell when they're up 40%",
+   "level": "intermediate",
+   "category": "underlying_vs_premium",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "QQQ",
+    "structure": "long_call",
+    "dte": null,
+    "strike": "atm",
+    "quantity": 1,
+    "entry": "10:00",
+    "exit": null,
+    "conditions": [],
+    "premium_target": 40.0,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ],
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 18.6
+  },
+  {
+   "text": "buy IWM 0DTE puts at the open, sell when it's up 20% or at 11 ET",
+   "level": "intermediate",
+   "category": "underlying_vs_premium",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "premium_target: expected 20, got None"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "IWM",
+    "structure": "long_put",
+    "dte": 0,
+    "strike": "atm",
+    "quantity": 0,
+    "entry": "open",
+    "exit": "11:00",
+    "conditions": [],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ],
+    "sizing": null,
+    "capital": null,
+    "reinvest": false,
+    "daily_loss_stop": null,
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 11.38
+  },
+  {
+   "text": "sell a qqq 0dte iron condor at 10am ET and hold it to the close",
+   "level": "expert",
+   "category": "strategy",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "QQQ",
+    "structure": "iron_condor",
+    "dte": 0,
+    "strike": null,
+    "quantity": 1,
+    "entry": "10:00",
+    "exit": "close",
+    "conditions": [],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ],
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 16.63
+  },
+  {
+   "text": "straddle on SPY at 9:31 ET 0dte, close it after 45 min",
+   "level": "intermediate",
+   "category": "strategy",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "SPY",
+    "structure": "long_straddle",
+    "dte": 0,
+    "strike": null,
+    "quantity": 1,
+    "entry": "09:31",
+    "exit": null,
+    "conditions": [],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": "minutes:45",
+    "period": [
+     null,
+     null
+    ],
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 17.76
+  },
+  {
+   "text": "buy SPY 0DTE calls at the open after a down day, spend $500 a trade",
+   "level": "beginner",
+   "category": "sizing",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "SPY",
+    "structure": "long_call",
+    "dte": 0,
+    "strike": "atm",
+    "quantity": 1,
+    "entry": "open",
+    "exit": null,
+    "conditions": [
+     "prev_return<0"
+    ],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ],
+    "sizing": "dollars:500",
+    "capital": null,
+    "reinvest": false,
+    "daily_loss_stop": null,
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 17.69
+  },
+  {
+   "text": "QQQ 1DTE calls at 10am ET with a 40% stop, risking 2% of a $25k account each time",
+   "level": "intermediate",
+   "category": "sizing",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "clarify: Here is how I read that strategy. The entry rule fires on 2,741 sessions (2016-01-04 to 2026-11-25). 701 pass every check on stored option observations (701 on "
+   ],
+   "got": {
+    "response": "clarify",
+    "text": "Here is how I read that strategy. The entry rule fires on 2,741 sessions (2016-01-04 to 2026-11-25). 701 pass every check on stored option observations (701 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 25.6% of them. 9 more have an entry that can be priced but no observation near the planned exit. 1 needs a strike outside the stored range. 7 are held only in part by the provider. 2,023 have no stored option prices. 10 of the unpriced sessions can be downloaded from Alpaca Market Data at no cost. A run confirms each one: these are sessions the stored data supports, not trades. You said stop 40%. Do you mean a 40% move in QQQ or a 40% loss on the option? The language model's reading (ollama:qwen3:8b) left part of this unplaced (not placed: stop), so the built-in reader read it."
+   },
+   "reader": null,
+   "seconds": 21.9
+  },
+  {
+   "text": "start with 10k and put 5% of the account into SPY 0DTE puts every time it gaps down 1% or more, reinvesting profits",
+   "level": "intermediate",
+   "category": "sizing",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "SPY",
+    "structure": "long_put",
+    "dte": 0,
+    "strike": null,
+    "quantity": 1,
+    "entry": "signal",
+    "exit": null,
+    "conditions": [
+     "gap<=-1"
+    ],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ],
+    "sizing": "equity_pct:5",
+    "capital": 10000.0,
+    "reinvest": true,
+    "daily_loss_stop": null,
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 17.35
+  },
+  {
+   "text": "buy one SPY 0DTE call each time it crosses above VWAP, max 3 a day, and stop trading for the day after losing $200",
+   "level": "expert",
+   "category": "sizing",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "conditions: expected ['crosses_above:vwap'], got ['expr:crosses_above(price,vwap', 'expr:return_pct(1)<0']",
+    "entries: expected 3, got None"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "SPY",
+    "structure": "long_call",
+    "dte": 0,
+    "strike": null,
+    "quantity": 1,
+    "entry": "signal",
+    "exit": null,
+    "conditions": [
+     "expr:crosses_above(price,vwap",
+     "expr:return_pct(1)<0"
+    ],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ],
+    "sizing": null,
+    "capital": null,
+    "reinvest": false,
+    "daily_loss_stop": 200.0,
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 39.53
+  },
+  {
+   "text": "how much would I have made risking $300 per trade buying IWM puts at the open after a 1% up day with a 50% stop",
+   "level": "intermediate",
+   "category": "sizing",
+   "supported": true,
+   "status": "asked",
+   "why": [
+    "clarify: Here is how I read that strategy. The entry rule fires on 1,408 sessions (2000-05-31 to 2026-11-24). 133 pass every check on stored option observations (133 on "
+   ],
+   "got": {
+    "response": "clarify",
+    "text": "Here is how I read that strategy. The entry rule fires on 1,408 sessions (2000-05-31 to 2026-11-24). 133 pass every check on stored option observations (133 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 9.4% of them. 7 more have an entry that can be priced but no observation near the planned exit. 4 need an expiration that is not stored. 2 are held only in part by the provider. 1,262 have no stored option prices. 4 of the unpriced sessions can be downloaded from Alpaca Market Data at no cost. A run confirms each one: these are sessions the stored data supports, not trades. You said stop 50%. Do you mean a 50% move in IWM or a 50% loss on the option? The language model's reading (ollama:qwen3:8b) left part of this unplaced (could not read the expiration in \"at the open\"), so the built-in reader read it."
+   },
+   "reader": null,
+   "seconds": 16.83
+  },
+  {
+   "text": "buy 3 contracts of QQQ ATM 0DTE calls at 9:40 ET",
+   "level": "beginner",
+   "category": "sizing",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "QQQ",
+    "structure": "long_call",
+    "dte": 0,
+    "strike": "atm",
+    "quantity": 3,
+    "entry": "09:40",
+    "exit": null,
+    "conditions": [],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ],
+    "sizing": null,
+    "capital": null,
+    "reinvest": false,
+    "daily_loss_stop": null,
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 17.21
+  },
+  {
+   "text": "does spy bounce?",
+   "level": "beginner",
+   "category": "ambiguous",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "clarify",
+    "text": "Bounce after what, and on which ticker?",
+    "alternative": true
+   },
+   "reader": null,
+   "seconds": 5.28
+  },
+  {
+   "text": "what's the best time to buy calls",
+   "level": "beginner",
+   "category": "ambiguous",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "ran instead of asking"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "SPY",
+    "structure": "long_call",
+    "dte": null,
+    "strike": null,
+    "quantity": 1,
+    "entry": "signal",
+    "exit": null,
+    "conditions": [],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ],
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 9.04
+  },
+  {
+   "text": "how often does it go up 1%",
+   "level": "beginner",
+   "category": "ambiguous",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "SPY",
+    "conditions": [],
+    "outcome": "touch:+1",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 3.79
+  },
+  {
+   "text": "what happens when the market tanks",
+   "level": "beginner",
+   "category": "ambiguous",
+   "supported": true,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "flag",
+    "text": "Here is how I read that question. Part of the request could not be represented: \"when the market tanks\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part."
+   },
+   "reader": null,
+   "seconds": 3.51
+  },
+  {
+   "text": "buy calls when it dips",
+   "level": "beginner",
+   "category": "ambiguous",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "ran instead of asking"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "SPY",
+    "structure": "long_call",
+    "dte": null,
+    "strike": null,
+    "quantity": 1,
+    "entry": "signal",
+    "exit": null,
+    "conditions": [
+     "from_open<0"
+    ],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ],
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 18.3
+  },
+  {
+   "text": "how does SPY do the day after FOMC?",
+   "level": "intermediate",
+   "category": "unsupported",
+   "supported": false,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "flag",
+    "text": "\"FOMC\" cannot be tested: no calendar of real economic or earnings events is stored (the event dates in the sandbox are simulated). Nothing was run. The closest question that can be answered:",
+    "alternative": true
+   },
+   "reader": null,
+   "seconds": 3.27
+  },
+  {
+   "text": "how often does TSLA gap up 2%?",
+   "level": "beginner",
+   "category": "unsupported",
+   "supported": false,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "flag",
+    "text": "No price history for TSLA is stored, so nothing can be measured for it. Stored: DEMO, DEMOVIX, DEMOX, IWM, QQQ, SPY, VIX. Nothing was run. The closest question that can be answered:",
+    "alternative": true
+   },
+   "reader": null,
+   "seconds": 3.14
+  },
+  {
+   "text": "will qqq go up tomorrow",
+   "level": "beginner",
+   "category": "unsupported",
+   "supported": false,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "flag",
+    "text": "Strata does not forecast. It can tell you how often something like this happened before, on the stored history, for example \"How often does SPY close above its open after a down day?\" Nothing was run. The closest question that can be answered:",
+    "alternative": true
+   },
+   "reader": null,
+   "seconds": 3.35
+  },
+  {
+   "text": "how often does RSI under 30 lead to a bounce on QQQ",
+   "level": "intermediate",
+   "category": "unsupported",
+   "supported": false,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "flag",
+    "text": "\"RSI\" cannot be tested: that indicator is not available in the question reader yet. It can be used in a strategy written in the rule editor. Nothing was run. The closest question that can be answered:",
+    "alternative": true
+   },
+   "reader": null,
+   "seconds": 3.53
+  },
+  {
+   "text": "backtest SPY iron condors since 2015",
+   "level": "expert",
+   "category": "data_coverage",
+   "supported": false,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "flag",
+    "text": "That cannot be answered from the stored data: option prices before 2024-01-18 are not stored. Nothing was run. The closest question that can be answered:",
+    "alternative": true
+   },
+   "reader": null,
+   "seconds": 4.9
+  },
+  {
+   "text": "would buying spy calls every morning have worked in 2022?",
+   "level": "beginner",
+   "category": "data_coverage",
+   "supported": false,
+   "status": "silent",
+   "why": [
+    "ran something; should have declined or asked"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "SPY",
+    "structure": "long_call",
+    "dte": null,
+    "strike": null,
+    "quantity": 1,
+    "entry": "open",
+    "exit": null,
+    "conditions": [],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     "2022-01-01",
+     "2022-12-31"
+    ],
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 4.67
+  },
+  {
+   "text": "what's SPY's average return during earnings season weeks",
+   "level": "intermediate",
+   "category": "unsupported",
+   "supported": false,
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "flag",
+    "text": "That cannot be answered from the stored data: no calendar of economic releases is stored. Nothing was run. The closest question that can be answered:",
+    "alternative": true
+   },
+   "reader": null,
+   "seconds": 3.43
+  },
+  {
+   "text": "hw often dos qqq close red aftr a gren day lol",
+   "level": "beginner",
+   "category": "informal",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "conditions: expected ['prev_return>0'], got []"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "QQQ",
+    "conditions": [],
+    "outcome": "close<open",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.3
+  },
+  {
+   "text": "spy 0dte calls @ open, tp 30 sl 15, out by 1245 pst",
+   "level": "intermediate",
+   "category": "informal",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "exit: expected '15:45', got None"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "SPY",
+    "structure": "long_call",
+    "dte": 0,
+    "strike": "atm",
+    "quantity": 1,
+    "entry": "open",
+    "exit": null,
+    "conditions": [],
+    "premium_target": 30.0,
+    "premium_stop": 15.0,
+    "underlying_target": 1245.0,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ],
+    "entries": null
+   },
+   "reader": null,
+   "seconds": 13.0
+  },
+  {
+   "text": "qqq gap n go - how often does a 1% gap up keep going til close",
+   "level": "intermediate",
+   "category": "informal",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "type: expected 'frequency', got 'movement'",
+    "conditions: expected ['gap>=1'], got ['gap>0']",
+    "outcome: expected 'close>open', got 'end_return'"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "movement",
+    "symbol": "QQQ",
+    "conditions": [
+     "gap>0"
+    ],
+    "outcome": "end_return",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.2
+  },
+  {
+   "text": "iwm after 2 down days in a row, odds of a green day?",
+   "level": "beginner",
+   "category": "informal",
+   "supported": true,
+   "status": "silent",
+   "why": [
+    "outcome: expected ['close>open', 'close>prev_close'], got 'event:day_return>0'"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "IWM",
+    "outcome": "event:day_return>0",
+    "conditions": [
+     "down_streak>=2"
+    ],
+    "period": [
+     null,
+     null
+    ]
+   },
+   "reader": null,
+   "seconds": 5.62
+  }
+ ],
+ "conversations": [
+  {
+   "id": "v9c1",
+   "turns": [
+    {
+     "text": "how often does SPY close green after a red day",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "SPY",
+      "conditions": [
+       "prev_return<0"
+      ],
+      "outcome": "close>open",
+      "start": "open",
+      "end": "close",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": null,
+     "seconds": 3.39
+    },
+    {
+     "text": "what about QQQ",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "QQQ",
+      "conditions": [
+       "prev_return<0"
+      ],
+      "outcome": "close>open",
+      "start": "open",
+      "end": "close",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": true,
+     "seconds": 0.04
+    },
+    {
+     "text": "only when the drop was at least 1.5%",
+     "status": "silent",
+     "why": [
+      "conditions: expected ['prev_return<=-1.5'], got ['prev_return<0', 'expr:return_pct(1) <= -1.5']"
+     ],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "QQQ",
+      "conditions": [
+       "prev_return<0",
+       "expr:return_pct(1) <= -1.5"
+      ],
+      "outcome": "close>open",
+      "start": "open",
+      "end": "close",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": true,
+     "seconds": 2.31
+    },
+    {
+     "text": "show me the days it didn't work",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "explore"
+     },
+     "context_kept": null,
+     "seconds": 0.01
+    },
+    {
+     "text": "undo that last change",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "QQQ",
+      "conditions": [
+       "prev_return<0"
+      ],
+      "outcome": "close>open",
+      "start": "open",
+      "end": "close",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": true,
+     "seconds": 0.03
+    }
+   ]
+  },
+  {
+   "id": "v9c2",
+   "turns": [
+    {
+     "text": "buy QQQ 0DTE calls at 10am ET after a gap up",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "strategy",
+      "symbol": "QQQ",
+      "structure": "long_call",
+      "dte": 0,
+      "strike": "atm",
+      "quantity": 1,
+      "entry": "10:00",
+      "exit": null,
+      "conditions": [
+       "gap>0"
+      ],
+      "premium_target": null,
+      "premium_stop": null,
+      "underlying_target": null,
+      "underlying_stop": null,
+      "hold": null,
+      "period": [
+       null,
+       null
+      ],
+      "entries": null
+     },
+     "context_kept": null,
+     "seconds": 10.02
+    },
+    {
+     "text": "make it 1DTE",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "strategy",
+      "symbol": "QQQ",
+      "structure": "long_call",
+      "dte": 1,
+      "strike": "atm",
+      "quantity": 1,
+      "entry": "10:00",
+      "exit": "15:55",
+      "conditions": [
+       "gap>0"
+      ],
+      "premium_target": null,
+      "premium_stop": null,
+      "underlying_target": null,
+      "underlying_stop": null,
+      "hold": null,
+      "period": [
+       null,
+       null
+      ],
+      "entries": null
+     },
+     "context_kept": false,
+     "seconds": 7.42
+    },
+    {
+     "text": "risk $300 per trade",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "strategy",
+      "symbol": "QQQ",
+      "structure": "long_call",
+      "dte": 1,
+      "strike": "atm",
+      "quantity": 1,
+      "entry": "10:00",
+      "exit": "15:55",
+      "conditions": [
+       "gap>0"
+      ],
+      "premium_target": null,
+      "premium_stop": null,
+      "underlying_target": null,
+      "underlying_stop": null,
+      "hold": null,
+      "period": [
+       null,
+       null
+      ],
+      "sizing": "risk_dollars:300",
+      "capital": null,
+      "reinvest": false,
+      "daily_loss_stop": null,
+      "entries": null
+     },
+     "context_kept": true,
+     "seconds": 5.03
+    },
+    {
+     "text": "start with a $5,000 account",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "strategy",
+      "symbol": "QQQ",
+      "structure": "long_call",
+      "dte": 1,
+      "strike": "atm",
+      "quantity": 1,
+      "entry": "10:00",
+      "exit": "15:55",
+      "conditions": [
+       "gap>0"
+      ],
+      "premium_target": null,
+      "premium_stop": null,
+      "underlying_target": null,
+      "underlying_stop": null,
+      "hold": null,
+      "period": [
+       null,
+       null
+      ],
+      "sizing": "risk_dollars:300",
+      "capital": 5000.0,
+      "reinvest": false,
+      "daily_loss_stop": null,
+      "entries": null
+     },
+     "context_kept": true,
+     "seconds": 5.03
+    },
+    {
+     "text": "why did the worst trade lose?",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "explain"
+     },
+     "context_kept": null,
+     "seconds": 0.01
+    },
+    {
+     "text": "compare it with the version before I changed the sizing",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "compare"
+     },
+     "context_kept": null,
+     "seconds": 1.21
+    }
+   ]
+  },
+  {
+   "id": "v9c3",
+   "turns": [
+    {
+     "text": "when during the day does IWM move the most?",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "timing",
+      "symbol": "IWM",
+      "measure": "abs_move",
+      "bucket": 30,
+      "conditions": [],
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": null,
+     "seconds": 1.69
+    },
+    {
+     "text": "just mondays",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "timing",
+      "symbol": "IWM",
+      "measure": "abs_move",
+      "bucket": 30,
+      "conditions": [
+       "weekday=Mon"
+      ],
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": true,
+     "seconds": 0.2
+    },
+    {
+     "text": "same for qqq",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "timing",
+      "symbol": "QQQ",
+      "measure": "abs_move",
+      "bucket": 30,
+      "conditions": [
+       "weekday=Mon"
+      ],
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": true,
+     "seconds": 0.19
+    },
+    {
+     "text": "what would you look at next?",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "next_steps"
+     },
+     "context_kept": null,
+     "seconds": 0.01
+    }
+   ]
+  },
+  {
+   "id": "v9c4",
+   "turns": [
+    {
+     "text": "does the first 30 minutes predict the rest of the day for SPY",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "agreement",
+      "symbol": "SPY",
+      "candle": [
+       30
+      ],
+      "scope": "rest",
+      "predictor": "first_candle",
+      "conditions": [],
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": null,
+     "seconds": 2.41
+    },
+    {
+     "text": "show me the days it was wrong",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "explore"
+     },
+     "context_kept": null,
+     "seconds": 0.01
+    },
+    {
+     "text": "anything those days have in common?",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "selection"
+     },
+     "context_kept": null,
+     "seconds": 0.01
+    },
+    {
+     "text": "try it with 15 minutes",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "agreement",
+      "symbol": "SPY",
+      "candle": [
+       15
+      ],
+      "scope": "rest",
+      "predictor": "first_candle",
+      "conditions": [],
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": true,
+     "seconds": 0.03
+    }
+   ]
+  },
+  {
+   "id": "v9c5",
+   "turns": [
+    {
+     "text": "buy spy puts at 10 when it's down 1% from the open",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "flag",
+      "text": "Here is how I read that strategy. The entry rule fires on 4,000 sessions (1993-01-29 to 2008-12-12). None passes every check on stored option observations: 0.0% of them. 4,000 have no stored option prices. A run confirms each one: these are sessions the stored data supports, not trades. Real historical option trades for SPY are stored from January 2024 to November 2026: option profits can be tested only in that span. Part of the request could not be represented: \"when it's down 1% from the open\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part. The language model's reading (ollama:qwen3:8b) left part of this unplaced (could not read the expiration in \"10\"), so the built-in reader read it."
+     },
+     "context_kept": null,
+     "seconds": 7.08
+    },
+    {
+     "text": "nah 0.5%",
+     "status": "asked",
+     "why": [
+      "flag: Updated the strategy. The entry rule fires on 4,000 sessions (1993-01-29 to 2008-12-12). None passes every check on stored option observations: 0.0% of them. 4,"
+     ],
+     "got": {
+      "response": "flag",
+      "text": "Updated the strategy. The entry rule fires on 4,000 sessions (1993-01-29 to 2008-12-12). None passes every check on stored option observations: 0.0% of them. 4,000 have no stored option prices. A run confirms each one: these are sessions the stored data supports, not trades. Real historical option trades for SPY are stored from January 2024 to November 2026: option profits can be tested only in that span. Part of the request could not be represented: \"when it's down 1% from the open\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part."
+     },
+     "context_kept": null,
+     "seconds": 2.04
+    },
+    {
+     "text": "exit at 12",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "flag",
+      "text": "I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after falling 3% or more the previous trading day?\"\n- \"Wait until SPY drops 0.5% from the open, then buy calls when it recovers half of that decline\"\n- \"Find out whether SPY tends to reverse after large down days\" or \"Investigate mean reversion after unusually large SPY declines\"\n- then: \"compare that with 2% and 4% down days\", \"test ATM 0DTE calls on those days using option trade prices\", \"include commissions and conservative slippage\", \"show every skipped signal\", \"is this statistically significant?\", \"test out of sample\", \"export the report\".\n\nThe language model's reading (ollama:qwen3:8b) left part of this unplaced (could not tell the time in \"at 12\"), so the built-in reader read it."
+     },
+     "context_kept": null,
+     "seconds": 2.13
+    },
+    {
+     "text": "actually 12 pacific",
+     "status": "asked",
+     "why": [
+      "flag: Updated the strategy. The entry rule fires on 4,000 sessions (1993-01-29 to 2008-12-12). None passes every check on stored option observations: 0.0% of them. 4,"
+     ],
+     "got": {
+      "response": "flag",
+      "text": "Updated the strategy. The entry rule fires on 4,000 sessions (1993-01-29 to 2008-12-12). None passes every check on stored option observations: 0.0% of them. 4,000 have no stored option prices. A run confirms each one: these are sessions the stored data supports, not trades. Real historical option trades for SPY are stored from January 2024 to November 2026: option profits can be tested only in that span. Part of the request could not be represented: \"when it's down 1% from the open\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part."
+     },
+     "context_kept": null,
+     "seconds": 3.98
+    },
+    {
+     "text": "use 0dte",
+     "status": "asked",
+     "why": [
+      "flag: Updated the strategy. The entry rule fires on 4,000 sessions (1993-01-29 to 2008-12-12). None passes every check on stored option observations: 0.0% of them. 4,"
+     ],
+     "got": {
+      "response": "flag",
+      "text": "Updated the strategy. The entry rule fires on 4,000 sessions (1993-01-29 to 2008-12-12). None passes every check on stored option observations: 0.0% of them. 4,000 have no stored option prices. A run confirms each one: these are sessions the stored data supports, not trades. Real historical option trades for SPY are stored from January 2024 to November 2026: option profits can be tested only in that span. Part of the request could not be represented: \"when it's down 1% from the open\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part."
+     },
+     "context_kept": null,
+     "seconds": 4.26
+    }
+   ]
+  },
+  {
+   "id": "v9c6",
+   "turns": [
+    {
+     "text": "how often does qqq fill a gap down",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "QQQ",
+      "conditions": [
+       "gap<0"
+      ],
+      "outcome": "touch:prev_close",
+      "start": "open",
+      "end": "close",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": null,
+     "seconds": 3.06
+    },
+    {
+     "text": "what about on CPI days?",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "flag",
+      "text": "That cannot be answered from the stored data: no calendar of economic releases is stored. Nothing was run. The closest question that can be answered:",
+      "alternative": true
+     },
+     "context_kept": null,
+     "seconds": 2.15
+    },
+    {
+     "text": "ok then just on mondays",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "QQQ",
+      "conditions": [
+       "weekday=Mon",
+       "gap<0"
+      ],
+      "outcome": "touch:prev_close",
+      "start": "open",
+      "end": "close",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": true,
+     "seconds": 0.02
+    }
+   ]
+  },
+  {
+   "id": "v9c7",
+   "turns": [
+    {
+     "text": "does a strong first hour mean a strong day for qqq?",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "clarify",
+      "text": "I understood part of this (On QQQ: the average move from open to close, by weekday, when the first 60-minute candle) but not 'strong', so nothing was run. Rephrase that part, or leave it out if it does not matter.",
+      "alternative": false
+     },
+     "context_kept": null,
+     "seconds": 2.49
+    },
+    {
+     "text": "what if yesterday was red too",
+     "status": "asked",
+     "why": [
+      "flag: Research graph: 6 steps, 2 analyses. Every condition is checked to be known before the outcome starts, and every analysis is reported, including any that find n"
+     ],
+     "got": {
+      "response": "flag",
+      "text": "Research graph: 6 steps, 2 analyses. Every condition is checked to be known before the outcome starts, and every analysis is reported, including any that find nothing. 0 configurations have been tested in this notebook so far. The language model's reading (ollama:qwen3:8b) could not be checked (); the built-in reader read this message."
+     },
+     "context_kept": null,
+     "seconds": 1.73
+    },
+    {
+     "text": "show me the worst days",
+     "status": "asked",
+     "why": [
+      "clarify: There is no result in this conversation yet. Ask a question or describe a strategy first, and then ask about it."
+     ],
+     "got": {
+      "response": "clarify",
+      "text": "There is no result in this conversation yet. Ask a question or describe a strategy first, and then ask about it.",
+      "alternative": false
+     },
+     "context_kept": null,
+     "seconds": 1.16
+    },
+    {
+     "text": "is this just noise?",
+     "status": "asked",
+     "why": [
+      "clarify: There is no result in this conversation yet. Ask a question or describe a strategy first, and then ask about it."
+     ],
+     "got": {
+      "response": "clarify",
+      "text": "There is no result in this conversation yet. Ask a question or describe a strategy first, and then ask about it.",
+      "alternative": false
+     },
+     "context_kept": null,
+     "seconds": 0.93
+    }
+   ]
+  }
+ ],
+ "summary": {
+  "single": {
+   "n": 62,
+   "correct": 32,
+   "asked": 14,
+   "silent": 16
+  },
+  "supported": {
+   "n": 55,
+   "correct": 26,
+   "silent": 15
+  },
+  "turns": {
+   "n": 31,
+   "correct": 24,
+   "asked": 6,
+   "silent": 1,
+   "context_kept": "9 of 10"
+  },
+  "seconds": {
+   "median": 4.88,
+   "p90": 17.35,
+   "max": 39.53
+  }
+ },
+ "which": "sealed",
+ "model": "qwen3:8b",
+ "policy": "model_first",
+ "sealed_hash": "868db97d358ffaadcca113cc37d48e37adc318237a87c28a5d0bd2bec389d1e9",
+ "config": "C",
+ "wall_seconds": 602.7
+}

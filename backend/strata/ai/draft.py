@@ -80,6 +80,27 @@ class DraftCosts(BaseModel):
     slippage_pct: Optional[float] = None  # % of the observed trade print against you (trade-price execution only)
 
 
+class DraftSizing(BaseModel):
+    """How much each trade buys, in the trader's terms (V9). Compiled onto the existing portfolio engine's sizing.
+
+    contracts     a fixed number of contracts (the default, from `quantity`)
+    dollars       spend about this much premium per trade: floor(value / (premium x multiplier)) contracts; a single contract
+                  costing more than the budget is not bought
+    risk_dollars  lose at most this much if the stop is hit (with a premium stop: premium x stop%), or the whole premium
+                  without a stop: contracts = floor(value / risk of one contract)
+    risk_pct      the same as a share of the account's equity at the time of the trade
+    equity_pct    spend this share of the account's equity on premium
+    capital       the starting account;  reinvest: equity (not the starting capital) sizes later trades
+    daily_loss_stop  no new entries that session once its realised loss reaches this many dollars
+    """
+    mode: Literal["contracts", "dollars", "risk_dollars", "risk_pct", "equity_pct"] = "contracts"
+    value: float = 1.0
+    capital: Optional[float] = None
+    reinvest: bool = False
+    daily_loss_stop: Optional[float] = None
+    text: str = ""
+
+
 class DraftStudy(BaseModel):
     target: Optional[DraftLevel] = None
     stop: Optional[DraftLevel] = None
@@ -141,6 +162,7 @@ class Draft(BaseModel):
     exit_weekday: Optional[str] = None
     hold_to_expiration: bool = False
     max_entries: Optional[int] = None  # entries allowed per session (None: one)
+    sizing: Optional[DraftSizing] = None  # V9: dollars / risk / share of the account per trade, a starting account, reinvesting, a daily loss stop
     partials: list[DraftPartial] = Field(default_factory=list)  # partial exits, in order
     # ---- market study
     study: Optional[DraftStudy] = None
@@ -314,7 +336,9 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
             missing.append("structure")
             errors.append("no option position was described (calls, puts, a spread ...)")
         else:
-            add("Position", f"{d.quantity} x {STRUCTURES.get(d.structure, d.structure)}", field="structure")
+            add("Position", f"{d.quantity if (d.sizing is None or d.sizing.mode == 'contracts') else ''}{' x ' if (d.sizing is None or d.sizing.mode == 'contracts') else ''}{STRUCTURES.get(d.structure, d.structure)}", field="structure")
+            if d.sizing is not None:
+                add("Size", sizing_text(d), "stated", "sizing")
         add("Entry", fmt_time(d.entry_time, d.entry_time_stated) + (" - once per eligible session" if d.entry_time else " - first signal each session"), "stated" if d.entry_time or d.conditions or d.sequence else "assumed", "entry_time")
         # a rule that reads the clock, or a move measured from the session's own open, can only become true during the
         # session: assuming "enter at the open" for it would produce a strategy that can never trade
@@ -462,7 +486,8 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
                 missing.append("exit rule")
         if d.structure and not errors:
             try:
-                legs = build_legs(d.structure, dte, strike, width or 5.0, max(1, d.quantity))
+                by_contract = d.sizing is None or d.sizing.mode == "contracts"
+                legs = build_legs(d.structure, dte, strike, width or 5.0, max(1, d.quantity) if by_contract else 1)
                 tree = _cond_tree(Draft(**{**d.model_dump(), "entry_time": entry_time}))
                 te = exits.get("time_exit") or {}
                 if te.get("enabled") and te.get("dte_lte") is None and entry_time is None:
@@ -478,7 +503,7 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
                     "entry": {"conditions": tree, "max_entries_per_day": max(1, int(d.max_entries or 1)), "max_open_positions": max(1, int(d.max_entries or 1)) if same_day or dte == 0 else 5,
                               "sequence": [{"name": s_.name, "when": s_.expr, "text": s_.text, "within_minutes": s_.within_minutes} for s_ in d.sequence],
                               "adds": [{"when": a_.expr, "text": a_.text, "quantity": a_.quantity, "max_adds": a_.max_adds} for a_ in d.adds]},
-                    "exits": exits, "sizing": {"method": "fixed", "contracts": 1},
+                    "exits": exits, "sizing": sizing_config(d),
                 }).model_dump(mode="json")
             except Exception as e:  # noqa: BLE001
                 errors.append(f"strategy: {e}")
@@ -500,6 +525,62 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
     effective = {"entry_time": entry_time, "dte": dte, "execution": execution} if d.kind == "options" else {"entry_time": study_entry}
     return {"strategy": strategy, "study": study if not any(e.startswith("study") for e in errors) else None, "items": items, "assumptions": assumptions, "effective": effective,
             "missing": sorted(set(missing), key=missing.index), "errors": errors}
+
+
+def sizing_config(d: Draft) -> dict:
+    """The engine's sizing (strata.engine.models.Sizing) for the draft's sizing in a trader's terms."""
+    s = d.sizing
+    if s is None or s.mode == "contracts":
+        out: dict = {"method": "fixed", "contracts": 1}
+    elif s.mode == "dollars":
+        out = {"method": "premium_dollars", "dollars": float(s.value)}
+    elif s.mode == "equity_pct":
+        out = {"method": "premium_pct", "pct": float(s.value), "reinvest": bool(s.reinvest)}
+    elif s.mode == "risk_dollars":
+        out = {"method": "risk_dollars", "dollars": float(s.value), "risk_basis": "stop" if d.premium_stop_pct else "max_loss"}
+    else:
+        out = {"method": "risk_pct", "pct": float(s.value), "reinvest": bool(s.reinvest), "risk_basis": "stop" if d.premium_stop_pct else "max_loss"}
+    if s is not None and s.daily_loss_stop:
+        out["daily_loss_stop"] = float(s.daily_loss_stop)
+    if out["method"] != "fixed":
+        out["max_contracts"] = 500  # a budget decides the count; the cap only guards against a mispriced print
+    return out
+
+
+def sizing_short(d: Draft) -> str:
+    """The sizing in a few words, for a change line ("$400 of premium" to "$250 at risk")."""
+    s = d.sizing
+    if s is None or s.mode == "contracts":
+        base = f"{d.quantity if s is None else int(s.value)} contract{'s' if (d.quantity if s is None else int(s.value)) != 1 else ''}"
+    else:
+        base = {"dollars": f"${s.value:,.0f} of premium", "risk_dollars": f"${s.value:,.0f} at risk", "risk_pct": f"{s.value:g}% of the account at risk",
+                "equity_pct": f"{s.value:g}% of the account in premium"}[s.mode]
+    extra = [f"from a ${s.capital:,.0f} account" if s is not None and s.capital else "", ("reinvesting" if s.reinvest else "") if s is not None and s.mode in ("risk_pct", "equity_pct") else "",
+             f"stopping for the day after losing ${s.daily_loss_stop:,.0f}" if s is not None and s.daily_loss_stop else ""]
+    return ", ".join([base] + [x for x in extra if x]) + " per trade"
+
+
+def sizing_text(d: Draft) -> str:
+    """The sizing in words, with what "risk" means for this position."""
+    s = d.sizing
+    if s is None or s.mode == "contracts":
+        txt = f"{d.quantity} contract{'s' if d.quantity != 1 else ''} per trade"
+    elif s.mode == "dollars":
+        txt = f"spend up to ${s.value:,.0f} of premium per trade (as many whole contracts as that buys; none when one contract costs more)"
+    elif s.mode == "equity_pct":
+        txt = f"spend up to {s.value:g}% of the account on premium per trade"
+    else:
+        amount = f"${s.value:,.0f}" if s.mode == "risk_dollars" else f"{s.value:g}% of the account"
+        basis = (f"the loss if the {d.premium_stop_pct:g}% stop on the option is hit (premium x {d.premium_stop_pct:g}%)" if d.premium_stop_pct else
+                 "the most the position can lose (for a bought option, the premium paid)")
+        txt = f"risk up to {amount} per trade, where risk is {basis}; a stop can be jumped, so a realised loss can be larger"
+    if s is not None and s.mode in ("equity_pct", "risk_pct"):
+        txt += "; the account grows or shrinks with the results (profits are reinvested)" if s.reinvest else "; always of the starting account (profits are not reinvested)"
+    if s is not None and s.capital:
+        txt += f"; starting account ${s.capital:,.0f}"
+    if s is not None and s.daily_loss_stop:
+        txt += f"; no new trade that day once closed trades have lost ${s.daily_loss_stop:,.0f}"
+    return txt
 
 
 def execution_overrides(d: Draft) -> dict:
@@ -551,6 +632,8 @@ def build_spec(d: Draft, compiled: dict, mode: str | None = None, approvals: dic
             or bool(d.underlying_target_pct or d.underlying_stop_pct or d.underlying_target_abs or d.underlying_stop_abs or d.exit_time)
         ex = {"signal_interval_minutes": 1 if intraday or spec["mode"] in ("trades", "auto") else 5, **(compiled.get("effective") or {}).get("execution", {})}
         spec["backtest"] = {"strategies": [compiled["strategy"]], "execution": ex, "label": label or d.title}
+        if d.sizing is not None and d.sizing.capital:
+            spec["backtest"]["capital"] = {"initial_capital": float(d.sizing.capital)}
     n = len(d.conditions) + len(d.sequence)
     spec["interpretation"] = {"interpreter": interpreter, "detail": f"{n} entry rule{'s' if n != 1 else ''}" + (f", {len(d.sequence)}-step sequence" if d.sequence else "") +
                               (f"; {len(compiled.get('assumptions') or [])} assumption(s) disclosed" if compiled.get("assumptions") else "") + (f"; read by {interpreter}" if interpreter else "")}
@@ -699,6 +782,8 @@ def _show(k: str, v):
         return f"{v['value']:+g}%" if v["kind"] == "pct" else f"{v['value']:+g} $" if v["kind"] == "abs" else v["expr"]
     if k == "structure":
         return STRUCTURES.get(v, v)
+    if k == "sizing" and isinstance(v, dict):
+        return sizing_short(Draft(kind="options", sizing=DraftSizing.model_validate(v)))
     if isinstance(v, list):
         return ", ".join(map(str, v))
     return v

@@ -552,6 +552,34 @@ def _is_edit(cur: Draft, new: Draft) -> bool:
     return cur.kind == new.kind and (cur.kind == "study" or cur.structure == new.structure or bool(set(c.expr for c in cur.conditions) & set(c.expr for c in new.conditions)) or cur.entry_time == new.entry_time)
 
 
+POPULAR = {"TSLA", "NVDA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "GOOG", "AMD", "NFLX", "SPX", "NDX", "RUT", "DIA", "VXX", "UVXY", "TQQQ", "SQQQ", "SOXL", "SMH", "XLF",
+           "XLE", "GLD", "SLV", "TLT", "COIN", "PLTR", "MSTR", "BABA", "INTC", "BA", "DIS", "JPM", "NIO", "UBER", "SNAP", "SHOP", "ARKK", "EEM", "HYG", "XLK"}
+NOT_TICKERS = {"BUY", "SELL", "ATM", "OTM", "ITM", "DTE", "THE", "AND", "FOR", "ALL", "ANY", "PUT", "PUTS", "CALL", "CALLS", "EOD", "VWAP", "RSI", "MACD", "SMA", "EMA", "ET", "PT", "CT",
+               "MT", "EST", "PST", "CST", "PDT", "EDT", "AM", "PM", "OK", "USD", "CPI", "FOMC", "NFP", "IV", "TP", "SL", "WHAT", "HOW", "WHEN", "DOES", "IS", "IF", "ON", "AT", "IN",
+               "OF", "TO", "MY", "SOME", "CHEAP", "WEEKLY", "LONG", "SHORT", "GAP", "OPEN", "CLOSE", "DAY", "DAYS", "MORE", "LESS", "NOT", "VIX", "THEN", "BOTH", "EACH", "ODDS", "GREEN", "RED"}
+
+
+def unstored_ticker(text: str, known: list[str]) -> str | None:
+    """A ticker the message names that has no stored history (written in capitals, a well-known one, or one that options words
+    follow: "nvda calls"), when no stored ticker is named as well. None otherwise."""
+    stored = {k.upper() for k in known}
+    words = re.findall(r"\$?\b([A-Za-z]{2,5})\b", text)
+    if any(w.upper() in stored for w in words):
+        return None
+    for w in words:
+        u = w.upper()
+        if u in stored or u in NOT_TICKERS:
+            continue
+        follows_options = re.search(rf"\b{re.escape(w)}\s+(?:\d+\s*dte\s+)?(?:0dte\s+)?(?:calls?|puts?|options?|straddles?|strangles?|shares|stock)\b", text, re.I)
+        if u in POPULAR or (w.isupper() and len(w) >= 3 and follows_options) or (follows_options and u in POPULAR):
+            return u
+    from strata.ai import semantics as SM
+    for name, t in SM.NAME_TICKERS.items():
+        if re.search(rf"\b{name}\b", text.lower()) and t not in stored:
+            return t
+    return None
+
+
 def is_complex(text: str) -> bool:
     """Requests whose meaning depends on order, state or relationships. If a language model
     was expected to read one of these and could not, the user is told the built-in reader
@@ -664,19 +692,6 @@ class Agent(ResearchV8, ResearchV5):
         return {"run": r.get("label"), "mode": r.get("mode"), "facts": {f["label"]: f["shown"] for f in facts}}
 
     # ---- interpretation
-    @staticmethod
-    def planner(llm) -> str:
-        """How this model is asked: "tools" (the full planner) or "form" (typed fields a small model can fill)."""
-        from strata.api.settings import get_setting
-        p = str(get_setting("llm.planner") or "auto")
-        return p if p in ("tools", "form") else ("form" if getattr(llm, "provider", "") == "ollama" else "tools")
-
-    def _model_reading(self, llm, text: str, current: Draft | None, sid, version, known: list[str], default_symbol: str) -> dict:
-        if self.planner(llm) == "form":
-            from strata.ai.planner_form import form_interpret
-            return form_interpret(llm, text, current, self.store, known, default_symbol)
-        return llm_interpret(llm, text, current, self._history(sid)[:-1] if sid else [], self.store, lambda: self._results_facts(version))
-
     def interpret(self, sid: str, text: str, current: Draft | None, version: dict | None, last_field: str | None) -> tuple[dict, str, str | None]:
         known = sorted(self.store.stored_symbols())
         from strata.api.settings import get_setting
@@ -686,80 +701,34 @@ class Agent(ResearchV8, ResearchV5):
         if err:
             note = f"The configured language model is unavailable ({err}), so the built-in interpreter read this request."
         mode = str(get_setting("llm.mode") or "auto")
-        local = getattr(llm, "provider", "") == "ollama"
-        assist = llm is not None and mode == "assist"
-        # with a local model, both readers read and have to agree. Measured on sentences neither had seen (docs/V7_REPORT.md):
-        # the built-in readers alone answered a different question without saying so 9 times in 34, cross-checked 2 or 3 times;
-        # "assist" (the model only for what the readers flag) left that number where it was
-        if llm is not None and (mode == "check" or (mode == "auto" and local)):
-            return self._cross_checked(llm, sid, text, current, version, last_field, known, default_symbol)
-        if assist:
-            # the built-in readers go first. A model is asked only about a sentence they could not place completely, and its
-            # reading replaces theirs only when it compiles and leaves nothing of the sentence unplaced. A small local model is
-            # a second opinion on the hard sentences, not the reader of the easy ones.
-            r0 = self._rules(text, current, known, last_field, default_symbol)
-            if not _open_reading(r0, text, self.store, default_symbol):
-                return r0, "built-in rules", None
-            try:
-                r1 = self._model_reading(llm, text, current, sid, version, known, default_symbol)
-            except LLMError as e:
-                return r0, "built-in rules", f"The built-in interpreter could not place part of this request, and the language model ({llm.name}) did not return a usable reading either ({str(e)[:160]})."
-            if _open_reading(r1, text, self.store, default_symbol):
-                return r0, "built-in rules", f"The built-in interpreter could not place part of this request. The language model ({llm.name}) was asked as well; its reading left something open too, so it was not used."
-            return r1, llm.name, f"The built-in interpreter could not place part of this request, so the language model ({llm.name}) read it. Its reading compiles and accounts for every size and time in the sentence; check it below."
-        if llm is not None:
-            try:
-                r = self._model_reading(llm, text, current, sid, version, known, default_symbol)
-                if r.get("action") == "unknown" and self.planner(llm) == "form":
-                    # the form holds strategies and comparisons. A command or a question ("show the losing trades") is not one of them
-                    return self._rules(text, current, known, last_field, default_symbol), "built-in rules", None
-                return r, llm.name, None
-            except LLMError as e:
-                fb = str(get_setting("llm.fallback") or "rules")
-                if fb == "none":
-                    return {"action": "failed", "text": f"The language model ({llm.name}) could not interpret this request: {e}. Falling back to the built-in interpreter is turned off in Settings, so nothing was run."}, llm.name, None
-                note = (f"The language model ({llm.name}) did not return a usable interpretation ({e}). The built-in interpreter read this request instead"
-                        + (" - it understands fewer phrasings, so check the interpretation below before relying on it." if is_complex(text) else "."))
+        # V9: one model reader for every provider (model_reader.py, ResearchV8._model_route), checked part by part and against
+        # the deterministic reader. llm.mode: rules (built-in readers only) | model_first | rules_first | auto (model first for a
+        # hosted model, the built-in readers first for a local one; measured in docs/V9_REPORT.md). V6's tool loop and V7's form
+        # planner, the readers it replaces, are no longer on the request path; V7's "check" and "assist" read as auto.
+        if llm is not None and mode != "rules":
+            policy = mode if mode in ("model_first", "rules_first") else ("rules_first" if getattr(llm, "provider", "") == "ollama" else "model_first")
+            if policy == "rules_first":
+                # the built-in readers first; the model reads only what they could not place completely (measured in V9: a small
+                # local model is less accurate than the built-in readers on the phrasings they know, and slower)
+                r0 = self._rules(text, current, known, last_field, default_symbol)
+                if r0.get("action") not in ("unknown", "failed", "clarify") and not _open_reading(r0, text, self.store, default_symbol):
+                    return r0, "built-in rules", None
+                route, mnote, reader = self._model_route(llm, text, current, known, default_symbol)
+                if route is not None and route.get("action") not in ("clarify",):
+                    return route, f"{reader} (the built-in readers could not place all of it)", mnote
+                return r0, "built-in rules", mnote or note
+            # a follow-up to what is on screen goes to the deterministic edit layer first: measured on the development
+            # conversations, it kept the context of every edit, and the model did not (docs/V9_REPORT.md)
+            _, st8 = self._v8_state()
+            if st8.get("frame") or current is not None:
+                r_edit = self._v8_route(text, current, known, default_symbol)
+                if r_edit is not None and (r_edit.get("edit") or r_edit.get("action") in ("modify", "undo", "compare_versions", "show_trades", "explain_trade", "teach", "next_steps", "about_selection", "robustness", "noop")):
+                    return r_edit, "built-in rules", None
+            route, mnote, reader = self._model_route(llm, text, current, known, default_symbol)
+            if route is not None:
+                return route, reader, mnote
+            return self._rules(text, current, known, last_field, default_symbol), "built-in rules", mnote or note
         return self._rules(text, current, known, last_field, default_symbol), "built-in rules", note
-
-    def _cross_checked(self, llm, sid, text: str, current: Draft | None, version, last_field, known: list[str], default_symbol: str) -> tuple[dict, str, str | None]:
-        """Two readers, and nothing runs on a point they disagree about.
-
-        The built-in readers and the language model read the sentence independently. The same reading from both is used. Where
-        they differ, the built-in reading is shown with a question that names every difference and offers the model's reading
-        as the other answer, so a part one reader dropped or misread is asked about instead of being run. A command or a
-        question ("show the losing trades") is not a reading of a strategy and is not sent to the model."""
-        r0 = self._rules(text, current, known, last_field, default_symbol)
-        if r0.get("action") not in ("new", "modify", "derive", "experiment", "unknown", "experiment_needs_base"):
-            return r0, "built-in rules", None
-        try:
-            r1 = self._model_reading(llm, text, current, sid, version, known, default_symbol)
-        except LLMError as e:
-            return r0, "built-in rules", f"The language model ({llm.name}) did not return a reading to check this against ({str(e)[:140]}): it is the built-in interpreter's alone."
-        if r0.get("action") in ("unknown", "experiment_needs_base"):
-            if r1.get("action") in ("new", "modify", "derive", "experiment") and not _open_reading(r1, text, self.store, default_symbol):
-                return r1, llm.name, f"The built-in interpreter could not read this request, so the language model ({llm.name}) read it alone. No second reader confirmed it: check it below."
-            return r0, "built-in rules", None
-        diff = reading_difference(r0, r1)
-        if diff == []:
-            return r0, f"built-in rules, confirmed by {llm.name}", None
-        d = r0.get("draft")
-        if diff is None or d is None:
-            what = {"new": "a strategy", "modify": "a change to the current strategy", "derive": "a strategy", "experiment": "a comparison of several settings", "unknown": "something it could not read"}
-            msg = f"The language model ({llm.name}) read this request as {what.get(r1.get('action'), 'something else')}, the built-in interpreter as {what.get(r0.get('action'), 'something else')}."
-            if d is not None:
-                d.questions = list(d.questions) + [{"id": "reading", "essential": True, "text": msg + " Is the interpretation below what you meant?", "default": 0,
-                                                    "options": [{"label": "Yes, as shown", "patch": {}, "detail": "the built-in interpreter's reading"}]}]
-            return r0, "built-in rules", msg + " The built-in reading is shown; nothing runs on it until you confirm."
-        other = r1["draft"].model_dump(mode="json")
-        lines = "; ".join(f"{x['label']}: {x['a']} or {x['b']}" for x in diff[:6])
-        patch = {x["field"]: other.get(x["field"]) for x in diff if not x["field"].startswith("compare.")}
-        opts = [{"label": "As shown", "patch": {}, "detail": "the built-in interpreter's reading: " + "; ".join(f"{x['label']} {x['a']}" for x in diff[:6])}]
-        if patch and r0.get("action") != "experiment":
-            opts.append({"label": f"The other reading ({llm.name})", "patch": patch, "detail": "; ".join(f"{x['label']} {x['b']}" for x in diff[:6])})
-        d.questions = list(d.questions) + [{"id": "reading", "essential": True, "default": 0, "options": opts,
-                                            "text": f"Two readings of this request differ ({lines}). Which did you mean?"}]
-        return r0, "built-in rules", f"The language model ({llm.name}) read this differently: {lines}. Nothing runs until you choose."
 
     def _rules(self, text: str, current: Draft | None, known: list[str], last_field: str | None, default_symbol: str) -> dict:
         """The built-in readers, with corrections of the current reading taken first.
@@ -768,6 +737,15 @@ class Agent(ResearchV8, ResearchV5):
         else goes through the readers as it was typed ("no stop loss" removes the stop, as it always did); if none of them can
         place it, the words after the lead-in are read as the request, and if that fails too the reply says so in terms of
         what was typed instead of listing example prompts."""
+        # V9: a ticker with no stored history is declined, with the same question on a stored one offered (until V9 the
+        # strategy readers silently used the default symbol: "buy tsla puts at the open" ran on SPY)
+        unknown = unstored_ticker(text, known)
+        if unknown:
+            stored_ = [k for k in known if k not in ("VIX",) and not k.startswith("DEMO")]
+            sub = default_symbol if default_symbol in known else (stored_[0] if stored_ else default_symbol)
+            alt = re.sub(rf"\b{re.escape(unknown)}\b", sub, text, flags=re.I)
+            return {"action": "clarify", "declined": True, "text": f"No price history for {unknown.upper()} is stored, so nothing about it can be measured or backtested. Stored: {', '.join(k for k in known if k not in ('VIX',))}. Nothing was run.",
+                    "options": [{"label": alt, "ask": alt}]}
         # V8: one question frame per notebook, read and edited before any of the older readers is asked (agent_v8.py)
         v8 = self._v8_route(text, current, known, default_symbol)
         if v8 is not None:
@@ -777,12 +755,29 @@ class Agent(ResearchV8, ResearchV5):
             rc = NL.bare_correction(fixed, current, list(dict.fromkeys(NL.TICKERS + [s for s in known if s.isupper()])))
             if rc is not None:
                 return rc
-        r = self._v8_check_reading(text, self._readers(text, current, known, last_field, default_symbol), known)
+        r = self._v8_check_reading(text, self._with_sizing(text, self._readers(text, current, known, last_field, default_symbol), current), known)
         if fixed and r.get("action") == "unknown":
             r2 = self._readers(fixed, current, known, last_field, default_symbol)
             if r2.get("action") != "unknown":
                 return r2
             return NL.unplaced_correction(fixed) or r
+        return r
+
+    @staticmethod
+    def _with_sizing(text: str, r: dict, current: Draft | None) -> dict:
+        """Position sizing in a trader's words (converse.sizing_from_text) on a strategy the readers produced."""
+        d = r.get("draft")
+        if d is None or getattr(d, "kind", None) != "options" or r.get("action") not in ("new", "modify", "derive"):
+            return r
+        from strata.ai import converse as CV
+        sz = CV.sizing_from_text(text, current if r.get("action") == "modify" else None)
+        if sz is None:
+            return r
+        d.sizing = sz[0] if sz[0] is not None else d.sizing
+        if sz[1]:
+            d.quantity = sz[1]
+        if r.get("action") == "modify":
+            r["changed"] = list(dict.fromkeys(list(r.get("changed") or []) + ["sizing"]))
         return r
 
     def _readers(self, text: str, current: Draft | None, known: list[str], last_field: str | None, default_symbol: str) -> dict:
@@ -1725,6 +1720,10 @@ class Agent(ResearchV8, ResearchV5):
             out += self._explain_trade(sid, version, r.get("which") or "worst")
         elif act == "teach":
             out += self._teach(sid, r["topic"], interp)
+        elif act == "next_steps":
+            out += self._next_steps(sid, version)
+        elif act == "about_selection":
+            out += self._about_selection(sid, r)
         elif act == "noop":
             out.append(self._say(sid, r["text"], interpreter=interp))
         elif act == "new":
@@ -1957,7 +1956,6 @@ class Agent(ResearchV8, ResearchV5):
         options when coverage fell short). Idempotent."""
         self._tl.sid = sid  # the answers written here read this notebook's versions (a request thread has not seen post())
         out = []
-        llm, _ = self.llm()
         for m in db.list_messages(sid):
             c = m["content"] if isinstance(m["content"], dict) else {}
             if m["kind"] == "graph" and not c.get("finalized") and self._advance_graph_message(sid, m):
@@ -2022,7 +2020,10 @@ class Agent(ResearchV8, ResearchV5):
                     continue
                 if main:
                     e = main[-1]
-                    ex = EX.explain_run(e["run"], e["result"], llm)
+                    # V9: the result's text is always the calculated one. A model's rephrasing passed the number check while
+                    # attaching true numbers to the wrong quantities ("SPY closed above its open in 2,741 sessions out of
+                    # 2,741": 2,741 was the number of sessions, 1,486 closed above), which states an observation that is false.
+                    ex = EX.explain_run(e["run"], e["result"], None)
                     cov = e["result"].get("coverage") or {}
                     content.update({"view": "single", "run_id": e["run"]["id"], "mode": e["mode"], "label": e["label"], "text": ex["text"], "explanation_source": ex["source"], "explanation_rejected": ex["rejected"],
                                     "facts": ex["facts"], "caveats": ex["caveats"], "coverage": _coverage_brief(cov), "mode_label": cov.get("mode_label"), "mode_reason": cov.get("mode_reason")})

@@ -199,45 +199,54 @@ class Local(FakeLLM):
     provider, model, name = "ollama", "small", "ollama:small"
 
 
-def test_a_local_model_is_asked_only_about_what_the_built_in_readers_could_not_place(tmp_settings):
+class Reader9(Local):
+    """A local model that answers in V9's question language (strata.ai.model_reader). Scripted."""
+
+    def __init__(self, readings):
+        super().__init__(objs=list(readings))
+
+
+def test_a_local_model_is_asked_only_about_what_the_built_in_readers_could_not_place(tmp_settings, monkeypatch):
+    """V9 (replacing V7's "assist" mode): with a local model the built-in readers read first, and the model is asked only
+    about a message they could not place completely; its reading is used only after every part of it has been checked."""
     from strata.ai.agent import Agent
-    from strata.api.settings import set_setting
     st = grid_store(tmp_settings)
-    m = Local(objs=[])
+    m = Reader9([])
     ag = Agent(InlineJobs(), st, llm_factory=lambda: m)
-    assert Agent.planner(m) == "form" and Agent.planner(FakeLLM()) == "tools"
-    set_setting("llm.mode", "assist")
     r, who, note = ag.interpret(None, "Buy 0DTE SPY calls at 10:00 AM Eastern, sell after 45 minutes.", None, None, None)
     assert who == "built-in rules" and note is None and m.calls == [] and r["draft"].hold_minutes == 45  # read completely: the model was not called
-    # a sentence the built-in readers leave a part of: the model's form is used when it compiles and leaves nothing unplaced
-    text = "Buy SPY 0DTE calls at 10:00 AM Eastern once the tape turns constructive, sell after 45 minutes."
-    r0 = ag._rules(text, None, KNOWN, None, "SPY")
-    assert r0["draft"].unsupported, "the fixture sentence is meant to leave the built-in readers with an unplaced part"
-    m._objs = [form(symbol="SPY", position="buy_call", dte=0, entry_time="10:00 AM Eastern", exit_after_minutes=45, not_expressible=["once the tape turns constructive"])]
+    # the built-in readers place nothing: the model reads, and its checked reading is used, and the reader says so
+    text = "Buy SPY 0DTE calls at 10:00 AM Eastern when SPY is 0.4% under its open, sell after 45 minutes."
+    monkeypatch.setattr(ag, "_rules", lambda *a, **k: {"action": "unknown", "text": "?"})
+    m._objs = [{"act": "strategy", "kind": "strategy", "symbol": {"v": "SPY", "q": "SPY"}, "conds": [{"k": "from_open", "q": "0.4% under its open", "op": "<=", "v": -0.4}],
+                "strat": {"struct": "long_call", "q": "Buy SPY 0DTE calls", "dte": {"q": "0DTE"}, "entry": {"q": "at 10:00 AM Eastern"}, "hold": {"q": "after 45 minutes"}}}]
     r, who, note = ag.interpret(None, text, None, None, None)
-    assert who == "built-in rules" and "left something open too, so it was not used" in note and len(m.calls) == 1  # the model could not place it either: nothing is pretended
-    text = "Buy SPY 0DTE calls at 10:00 AM Eastern but only once SPY is trading 0.4% under where it opened; sell after 45 minutes."
-    r0 = ag._rules(text, None, KNOWN, None, "SPY")
-    if r0.get("draft") is not None and not r0["draft"].unsupported and not any(q.get("answered") is None and q.get("essential") for q in r0["draft"].questions):
-        pytest.skip("the built-in readers now read this sentence completely")
-    m._objs = [form(symbol="SPY", position="buy_call", dte=0, entry_time="10:00 AM Eastern", exit_after_minutes=45, signals=[sig("down_from_open", percent=0.4)])]
+    assert "ollama:small" in who and len(m.calls) == 1
+    assert [c.expr for c in r["draft"].conditions] == ["from_open_pct <= -0.4"] and r["draft"].hold_minutes == 45 and r["draft"].entry_time == "10:00"
+    # a model reading that leaves part of the message unplaced is not used: the built-in reply stands
+    m._objs = [{"act": "strategy", "kind": "strategy", "symbol": {"v": "SPY", "q": "SPY"}, "strat": {"struct": "long_call", "q": "Buy SPY 0DTE calls", "entry": {"q": "at 10:00 AM Eastern"}}}]
     r, who, note = ag.interpret(None, text, None, None, None)
-    assert who == "ollama:small" and "so the language model (ollama:small) read it" in note and [c.expr for c in r["draft"].conditions] == ["from_open_pct <= -0.4"] and r["draft"].hold_minutes == 45
+    assert who == "built-in rules" and r["action"] == "unknown" and len(m.calls) == 2
 
 
-def test_the_planner_and_the_reading_order_are_settings_and_a_form_is_never_asked_for_a_command(tmp_settings):
+def test_the_reading_order_is_a_setting_and_a_command_is_never_read_as_a_strategy(tmp_settings):
+    """V9: llm.mode = rules (built-in readers only) | model_first | rules_first | auto (model first for a hosted model, the
+    built-in readers first for a local one). A command the model names goes to the command, never to a strategy."""
     from strata.ai.agent import Agent
     from strata.api.settings import set_setting
     st = grid_store(tmp_settings)
-    m = Local(objs=[form(request="other")])
+    m = Reader9([{"act": "command", "cmd": "about_selection", "filter": "losing"}])
     ag = Agent(InlineJobs(), st, llm_factory=lambda: m)
-    set_setting("llm.mode", "model")  # the model reads everything it can: a command is not a strategy, and goes to the built-in routing
+    set_setting("llm.mode", "model_first")
+    # a follow-up the deterministic edit layer places is answered there, without the model (it kept every measured context)
     r, who, _ = ag.interpret(None, "show me the losing trades", base_draft(), None, None)
-    assert who == "built-in rules" and r["action"] == "show_trades" and len(m.calls) == 1
-    set_setting("llm.planner", "tools")
-    assert Agent.planner(m) == "tools"
-    set_setting("llm.planner", "form")
-    assert Agent.planner(FakeLLM()) == "form"
+    assert r["action"] == "show_trades" and len(m.calls) == 0
+    # one it does not place goes to the model, whose command is followed (and is never read as a strategy)
+    r, who, _ = ag.interpret(None, "anything noteworthy among the losers?", base_draft(), None, None)
+    assert r["action"] == "about_selection" and len(m.calls) == 1
+    set_setting("llm.mode", "rules")
+    r, who, _ = ag.interpret(None, "anything noteworthy among the losers?", base_draft(), None, None)
+    assert who == "built-in rules" and len(m.calls) == 1, "rules: the model is not called"
 
 
 def test_a_local_model_is_asked_for_a_bounded_context(tmp_settings, monkeypatch):
@@ -262,46 +271,22 @@ def test_a_local_model_is_asked_for_a_bounded_context(tmp_settings, monkeypatch)
 
 # ----------------------------------------------------------------------------- two readers that have to agree
 def test_two_readers_must_agree_or_the_difference_is_asked_before_anything_runs(tmp_settings):
-    from strata.ai.agent import Agent, reading_difference
-    from strata.api import db
+    """V9: the model reads first (model_first); when the deterministic reader also reads every part of the sentence and the
+    two readings differ, the user is asked which was meant, both shown; nothing runs on a disagreement."""
+    from strata.ai.agent import Agent
     from strata.api.settings import set_setting
     st = grid_store(tmp_settings)
-    m = Local(objs=[])
-    ag = Agent(InlineJobs(), st, llm_factory=lambda: m)  # no setting is changed: with a local model this is how a request is read
-    text = "Buy ATM SPY 0DTE calls at 10:00 AM Eastern, sell after 45 minutes."
-    same = form(symbol="SPY", position="buy_call", dte=0, strike_type="atm", entry_time="10:00 AM Eastern", exit_after_minutes=45)
-    m._objs = [same]
+    set_setting("llm.mode", "model_first")
+    text = "How often does SPY close above its open after a down day?"
+    # "a down day" is read by the deterministic reader as the close against the previous close
+    same = {"act": "ask", "kind": "frequency", "symbol": {"v": "SPY", "q": "SPY"}, "conds": [{"k": "prev_return", "q": "a down day", "op": "<", "v": 0}],
+            "out": {"k": "close_vs", "q": "close above its open", "ref": "open", "dir": "up"}}
+    m = Reader9([same])
+    ag = Agent(InlineJobs(), st, llm_factory=lambda: m)
     r, who, note = ag.interpret(None, text, None, None, None)
-    assert who == "built-in rules, confirmed by ollama:small" and note is None and r["draft"].questions == [] and len(m.calls) == 1
-    # the model's reading has no exit: one of the two dropped something, and which one is not for the application to decide
-    m._objs = [{**same, "exit_after_minutes": None}]
+    assert who == "ollama:small, confirmed by the built-in reader" and r["action"] in ("new", "investigate") and len(m.calls) == 1
+    other = {**same, "conds": [{"k": "prev_otc", "q": "a down day", "op": "<", "v": 0}]}  # the same words, as the day's own candle
+    m._objs = [other]
     r, who, note = ag.interpret(None, text, None, None, None)
-    q = r["draft"].questions[-1]
-    assert who == "built-in rules" and "read this differently: minutes held: 45 or none" in note and q["id"] == "reading" and q["essential"] and q["text"] == "Two readings of this request differ (minutes held: 45 or none). Which did you mean?"
-    assert [o["label"] for o in q["options"]] == ["As shown", "The other reading (ollama:small)"] and q["options"][1]["patch"] == {"hold_minutes": None} and r["draft"].hold_minutes == 45
-    # through the conversation: nothing runs until the question is answered, and either answer is one click
-    sid = db.create_session("t")["id"]
-    m._objs = [{**same, "exit_after_minutes": None, "exit_time": None}]
-    plan = ag.post(sid, text)[-1]["content"]
-    assert plan["state"] == "awaiting_answer" and plan["runs"] == [] and db.list_runs() == [] and plan["questions"][-1]["id"] == "reading"
-    done = ag.answer(sid, plan["version_id"], "reading", 0)[-1]["content"]
-    assert done["state"] == "running" and len(done["runs"]) == 1 and done["draft"]["hold_minutes"] == 45
-    # a command is not a reading of a strategy: the model is not asked
-    n = len(m.calls)
-    r, who, _ = ag.interpret(None, "show me the losing trades", base_draft(), None, None)
-    assert r["action"] == "show_trades" and who == "built-in rules" and len(m.calls) == n
-    # a reader that fails leaves the other one's reading, and says it was not checked
-    m._objs = [{"oops": 1}, {"oops": 2}]
-    r, who, note = ag.interpret(None, text, None, None, None)
-    assert who == "built-in rules" and "did not return a reading to check this against" in note and r["draft"].questions == []
-    # spelling and spacing are not differences; a setting a comparison varies has no single value to disagree about
-    a, b = base_draft("Buy ATM SPY 0DTE calls at the open after a red previous day"), base_draft("Buy ATM SPY 0DTE calls at the open after a red previous day")
-    b.conditions[0].expr = "previous_session.return_pct<0" if "return_pct(1)" in a.conditions[0].expr else "return_pct(1) < 0"
-    assert reading_difference({"action": "new", "draft": a}, {"action": "new", "draft": b}) == []
-    c = b.model_copy(deep=True)
-    c.hold_minutes = 20
-    dims = [{"field": "exit_minutes", "values": [20, 90, "close"]}]
-    assert reading_difference({"action": "experiment", "draft": a, "dims": dims}, {"action": "experiment", "draft": c, "dims": dims}) == []
-    d2 = reading_difference({"action": "experiment", "draft": a, "dims": dims}, {"action": "experiment", "draft": c, "dims": [{"field": "exit_minutes", "values": [20, 90]}]})
-    assert [x["field"] for x in d2] == ["compare.exit_minutes"] and d2[0]["b"] == "20, 90"
-    assert reading_difference({"action": "experiment", "draft": a, "dims": dims}, {"action": "new", "draft": a}) is None  # not the same kind of request at all
+    assert r["action"] == "clarify" and len(r["options"]) == 2 and r.get("pending"), "two complete readings differ: asked, not run"
+

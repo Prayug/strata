@@ -177,9 +177,16 @@ class RuleStrategy(Strategy):
                 if pos.peak_pnl >= act and pos.peak_pnl - pnl >= trail:
                     hits.append(("trailing_stop", f"peak P&L {pos.peak_pnl:,.2f} gave back {pos.peak_pnl - pnl:,.2f} >= trail {trail:,.2f}"))
         front = pos.front_dte(ctx.today_num)
-        # a time exit later than an early close fires at that session's close
-        if ex.time_exit.enabled and ctx.minute >= min(cal.parse_hhmm(ex.time_exit.time), ctx.close_minute) and (ex.time_exit.dte_lte is None or front <= ex.time_exit.dte_lte):
-            hits.append(("time_exit", f"time {cal.fmt_hhmm(ctx.minute)} >= {ex.time_exit.time} with front DTE {front}"))
+        # a time exit later than an early close fires at that session's close. The session's last snapshot can fall a minute
+        # before the closing minute itself, so the last tick counts as the close: until V9 the clamp never fired there and a
+        # 0 DTE position meant to be sold at 14:30 on a 13:00 close was exercised instead (QQQ 2024-11-29, found by the
+        # independent re-pricing in strata.research.reference_options)
+        t_exit = cal.parse_hhmm(ex.time_exit.time) if ex.time_exit.enabled else None
+        if ex.time_exit.enabled and (ctx.minute >= min(t_exit, ctx.close_minute) or (ctx.is_last_tick and t_exit > ctx.close_minute)) \
+                and (ex.time_exit.dte_lte is None or front <= ex.time_exit.dte_lte):
+            if t_exit > ctx.close_minute:
+                pos.meta["exit_at_close"] = True  # the close instant itself may trade (Engine.close_position)
+            hits.append(("time_exit", f"time {cal.fmt_hhmm(ctx.minute)} >= {ex.time_exit.time} with front DTE {front}" + (" (early close)" if t_exit > ctx.close_minute else "")))
         if ex.dte_exit.enabled and front <= ex.dte_exit.dte and ctx.minute >= min(cal.parse_hhmm(ex.dte_exit.time), ctx.close_minute):
             hits.append(("dte_exit", f"front DTE {front} <= {ex.dte_exit.dte}"))
         if ex.max_hold.enabled:
@@ -389,6 +396,12 @@ class RuleStrategy(Strategy):
     # ------------------------------------------------------------------ entries
     def _units(self, ctx: Context, sel) -> tuple[int, str]:
         s = self.cfg.sizing
+        if s.daily_loss_stop:
+            # the positions of this strategy closed in this session, and what they lost
+            day0 = int(cal.session_bounds(ctx.today)[0].timestamp())
+            lost = -sum(p.pnl_close() for p in ctx.account.closed if p.strategy_idx == self.idx and p.exit_ts >= day0)
+            if lost >= s.daily_loss_stop - 1e-9:
+                return 0, f"the daily loss stop is reached: positions closed today lost {lost:,.2f} (stop {s.daily_loss_stop:,.0f})"
         if s.method == "fixed":
             return min(s.contracts, s.max_contracts), ""
         if s.method == "expr":
@@ -438,17 +451,34 @@ class RuleStrategy(Strategy):
             legs.append(MLeg(bool(ch.is_call[x.row]), float(ch.strike[x.row]), q, mult, float(ch.mid[x.row])))
         R = requirement(legs, shares, spot, ctx.bt.cfg.capital.margin_model)
         bpr = max(R - cash, 1e-9)
-        if s.method == "risk_pct":
+        base = (ctx.account.equity() if s.reinvest else ctx.bt.cfg.capital.initial_capital) * self.allocation
+        if s.method in ("premium_dollars", "premium_pct"):
+            debit = -cash  # premium paid for one unit (a credit position pays none)
+            if debit <= 0:
+                return 0, "sizing by premium spent needs a position that is paid for (a debit); this one takes in a credit - size it by risk"
+            budget = s.dollars if s.method == "premium_dollars" else s.pct / 100 * base
+            units = min(int(budget // debit), s.max_contracts)
+            if units < 1:
+                return 0, f"one contract costs {debit:,.2f} in premium, more than the {budget:,.2f} budget per trade"
+            return units, ""
+        if s.method in ("risk_pct", "risk_dollars"):
             single = len({x.expiration for x in sel if x.row >= 0}) <= 1
             _, ml = max_profit_loss(legs, shares, cash) if single else (None, math.inf)
-            risk = ml if ml is not None and math.isfinite(ml) and ml > 0 else bpr
+            maxloss = ml if ml is not None and math.isfinite(ml) and ml > 0 else bpr
+            risk = maxloss
+            sl = self.cfg.exits.stop_loss
+            if s.risk_basis == "stop" and sl.enabled:
+                at_stop = abs(cash) * sl.value / 100 if sl.mode == "pct" else float(sl.value)
+                if at_stop > 0:
+                    risk = min(at_stop, maxloss)
         else:
             risk = bpr
-        budget = s.pct / 100 * ctx.account.equity() * self.allocation
+        budget = s.dollars if s.method == "risk_dollars" else s.pct / 100 * base
         units = int(budget // risk) if math.isfinite(risk) and risk > 0 else 0
         units = min(units, s.max_contracts)
         if units < 1:
-            return 0, f"sizing: {s.pct:g}% budget {budget:,.0f} < risk per unit {risk:,.0f}"
+            what = f"{s.pct:g}% budget" if s.method != "risk_dollars" else "risk budget"
+            return 0, f"sizing: {what} {budget:,.0f} < risk per unit {risk:,.0f}"
         return units, ""
 
     def _expire(self, ctx: Context, why: str, kind: str = "no_price"):

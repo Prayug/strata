@@ -224,10 +224,25 @@ class Sizing(Strict):
     fill, floored to a whole number of units (below one, the entry is skipped and reported).
     atr_risk: `pct` of equity over the dollar move of one unit for an adverse move of
     `atr_multiple` ATRs, using the position's delta at entry (skipped when delta or ATR is
-    unknown). Every method is capped at `max_contracts`."""
-    method: Literal["fixed", "risk_pct", "bp_pct", "expr", "atr_risk"] = "fixed"
+    unknown). Every method is capped at `max_contracts`.
+
+    V9, sizing in a trader's terms:
+      premium_dollars  spend at most `dollars` of premium per trade (debit positions)
+      premium_pct      spend at most `pct` of the account on premium per trade
+      risk_dollars     risk at most `dollars` per trade; risk_pct: `pct` of the account
+    The risk of one unit is the loss at the position's stop when `risk_basis` is "stop" and a stop is set (premium x stop %
+    for a percentage stop, the stop's dollars for a dollar stop, never more than the position's maximum loss), otherwise the
+    position's maximum loss (the premium paid, for a bought option), otherwise its buying-power requirement. A stop can be
+    jumped: the realised loss can exceed the intended one, and the report says how often it did.
+    `reinvest`: the percentage methods are of current equity (True) or of the starting capital (False).
+    `daily_loss_stop`: no new entry in a session once the positions closed that session have lost this many dollars."""
+    method: Literal["fixed", "risk_pct", "bp_pct", "expr", "atr_risk", "premium_dollars", "premium_pct", "risk_dollars"] = "fixed"
     contracts: int = Field(1, ge=1)
     pct: float = 2.0
+    dollars: float = Field(500.0, gt=0)
+    risk_basis: Literal["max_loss", "stop"] = "max_loss"
+    reinvest: bool = True
+    daily_loss_stop: Optional[float] = Field(None, gt=0)
     max_contracts: int = 100
     expr: Optional[str] = None
     atr_multiple: float = Field(1.0, gt=0)

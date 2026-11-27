@@ -209,7 +209,12 @@ def frequency(res: dict, frame: dict | None, run_id: str | None = None) -> dict:
     limits.append("This describes the price of " + sym + " itself, not an option position.")
     excl = int(st.get("excluded_sessions") or 0)
     if excl:
-        limits.append(f"{_n(excl)} session{'s' if excl != 1 else ''} could not be measured (missing bars) and {'are' if excl != 1 else 'is'} not counted either way.")
+        why = " ".join(str(x.get("reason") or "") for x in res.get("excluded") or [])
+        if "intraday" in why or "daily bars" in why:
+            limits.append(f"{_n(excl)} earlier session{'s' if excl != 1 else ''} {'have' if excl != 1 else 'has'} only a daily price record, so a time of day cannot be checked on {'them' if excl != 1 else 'it'} "
+                          "(minute-by-minute prices are stored from 2016); they are not counted either way.")
+        else:
+            limits.append(f"{_n(excl)} session{'s' if excl != 1 else ''} could not be measured (prices missing for part of the session) and {'are' if excl != 1 else 'is'} not counted either way.")
     res_mix = st.get("resolution_mix") or {}
     if res_mix.get("1d") and len(res_mix) > 1:
         limits.append(f"{_n(res_mix['1d'])} of the days are before minute-by-minute history (2016 for these funds), so only their daily bars are used.")
@@ -456,7 +461,8 @@ def strategy(run: dict, res: dict, trades: list[dict], card: dict | None, frame:
         happened.append(f"Without its three best trades the result is {_usd(conc['net_without_best_3'])}.")
     matters = None
     if ci[0] is not None and ci[0] <= 0 <= ci[1]:
-        matters = "A positive total is not evidence of an edge: with this many trades and this much variation, a result like this comes up often by chance. Treat it as a description of what happened, not a strategy that has been shown to work."
+        matters = ("A positive total is not evidence of an edge: with this many trades and this much variation, a result like this comes up often by chance. Treat it as a description of what happened, not a strategy that has been shown to work."
+                   if net > 0 else "The loss is real money in this history, but it is not evidence that the idea reliably loses either: with this much variation between trades, an average this far below zero comes up often by chance.")
     limits = [coverage_sentence(cov)]
     limits.append("Prices are real option trades, not bid/ask quotes: the spread you would have paid is not in these results.")
     if (card or {}).get("evidence", {}).get("level") in ("insufficient",):
@@ -473,10 +479,56 @@ def strategy(run: dict, res: dict, trades: list[dict], card: dict | None, frame:
     for t in sorted(trades, key=lambda t: t["exit_ts"] or t["entry_ts"]):
         s_ += float(t["pnl"])
         eq.append({"date": t["entry_date"], "pnl": round(float(t["pnl"]), 2), "total": round(s_, 2), "id": t["id"]})
-    return {"kind": "strategy", "headline": head, "happened": happened, "matters": matters, "limits": limits, "numbers": numbers,
+    sz = sizing_story(run, res, trades, frame)
+    if sz:
+        happened += sz["lines"][:2]
+    return {"kind": "strategy", "headline": head, "happened": happened, "matters": matters, "limits": limits, "numbers": numbers, "sizing": sz,
             "viz": {"kind": "strategy", "trades": eq, "run_id": run["id"], "worst": worst["id"], "best": best["id"]}, "example": example_trade(trades, run["id"]),
             "terms": [TERMS[k] for k in ("expectancy", "drawdown", "execution", "ci", "robustness")], "followups": followups(frame, "strategy", {"dte": (frame or {}).get("dte")}),
             "details": [{"label": l, "value": ""} for l in [(card or {}).get("evidence", {}).get("text", "")] if l] + [{"label": (sec.get(k) or {}).get("title", k), "value": (sec.get(k) or {}).get("text", "")} for k in ("expectancy", "drawdown", "execution", "concentration") if sec.get(k)]}
+
+
+def sizing_story(run: dict, res: dict, trades: list[dict], frame: dict | None) -> dict | None:
+    """What the position sizing did, with four amounts kept apart: the premium paid, the most each trade could have lost, the
+    loss the stop was meant to allow, and what was actually lost. Every figure is from the run's own trades."""
+    cfg = ((res.get("config") or {}).get("strategies") or [{}])[0].get("sizing") or ((run.get("config") or {}).get("strategies") or [{}])[0].get("sizing") or {}
+    method = cfg.get("method") or "fixed"
+    if not trades:
+        return None
+    units = [int(t.get("units") or 1) for t in trades]
+    debit = [max(0.0, -float(t.get("entry_cash") or 0)) for t in trades]
+    maxloss = [float(t["max_loss"]) if t.get("max_loss") is not None else d for t, d in zip(trades, debit)]
+    losers = [t for t in trades if t["pnl"] < 0]
+    stop = ((res.get("config") or {}).get("strategies") or [{}])[0].get("exits", {}).get("stop_loss") or {}
+    stop_pct = float(stop.get("value")) if stop.get("enabled") and stop.get("mode") == "pct" else None
+    lines = []
+    budget = {"premium_dollars": f"${cfg.get('dollars', 0):,.0f} of premium", "premium_pct": f"{cfg.get('pct', 0):g}% of the account in premium",
+              "risk_dollars": f"${cfg.get('dollars', 0):,.0f} of risk", "risk_pct": f"{cfg.get('pct', 0):g}% of the account at risk"}.get(method)
+    if budget:
+        lines.append(f"Sized at {budget} per trade, positions ranged from {min(units)} to {max(units)} contract{'s' if max(units) != 1 else ''} (median {sorted(units)[len(units) // 2]}).")
+    dp = sorted(debit)
+    if any(dp):
+        lines.append(f"Premium paid per trade: median {_usd(dp[len(dp) // 2]).lstrip('+')}, largest {_usd(dp[-1]).lstrip('+')}. For a bought option that premium is also the most the trade could lose.")
+    if stop_pct is not None and any(dp):
+        planned = [d * stop_pct / 100 for d in debit]
+        over = [t for t, p in zip(trades, planned) if t["pnl"] < 0 and -t["pnl"] > p * 1.05 + float(t.get("commissions") or 0)]
+        lines.append(f"The {stop_pct:g}% stop meant to limit a loss to about {_usd(sorted(planned)[len(planned) // 2]).lstrip('+')} per trade (median); the price jumped past it on {len(over)} of {len(losers)} losing trades, which lost more than planned.")
+    if losers:
+        lw = sorted(-t["pnl"] for t in losers)
+        lines.append(f"Realised losses: median {_usd(lw[len(lw) // 2]).lstrip('+')}, worst {_usd(lw[-1]).lstrip('+')}, on {len(losers)} losing trades.")
+    skipped = 0
+    for s_ in ((res.get("diagnostics") or {}).get("skipped_signals") or res.get("skipped_signals") or []):
+        why = str(s_.get("reason") or s_.get("why") or "") if isinstance(s_, dict) else str(s_)
+        if "budget" in why or "daily loss stop" in why:
+            skipped += 1
+    if skipped:
+        lines.append(f"{skipped} signal{'s were' if skipped != 1 else ' was'} not traded because of the sizing rules (one contract cost more than the budget, or the daily loss stop was reached).")
+    if cfg.get("daily_loss_stop"):
+        lines.append(f"No new trade was opened on a day once closed trades had lost ${cfg['daily_loss_stop']:,.0f}.")
+    if method == "fixed" and len(lines) <= 2:
+        return {"lines": lines, "method": method}
+    return {"lines": lines, "method": method, "units": {"min": min(units), "max": max(units)}, "premium": {"median": dp[len(dp) // 2], "max": dp[-1]},
+            "max_loss": {"max": max(maxloss)}, "realized_loss": {"median": (sorted(-t["pnl"] for t in losers)[len(losers) // 2] if losers else 0)}}
 
 
 def _option_span(run: dict, res: dict) -> str | None:
