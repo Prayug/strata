@@ -71,7 +71,8 @@ jobs:
       - name: Time the research workloads against the committed baseline
         working-directory: backend
         env:
-          # timings are normalised by a calibration loop, but a shared runner is still noisier than a laptop
+          # each workload is measured against the rest of its own run and the whole suite against a calibration loop,
+          # but a shared runner is still noisier than a laptop
           STRATA_BENCH_TOLERANCE: "3.0"
         run: python -m strata.cli bench --check
       - uses: actions/upload-artifact@v4

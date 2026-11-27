@@ -8,9 +8,11 @@ streaming import, and concurrent jobs. It also records peak memory and storage.
 
 Every run is appended to `benchmarks/history.jsonl` with the commit it was measured on.
 `--check` compares the run with `benchmarks/baseline.json` and exits non-zero when a
-workload became slower than its tolerance, after normalising by a fixed calibration loop
-so that a slower machine is not reported as a regression. `--update-baseline` rewrites the
-baseline from the current run.
+workload slowed down more than its tolerance compared with the rest of the same run (the
+run's median slowdown measures the machine, so a slower or faster machine is not reported
+as a regression), or when the whole suite became slower than its tolerance after
+normalising by a fixed calibration loop. `--update-baseline` rewrites the baseline from the
+current run.
 
 The fixture is simulated on purpose: benchmarks must be reproducible offline and must not
 depend on what the user happens to have downloaded. `--real` additionally times the
@@ -22,6 +24,7 @@ import json
 import os
 import platform
 import resource
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -30,10 +33,12 @@ import tracemalloc
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-# a workload may be this many times slower (normalised by the calibration loop) before --check fails;
-# CI runs on different hardware from the machine that recorded the baseline, so it sets a wider tolerance
+# a workload may slow down this many times more than the rest of its run, and the whole suite this many times
+# (normalised by the calibration loop), before --check fails; CI runs on different hardware from the machine that
+# recorded the baseline, so it sets a wider tolerance
 TOLERANCE = float(os.environ.get("STRATA_BENCH_TOLERANCE", "1.75"))
 FLOOR_SECONDS = 0.05  # workloads faster than this are too noisy to gate on
+MIN_FOR_MEDIAN = 5  # with fewer gated workloads a run's median says little about the machine: the calibration loop alone
 
 
 def bench_dir() -> Path:
@@ -303,18 +308,43 @@ def run_benchmarks(quick: bool = False, real: bool = False, out=print) -> dict:
     return rec
 
 
-def compare(rec: dict, baseline: dict, tolerance: float = TOLERANCE) -> list[dict]:
-    """Workloads that became slower than the tolerance (normalised by the calibration loop)."""
+def assess(rec: dict, baseline: dict, tolerance: float = TOLERANCE) -> dict:
+    """Which workloads slowed down more than the tolerance, and whether the whole suite did.
+
+    A workload is measured against the rest of its own run: its time over the baseline's, divided by the median of that
+    ratio over every gated workload (how much slower this machine runs the suite). The calibration loop alone misjudged
+    shared runners: on the V9 push one ran the loop in 0.061 s where others took 0.12 to 0.18 s, every normalised ratio
+    rose by about a third, and a backtest as fast as V8's was reported as a regression (3.04x against 3.0).
+    The whole suite is measured against the calibration loop (the median normalised ratio), which catches what a
+    comparison within the run cannot: everything slowing down together.
+    `ratio` stays the calibration-normalised ratio of earlier versions; `relative` is the one gated on.
+    """
     base = {w["name"]: w for w in baseline.get("workloads", [])}
-    out = []
+    rows, raw = [], {}
     for w in rec["workloads"]:
         b = base.get(w["name"])
         if not b or w["name"].startswith("real_"):
             continue
         ratio = w["normalised"] / b["normalised"] if b.get("normalised") else None
         gate = max(b["seconds"], w["seconds"]) >= FLOOR_SECONDS
-        out.append({"name": w["name"], "seconds": w["seconds"], "baseline_seconds": b["seconds"], "ratio": None if ratio is None else round(ratio, 2), "regressed": bool(gate and ratio is not None and ratio > tolerance), "gated": gate})
-    return out
+        raw[w["name"]] = w["seconds"] / b["seconds"] if b.get("seconds") else None
+        rows.append({"name": w["name"], "seconds": w["seconds"], "baseline_seconds": b["seconds"], "ratio": ratio, "gated": gate})
+    gated = [r for r in rows if r["gated"] and raw[r["name"]] and r["ratio"] is not None]
+    machine = statistics.median(raw[r["name"]] for r in gated) if len(gated) >= MIN_FOR_MEDIAN else None
+    suite = statistics.median(r["ratio"] for r in gated) if machine else None
+    for r in rows:
+        rel = (raw[r["name"]] / machine if raw[r["name"]] is not None else None) if machine else r["ratio"]
+        r["relative"] = None if rel is None else round(rel, 2)
+        r["ratio"] = None if r["ratio"] is None else round(r["ratio"], 2)
+        r["regressed"] = bool(r["gated"] and rel is not None and rel > tolerance)
+    return {"workloads": rows, "tolerance": tolerance, "basis": "the run's median" if machine else "the calibration loop",
+            "machine": None if machine is None else round(machine, 2), "suite_ratio": None if suite is None else round(suite, 2),
+            "suite_regressed": bool(suite is not None and suite > tolerance)}
+
+
+def compare(rec: dict, baseline: dict, tolerance: float = TOLERANCE) -> list[dict]:
+    """The per-workload rows of assess() (the shape callers have used since V4)."""
+    return assess(rec, baseline, tolerance)["workloads"]
 
 
 def save(rec: dict) -> Path:
@@ -344,7 +374,9 @@ def history(limit: int = 30) -> dict:
                 fe.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    return {"runs": rows, "baseline": base, "frontend": fe, "tolerance": TOLERANCE, "directory": str(d), "comparison": compare(rows[-1], base) if rows and base else []}
+    a = assess(rows[-1], base) if rows and base else None
+    return {"runs": rows, "baseline": base, "frontend": fe, "tolerance": TOLERANCE, "directory": str(d), "comparison": a["workloads"] if a else [],
+            "suite": {k: v for k, v in a.items() if k != "workloads"} if a else None}
 
 
 def main(quick=False, real=False, check=False, update_baseline=False, as_json=False) -> int:
@@ -352,8 +384,11 @@ def main(quick=False, real=False, check=False, update_baseline=False, as_json=Fa
     d = bench_dir()
     base_p = d / "baseline.json"
     base = json.loads(base_p.read_text()) if base_p.exists() else None
-    cmp_ = compare(rec, base) if base else []
+    a = assess(rec, base) if base else None
+    cmp_ = a["workloads"] if a else []
     rec["comparison"] = cmp_
+    if a:
+        rec["suite"] = {k: v for k, v in a.items() if k != "workloads"}
     save(rec)
     if update_baseline or (base is None and not quick):
         d.mkdir(parents=True, exist_ok=True)
@@ -365,11 +400,17 @@ def main(quick=False, real=False, check=False, update_baseline=False, as_json=Fa
         by = {c["name"]: c for c in cmp_}
         for w in rec["workloads"]:
             c = by.get(w["name"])
-            tail = "" if not c or c["ratio"] is None else f"   x{c['ratio']:.2f} vs baseline" + ("   REGRESSION" if c["regressed"] else "")
+            tail = "" if not c or c["ratio"] is None else f"   x{c['ratio']:.2f} vs baseline" + (f", x{c['relative']:.2f} vs this run" if a["machine"] and c["relative"] is not None else "") + ("   REGRESSION" if c["regressed"] else "")
             print(f"  {w['name']:22s} {w['seconds']:8.3f}s{tail}   {w.get('what', '')}")
+        if a and a["machine"]:
+            print(f"\nthis machine ran the suite at x{a['machine']:.2f} the baseline's times (median of the gated workloads); each workload is "
+                  f"gated against that, the whole suite against the calibration loop (x{a['suite_ratio']:.2f}); tolerance x{a['tolerance']:.2f}")
         print(f"\nrecorded in {d / 'history.jsonl'}" + (f"; baseline written to {base_p}" if update_baseline or base is None else ""))
-    bad = [c for c in cmp_ if c["regressed"]]
+    bad = [f"{c['name']} slowed down {c['relative']}x more than the rest of the suite" if a["machine"] else f"{c['name']} is {c['ratio']}x its baseline"
+           for c in cmp_ if c["regressed"]]
+    if a and a["suite_regressed"]:
+        bad.append(f"the whole suite is {a['suite_ratio']}x its baseline after the calibration loop")
     if check and bad:
-        print("performance regression: " + ", ".join(f"{c['name']} is {c['ratio']}x its baseline" for c in bad), file=sys.stderr)
+        print("performance regression: " + ", ".join(bad), file=sys.stderr)
         return 1
     return 0
