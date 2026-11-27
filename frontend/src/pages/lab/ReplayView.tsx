@@ -51,6 +51,7 @@ export function ReplayView({ runId, tradeId, symbol, date, onTrade, tradeCount }
   const [known, setKnown] = useState(false);
   const [speed, setSpeed] = useState(8);
   const [range, setRange] = useState<LWRange | null>(null);
+  const [big, setBig] = useState<"und" | "opt" | null>(null);  // one chart given most of the height, without leaving the page
   // the charts share the height there is. With fixed heights the contract's chart sat below the fold on a laptop screen, and
   // a wheel over a chart zooms it instead of scrolling to the next one
   const [box, setBox] = useState<HTMLDivElement | null>(null);
@@ -152,9 +153,15 @@ export function ReplayView({ runId, tradeId, symbol, date, onTrade, tradeCount }
   const labels = 22;
   const room = Math.max(0, avail - 2 * labels - 2);
   const fits = avail === 0 || avail >= 250 + 230 + (tradeMode ? 110 + labels : 0) + 2 * labels;
-  const hU = fits ? 250 : Math.max(132, Math.round(room * 0.47));
-  const hO = fits ? 230 : Math.max(150, room - Math.max(132, Math.round(room * 0.47)));
+  let hU = fits ? 250 : Math.max(132, Math.round(room * 0.47));
+  let hO = fits ? 230 : Math.max(150, room - Math.max(132, Math.round(room * 0.47)));
   const hP = fits ? 110 : 96;
+  if (big) {
+    const both = Math.max(360, avail - 2 * labels - 2 - (tradeMode ? hP + labels : 0));
+    hU = big === "und" ? Math.round(both * 0.74) : Math.max(110, Math.round(both * 0.26));
+    hO = both - hU;
+  }
+  const grow = (k: "und" | "opt") => <button className="ml-2 normal-case tracking-normal text-[11px] text-fg-2 underline decoration-dotted underline-offset-2 hover:text-fg" onClick={() => setBig((b) => (b === k ? null : k))} data-testid={`expand-${k}`}>{big === k ? "equal heights" : "make taller"}</button>;
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="view-replay">
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line px-4 py-2">
@@ -182,9 +189,9 @@ export function ReplayView({ runId, tradeId, symbol, date, onTrade, tradeCount }
         {contract && <span className="num dim">{contract.bars?.length ?? 0} of {n} {sec === 60 ? "minutes" : "candles"} have a print{sec > 60 ? ` · ${sec / 60}-minute candles` : ""}</span>}
       </div>
       <div className="min-h-0 flex-1 overflow-auto" ref={setBox}>
-        <div className="border-b border-line"><div className="px-4 pt-1.5 text-[10.5px] uppercase tracking-[0.07em] text-muted">{sym} · stored {und.stored} bars</div>
+        <div className="border-b border-line"><div className="px-4 pt-1.5 text-[10.5px] uppercase tracking-[0.07em] text-muted">{sym} · stored {und.stored} bars{grow("und")}</div>
           <LWChart series={undSeries} height={hU} timeVisible fit={false} onCrosshair={hover} cursorTime={cursorTime as any} range={range || full} onRange={setRange} extra={AXIS} /></div>
-        <div className="border-b border-line"><div className="px-4 pt-1.5 text-[10.5px] uppercase tracking-[0.07em] text-muted">{contract ? `${contract.strike}${contract.right} expiring ${contract.expiration} · trade prints (no bid/ask) · volume below` : "pick a contract"}</div>
+        <div className="border-b border-line"><div className="px-4 pt-1.5 text-[10.5px] uppercase tracking-[0.07em] text-muted">{contract ? `${contract.strike}${contract.right} expiring ${contract.expiration} · trade prints (no bid/ask) · volume below` : "pick a contract"}{contract && grow("opt")}</div>
           {occ && cq.isLoading ? <div className="flex items-center justify-center text-xs dim" style={{ height: hO }}><Loader2 className="mr-2 size-4 animate-spin" />Reading this contract's prints…</div>
             : <LWChart series={optSeries} height={hO} timeVisible fit={false} onCrosshair={hover} cursorTime={cursorTime as any} range={range || full} onRange={setRange} extra={AXIS} />}</div>
         {tradeMode && pnlSeries.length > 0 && <div className="border-b border-line"><div className="px-4 pt-1.5 text-[10.5px] uppercase tracking-[0.07em] text-muted">Position marked on its stored prints (profit before costs)</div>

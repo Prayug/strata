@@ -22,7 +22,7 @@ let notebook = "";
 test("the desk: a sentence on the command line, its reading as a ticket, and the result with its trades, replay and fills on one screen", async ({ page, request }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
-  await page.goto("/");
+  await page.goto("/lab");
   await ask(page, "Buy ATM TST 0DTE calls at the open after a 3% down day, sell at 3:55 PM Eastern.");
   await expect(page).toHaveURL(/\/lab\/[0-9a-f]+/);
   notebook = page.url();
@@ -92,7 +92,7 @@ test("a comparison typed on the same line runs as one grid, and every cell count
   expect(csv.split("\n")[0]).toContain("setting_exit_minutes");
   expect(csv.split("\n").filter(Boolean).length).toBe(4);
   // a comparison with nothing to apply it to asks which strategy, and runs nothing
-  await page.goto("/");
+  await page.goto("/lab");
   await ask(page, "Compare exits after 15, 30 and 60 minutes.");
   await expect(page.getByTestId("conversation")).toContainText("Which strategy should these be compared on?");
 });
@@ -115,7 +115,7 @@ test("a question about the first candle and the day is two directions, never a s
   // typed into the running application by its user, three times in different words: each time it was answered with the share
   // of ALL sessions that closed higher. The fixture's first candles all close at the open, so the honest answer here is
   // that there is no direction to compare: the test is that this is said, and that no frequency appears in its place
-  await page.goto("/");
+  await page.goto("/lab");
   await ask(page, "How often does TST's first 9:30 candle predict its overall day?");
   await expect(page.getByTestId("pending-investigation")).toContainText("the direction of the first 5/15/30 minutes");
   await expect(page.getByTestId("pending-investigation")).toContainText("was not stated, so 5-, 15- and 30-minute candles are all measured");
@@ -127,12 +127,12 @@ test("a question about the first candle and the day is two directions, never a s
   await expect(page.getByTestId("view-investigation")).toContainText("no direction to compare");
   await expect(page.getByTestId("agreement")).toHaveCount(0); // nothing to draw, so nothing is drawn
   // a frequency question with nothing to count is not run as a study either
-  await page.goto("/");
+  await page.goto("/lab");
   await ask(page, "How often does TST do the thing with the wick?");
   await expect(page.getByTestId("conversation")).toContainText("I could not find anything to count in that question");
   await expect(page.getByTestId("result-single")).toHaveCount(0);
   // a correction that is a value on its own: asked about when it fits two things, applied when it fits one
-  await page.goto("/");
+  await page.goto("/lab");
   await ask(page, "How often does TST rise 1% from the open after a 3% down day?");
   await idle(page);
   await expect(page.getByTestId("result-single")).toBeVisible({ timeout: 60_000 });

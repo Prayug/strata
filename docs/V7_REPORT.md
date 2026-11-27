@@ -620,10 +620,10 @@ Model-backed interpretation on unseen prompts: section 7 (two local models; host
 - **A paper experiment was frozen** for the acceptance ("V7 acceptance: SPY 0DTE calls after a 1% down day"). It is
   evaluated on each new session while it is active; stop it under Forward validation if you do not want it.
 - **Notebooks.** The acceptance left 9 notebooks titled "V7 acceptance · ...". Earlier attempts, made while defects
-  were still being found, left 26 more; I retitled those "superseded acceptance attempt · ..." and deleted none of
-  them. They can all go, and I will remove the superseded ones if you say so. One more, with your first-candle
-  question as its title, is the run I made in the browser while fixing it. Every configuration these ran is in the
-  experiment registry, which cannot be deleted by design.
+  were still being found, left 26 more; those were deleted on 2026-11-26 once you said to, after this report was
+  first written. Their runs are still listed under Backtests and every configuration they ran is still in the
+  experiment registry, which cannot be deleted by design; one duplicate finding went with its notebook. One more
+  notebook, with your first-candle question as its title, is the run I made in the browser while fixing it.
 - 1,996 contract-sessions (122,477 bars) were fetched on demand from Alpaca, at no cost, by the expansion matrix
   and the acceptance runs, after the 728,410 bars of the gap top-up. One consequence: two benchmark runs trade one more
   QQQ session (2026-11-05) than they did this morning.

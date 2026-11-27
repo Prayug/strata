@@ -61,7 +61,8 @@ def default_tz_offset() -> int:
 # "6:30 AM Pacific", "9:30ET", "15:30", and as people type them in a hurry: "6:30a, PST" (a letter for the half of the day,
 # attached to the digits; a comma before the zone)
 TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?|(?<=\d)[ap](?![a-z.]))?(?:\s*,?\s*(pacific|pst|pdt|pt|mountain|mst|mdt|mt|central|cst|cdt|ct|eastern|est|edt|et|new york)(?:\s*time)?)?\b", re.I)
-EXIT_CUE = re.compile(r"\b(exit|sell (?:them|it|at|when|by)|close (?:the position|it|them|out)|clos(?:e|ing) (?:at|by)|take profits?|until|till|hold(?:ing)?\b|out by|\bor at\b|get out)", re.I)
+EXIT_CUE = re.compile(r"\b(exit|sell (?:them|it|at|when|by)|close (?:the position|it|them|out)|clos(?:e|ing) (?:at|by)|take profits?|until|till|hold(?:ing)?\b|out by|\bor at\b|get out|"
+                      r"buy (?:them|it|the (?:puts?|calls?|options?|contracts?)) back|cover (?:them|it|at|by)|buy to close)", re.I)
 
 
 EXIT_WHEN = re.compile(r"\b(?:exit(?:s|ing)?|sell(?:s|ing)?|clos(?:e|es|ing)|get(?:ting)?\s+out|take\s+profits?|tak(?:e|ing)\s+(?:it|them)\s+off|cut(?:ting)?\s+(?:it|them|the\s+\w+))\b(?P<mid>(?:[^.;]|\.(?=\d))*?)"

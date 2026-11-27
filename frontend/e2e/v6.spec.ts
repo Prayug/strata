@@ -20,7 +20,7 @@ test.describe.configure({ mode: "serial" });
 test("coverage comes before profitability, in the plan, the result, the report and the comparison", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
-  await page.goto("/");
+  await page.goto("/lab");
   await ask(page, "How often does TST rise 1% after a 3% down day?");
   await expect(page.getByTestId("result-single")).toBeVisible();
   await ask(page, "Test ATM 0DTE calls on those days using historical option trade prices.");
@@ -153,7 +153,9 @@ test("a frozen experiment is dated by the clock, counts from the next session, a
   const ex = (await (await request.get("/api/forward")).json()).experiments.find((e: any) => e.source_run_id === run.id);
   // the activation instant is the clock's; the first session that counts is strictly after it, whatever is stored
   expect(new Date(ex.activated_at).getTime()).toBeGreaterThan(Date.now() - 5 * 60_000);
-  expect(ex.first_session > ex.activated_at.slice(0, 10) || ex.activation.state === "before_open").toBe(true);
+  // (sessions are New York dates: compare with the activation's New York date, not its UTC date, which is the next day every evening)
+  const activatedNy = new Date(ex.activated_at).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  expect(ex.first_session > activatedNy || ex.activation.state === "before_open").toBe(true);
   await d.getByTestId("forward-evaluate").click();
   await expect(d).toContainText("No session since activation has closed yet", { timeout: 30_000 });
   const led = await (await request.get(`/api/forward/${ex.id}/ledger`)).json();

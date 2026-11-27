@@ -20,7 +20,8 @@ import { useUi } from "@/lib/store";
 type Item = { to: string; label: string; icon: any; key: string; match?: string[]; adv?: boolean };
 export const GROUPS: { id: string; label: string; hint: string; tone: string; items: Item[] }[] = [
   { id: "explore", label: "Explore", hint: "Ask questions, investigate, discover", tone: "var(--color-accent)", items: [
-    { to: "/", label: "Ask", icon: Sparkles, key: "a", match: ["/lab"] },
+    { to: "/", label: "Ask", icon: Sparkles, key: "a", match: ["/ask"] },
+    { to: "/lab", label: "Research workspace", icon: FlaskConical, key: "y", adv: true },
     { to: "/patterns", label: "Patterns", icon: Waves, key: "w" },
     { to: "/findings", label: "Knowledge base", icon: Library, key: "k" },
     { to: "/encyclopedia", label: "Market behaviour", icon: BookOpenText, key: "e", adv: true },
@@ -135,6 +136,42 @@ export function Shell() {
 
   const active = jobs.data?.active || [];
   if (standby) return <Standby s={standby} />;
+  // the primary experience (ask, answer, explore) has its own quiet chrome: no tool rail, no status bar
+  if (loc.pathname === "/" || loc.pathname.startsWith("/ask")) {
+    return (
+      <div className="v8 flex h-full flex-col">
+        <header className="flex h-12 shrink-0 items-center gap-6 border-b px-5 md:px-8" style={{ borderColor: "var(--rule)" }}>
+          <NavLink to="/" className="flex items-center gap-2.5" style={{ textDecoration: "none" }} data-testid="wordmark">
+            <svg viewBox="0 0 32 32" className="size-[15px] shrink-0"><path d="M4 24h24M4 16h16M4 8h8" stroke="#e8a33d" strokeWidth="3.5" /></svg>
+            <span className="text-[13px] font-semibold tracking-[0.14em]" style={{ color: "var(--paper)" }}>STRATA</span>
+          </NavLink>
+          <nav className="flex items-center gap-5 text-[13.5px]" aria-label="Main">
+            <NavLink to="/" end className="link" style={{ textDecoration: "none" }}>New question</NavLink>
+            <NavLink to="/strategies" className="link hidden sm:inline" style={{ textDecoration: "none" }}>Strategies</NavLink>
+            <NavLink to="/data" className="link hidden sm:inline" style={{ textDecoration: "none" }}>Data</NavLink>
+          </nav>
+          <span className="flex-1" />
+          {active.length > 0 && <span className="tiny mute hidden items-center gap-1.5 md:flex"><Activity className="size-3" style={{ color: "var(--amber)" }} />working on {active.length} run{active.length > 1 ? "s" : ""}</span>}
+          <Popover>
+            <PopoverTrigger asChild><button className="link text-[13.5px]" data-testid="all-tools">All tools</button></PopoverTrigger>
+            <PopoverContent align="end" className="w-[520px] !p-4">
+              <div className="grid grid-cols-3 gap-4 text-xs">
+                {GROUPS.map((g) => (
+                  <div key={g.id}>
+                    <div className="label mb-1.5">{g.label || "Other"}</div>
+                    {g.items.map((n) => <NavLink key={n.to} to={n.to} className="flex h-6 items-center gap-2 text-fg-2 hover:text-fg"><n.icon className="size-3.5" />{n.label}</NavLink>)}
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 border-t border-line pt-2 text-2xs text-muted">The specialist tools use the same engine and data. <Kbd>⌘K</Kbd> searches everything.</div>
+            </PopoverContent>
+          </Popover>
+        </header>
+        <div className="min-h-0 flex-1 overflow-auto"><Outlet /></div>
+        {palette && <Palette onClose={() => setPalette(false)} />}
+      </div>
+    );
+  }
   return (
     <div className="flex h-full flex-col">
       <div className="flex min-h-0 flex-1">
@@ -250,7 +287,7 @@ function Palette({ onClose }: { onClose: () => void }) {
           </Command.Group>
           <Command.Group heading="Research sessions" className="[&_[cmdk-group-heading]]:label [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5">
             {(sessions.data || []).map((x) => (
-              <Command.Item key={x.id} value={`research ${x.title} ${x.id} ${x.match || ""}`} onSelect={() => go(`/lab/${x.id}`)} className="flex items-center gap-2 rounded-sm px-2 py-1.5 data-[selected=true]:bg-bg-3">
+              <Command.Item key={x.id} value={`research ${x.title} ${x.id} ${x.match || ""}`} onSelect={() => go(`/ask/${x.id}`)} className="flex items-center gap-2 rounded-sm px-2 py-1.5 data-[selected=true]:bg-bg-3">
                 <Sparkles className="size-3.5 text-muted" /> <span className="truncate">{x.title}</span>
               </Command.Item>
             ))}

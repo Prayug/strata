@@ -276,7 +276,7 @@ def run_study(cfg: StudyConfig | dict, store: MarketStore | None = None, max_ses
                 "vix_prev": _f(vix), "trend": trend, "weekday": d.weekday(), "why": [x["text"] for x in explain if not x.get("group")][:6],
             })
             if h.size <= 800:
-                paths.append((h / entry_px - 1, l / entry_px - 1, o / entry_px - 1, (ser.end[i0:i1] - t_e) / 60.0, path_res))
+                paths.append((h / entry_px - 1, l / entry_px - 1, o / entry_px - 1, (ser.end[i0:i1] - t_e) / 60.0, path_res, c / entry_px - 1, d.isoformat()))
             return True
 
         if signal_mode:
@@ -441,7 +441,7 @@ def _summarise(cfg: StudyConfig, rows, base_first, excluded, paths, res_count, s
         for si_, sv in enumerate(sg):
             for ti_, tv in enumerate(tg):
                 hit = amb = 0
-                for (hh_, ll_, oo_, _m, _r) in paths:
+                for (hh_, ll_, oo_, _m, _r, *_rest) in paths:
                     if up:
                         mt, ms = np.maximum(hh_, oo_) >= tv / 100, np.minimum(ll_, oo_) <= -sv / 100
                     else:
@@ -457,6 +457,7 @@ def _summarise(cfg: StudyConfig, rows, base_first, excluded, paths, res_count, s
                 A[si_, ti_] = amb / len(paths)
         sens = {"targets_pct": tg, "stops_pct": sg, "probability": [[_f(v) for v in row] for row in P.tolist()], "ambiguous_share": A.tolist(), "direction": "up" if up else "down", "sessions": len(paths)}
 
+    path_summary = _path_summary(paths, endr)
     notes = []
     if n and n < 30:
         notes.append(f"Only {n} qualifying sessions: the confidence interval is wide; treat the estimate as indicative.")
@@ -470,10 +471,41 @@ def _summarise(cfg: StudyConfig, rows, base_first, excluded, paths, res_count, s
     return {
         "kind": "study", "config": cfg.model_dump(mode="json"), "symbol": cfg.symbol, "period": [start.isoformat(), end.isoformat()],
         "synthetic": bool(synthetic), "stats": stats, "by_year": years, "regimes": regimes, "cumulative": cum, "time_of_day": tod,
-        "mfe_hist": hist(mfe), "mae_hist": hist(mae), "end_hist": hist(endr), "sensitivity": sens,
+        "mfe_hist": hist(mfe), "mae_hist": hist(mae), "end_hist": hist(endr), "sensitivity": sens, "path_summary": path_summary,
         "excluded": [{"reason": k, "count": len(v), "dates": v[:12]} for k, v in sorted(excluded.items(), key=lambda kv: -len(kv[1]))],
         "sessions": rows[-max_out:], "sessions_truncated": n > max_out, "notes": notes,
     }
+
+
+def _path_summary(paths: list, endr: np.ndarray) -> dict | None:
+    """The intraday paths of the observed days from a common start (0% at the entry): percentile bands on a minute grid, a
+    sample of the days themselves, and the days that ended furthest from the middle. Percent of the entry price."""
+    intr = [p_ for p_ in paths if p_[4] < 86400 and len(p_) >= 7 and len(p_[3])]
+    out: dict = {"end_quartiles": [float(np.quantile(endr, 0.25)), float(np.quantile(endr, 0.75))] if endr.size else None}
+    if not intr:
+        return out
+    horizon = float(np.median([p_[3][-1] for p_ in intr]))
+    step = 1 if horizon <= 90 else 5 if horizon <= 420 else 30
+    grid = np.arange(0, horizon + step / 2, step)
+    mat = np.full((len(intr), grid.size), np.nan)
+    for i, p_ in enumerate(intr):
+        mins, cl = np.asarray(p_[3], float), np.asarray(p_[5], float) * 100
+        j = np.searchsorted(mins, grid, side="right") - 1
+        ok = j >= 0
+        row = np.full(grid.size, np.nan)
+        row[ok] = cl[j[ok]]
+        row[0] = 0.0
+        mat[i] = row
+    with np.errstate(all="ignore"):
+        q = np.nanpercentile(mat, [10, 25, 50, 75, 90], axis=0)
+        mean = np.nanmean(mat, axis=0)
+    ends = np.array([np.asarray(p_[5])[-1] * 100 for p_ in intr])
+    order = np.argsort(ends)
+    pick = sorted(set(order[:5].tolist() + order[-5:].tolist() + np.linspace(0, len(intr) - 1, min(30, len(intr))).astype(int).tolist()))
+    sample = [{"date": intr[i][6], "end": round(float(ends[i]), 3), "values": [None if not np.isfinite(v) else round(float(v), 3) for v in mat[i]], "extreme": bool(i in order[:5] or i in order[-5:])} for i in pick]
+    out.update({"minutes": grid.tolist(), "p10": q[0].round(4).tolist(), "p25": q[1].round(4).tolist(), "median": q[2].round(4).tolist(), "p75": q[3].round(4).tolist(),
+                "p90": q[4].round(4).tolist(), "mean": np.round(mean, 4).tolist(), "sample": sample, "days": len(intr)})
+    return out
 
 
 def session_chart(store: MarketStore, symbol: str, d: date, context_days: int = 0) -> dict:

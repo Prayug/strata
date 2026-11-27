@@ -54,6 +54,11 @@ export function LWChart({ series, height = 260, timeVisible = false, className, 
   const cbs = useRef({ onCrosshair, onClick, onRange });
   cbs.current = { onCrosshair, onClick, onRange };
   const quiet = useRef(0);  // until when (ms) range changes are this chart's own doing (data set, fitted, a range it was given) and not a gesture
+  // A range change is shared only while a hand is on this chart (wheel, drag, touch). A chart that is resized (a panel
+  // opening, a window getting wider) moves its own visible range: that is not a gesture, and other charts must not follow it.
+  const gesture = useRef(0);
+  const rangeRef = useRef<LWRange | null | undefined>(range);
+  rangeRef.current = range;
 
   useEffect(() => {
     if (!el.current) return;
@@ -65,10 +70,33 @@ export function LWChart({ series, height = 260, timeVisible = false, className, 
     c.subscribeCrosshairMove((p) => { if (p.time && !(p as any).sourceEvent) return; cbs.current.onCrosshair?.(p.time ? (p.time as number) : null); });
     c.subscribeClick((p) => cbs.current.onClick?.(p.time ? (p.time as number) : null));
     c.timeScale().subscribeVisibleLogicalRangeChange((r) => {
-      if (!r || !cbs.current.onRange || performance.now() < quiet.current) return;
+      if (!r || !cbs.current.onRange || performance.now() < quiet.current || performance.now() > gesture.current) return;
       cbs.current.onRange({ from: r.from, to: r.to });
     });
+    const host = el.current;
+    const brief = () => { gesture.current = performance.now() + 900; };
+    const hold = () => { gesture.current = Number.POSITIVE_INFINITY; };
+    const release = () => { if (gesture.current === Number.POSITIVE_INFINITY) gesture.current = performance.now() + 300; };
+    host.addEventListener("wheel", brief, { passive: true });
+    host.addEventListener("pointerdown", hold);
+    host.addEventListener("touchstart", hold, { passive: true });
+    window.addEventListener("pointerup", release);
+    window.addEventListener("touchend", release);
+    // after a resize, the window it was given is put back (the library keeps the bar spacing and moves the window instead)
+    const ro = new ResizeObserver(() => {
+      const want = rangeRef.current;
+      if (!want) return;
+      quiet.current = performance.now() + 250;
+      requestAnimationFrame(() => { try { c.timeScale().setVisibleLogicalRange(want as any); } catch { /* no data yet */ } });
+    });
+    ro.observe(host);
     return () => {
+      ro.disconnect();
+      host.removeEventListener("wheel", brief);
+      host.removeEventListener("pointerdown", hold);
+      host.removeEventListener("touchstart", hold);
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("touchend", release);
       c.remove();
       chart.current = null;
       handles.current = [];

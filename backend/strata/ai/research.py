@@ -245,7 +245,8 @@ def detect_followup(text: str, cur: Draft, known: list[str]) -> dict | None:
     if re.search(r"\b(export|download|save|share|print)\b[^.]{0,40}\b(report|results?|research|trade log|trades|configuration|config)\b|\breport\b.*\b(pdf|html|file)\b", low):
         return {"action": "export"}
     # the three questions a result has to be able to answer about itself: what was filled and from what, what could not be tested, what the rest would cost
-    if re.search(r"\b(?:every|each|all|the)\b[^.?]{0,40}\bfills?\b|\bfills?\b[^.?]{0,30}\b(?:source|came from|come from|priced)|where (?:did|do) the (?:prices?|fills?|premiums?) come from|source of (?:each|every|the) (?:fill|price|premium)", low):
+    if re.search(r"\b(?:every|each|all|the)\b[^.?]{0,40}\bfills?\b|\bfills?\b[^.?]{0,30}\b(?:source|came from|come from|priced)|where (?:did|do) the (?:prices?|fills?|premiums?) come from|source of (?:each|every|the) (?:fill|price|premium)|"
+                 r"\b(?:show|see|list|inspect|what were)\b[^.?]{0,20}\b(?:the |actual )?(?:option )?(?:prices|premiums) (?:used|paid|it used|we used|that were used)\b|\bactual option prices\b", low):
         return {"action": "fills"}
     if re.search(r"(?:which|what|exactly which)\b[^.?]{0,50}\b(?:sessions?|days|dates|signals?)\b[^.?]{0,40}\b(?:could not|couldn'?t|cannot|can'?t|were not|weren'?t|was not|not)\s+(?:be\s+)?(?:tested|priced|evaluated|backtested|filled)|"
                  r"\buntested (?:sessions?|days|dates)|(?:sessions?|days|dates) (?:that )?(?:are|were) (?:missing|untested|not tested)|what (?:is|was) missing", low):

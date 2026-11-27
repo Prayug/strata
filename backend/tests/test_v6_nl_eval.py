@@ -147,7 +147,8 @@ def test_vwap_is_the_sessions_and_a_comparison_between_symbols_is_kept(ag):
 
 def test_the_size_of_an_outcome_is_part_of_the_question(ag):
     it = read(ag, "When VIX is above 30 and SPY gaps down more than 1%, how often does SPY rise 1% from the open?")
-    assert it["reader"] == "graph" and it["outcome"] == {"direction": "up", "size": 1.0, "measure": "touch", "from": "open", "horizon": "session"}
+    # V8: the semantic layer reads this sentence itself ("frame"); before V8 the research-graph reader did
+    assert it["reader"] in ("graph", "frame") and {k: it["outcome"][k] for k in ("direction", "size", "measure", "from", "horizon")} == {"direction": "up", "size": 1.0, "measure": "touch", "from": "open", "horizon": "session"}
     assert sorted((c["key"], c["value"]) for c in it["conditions"]) == [("gap", -1.0), ("vix", 30.0)]
     it = read(ag, "How often does SPY rise 1% from the open after a 3% down day?")
     assert it["outcome"]["size"] == 1.0 and it["outcome"]["measure"] == "touch" and it["outcome"]["from"] == "open" and [(c["key"], c["value"]) for c in it["conditions"]] == [("prev_return", -3.0)]

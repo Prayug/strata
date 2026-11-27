@@ -15,7 +15,7 @@ test.describe.configure({ mode: "serial" });
 let notebook = "";
 
 test("the application is organised around Explore, Build and Validate, with a simple and an advanced level", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/lab");
   for (const g of ["explore", "build", "validate"]) await expect(page.getByTestId(`nav-${g}`)).toBeVisible();
   await expect(page.getByTestId("nav-explore")).toContainText("Ask");
   await expect(page.getByTestId("nav-build")).toContainText("Strategy IDE");
@@ -39,7 +39,7 @@ test("the application is organised around Explore, Build and Validate, with a si
 });
 
 test("a composed question becomes a typed research graph with a graded finding", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/lab");
   await ask(page, "Does LNG tend to recover after down days of 2% or more, even after controlling for volatility?");
   await page.waitForURL(/\/lab\//);
   notebook = page.url().split("/lab/")[1];

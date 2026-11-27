@@ -92,6 +92,7 @@ def registry_reference() -> str:
 
 
 from strata.ai.agent_v5 import ResearchV5, prefer_graph, richer  # noqa: E402
+from strata.ai.agent_v8 import ResearchV8  # noqa: E402
 from strata.research import graph as GRAPH  # noqa: E402
 
 class _Strict(BaseModel):
@@ -576,7 +577,7 @@ def NXL(field: str, v) -> str:
     return NX.label(field, tuple(v) if isinstance(v, list) else v)
 
 
-class Agent(ResearchV5):
+class Agent(ResearchV8, ResearchV5):
     def __init__(self, jobs, store: MarketStore | None = None, llm_factory=None):
         self.jobs = jobs
         self.store = store or MarketStore()
@@ -767,12 +768,16 @@ class Agent(ResearchV5):
         else goes through the readers as it was typed ("no stop loss" removes the stop, as it always did); if none of them can
         place it, the words after the lead-in are read as the request, and if that fails too the reply says so in terms of
         what was typed instead of listing example prompts."""
+        # V8: one question frame per notebook, read and edited before any of the older readers is asked (agent_v8.py)
+        v8 = self._v8_route(text, current, known, default_symbol)
+        if v8 is not None:
+            return v8
         fixed = NL.correction(text) if current is not None else None
         if fixed:
             rc = NL.bare_correction(fixed, current, list(dict.fromkeys(NL.TICKERS + [s for s in known if s.isupper()])))
             if rc is not None:
                 return rc
-        r = self._readers(text, current, known, last_field, default_symbol)
+        r = self._v8_check_reading(text, self._readers(text, current, known, last_field, default_symbol), known)
         if fixed and r.get("action") == "unknown":
             r2 = self._readers(fixed, current, known, last_field, default_symbol)
             if r2.get("action") != "unknown":
@@ -997,7 +1002,10 @@ class Agent(ResearchV5):
 
     def _plan_content(self, d: Draft, compiled: dict, v: dict, parent: dict | None, interp: str, diff: list, changed: list | None, runs: list, compare_with: list, state: str, text: str, mode: str | None) -> dict:
         return {"text": text.strip(), "version_id": v["id"], "parent_id": parent["id"] if parent else None, "interpreter": interp, "kind": d.kind, "title": d.title, "state": state,
-                "draft": d.model_dump(mode="json"), "items": compiled["items"], "assumptions": compiled["assumptions"], "missing": compiled["missing"], "errors": compiled["errors"],
+                "draft": d.model_dump(mode="json"), "items": compiled["items"], "missing": compiled["missing"], "errors": compiled["errors"],
+                # what the question reader assumed (V8 frames carry them as notes) is listed with what the compiler assumed
+                "assumptions": list(compiled["assumptions"]) + [{"field": "reading", "value": n, "reason": "assumed when reading the request"} for n in (d.notes or [])
+                                                                if n and not any(n == a.get("value") for a in compiled["assumptions"])],
                 "unsupported": d.unsupported, "questions": d.questions, "notes": d.notes, "config": {"strategy": compiled.get("strategy"), "study": compiled.get("study")},
                 "diff": diff, "changed": changed or [], "runs": runs, "compare_with": compare_with, "mode": mode or d.mode or ("study" if d.kind == "study" else None), "finalized": not runs}
 
@@ -1455,8 +1463,10 @@ class Agent(ResearchV5):
         lines = [rob["verdict"]] + [f"{'Passed' if c['ok'] else 'Not passed'} - {c['name']}: {c['detail']}." for c in rob["checks"]]
         if trials > 1:
             lines.append(f"{trials} configurations have been tested in this session; the significance threshold is adjusted for that.")
+        from strata.ai import answer as ANS
+        ans = ANS.reliability(rob, trials, r["run_id"])
         return [db.add_message(sid, "assistant", "result", {"view": "robustness", "run_id": r["run_id"], "version_id": version["id"], "label": r["label"], "mode": (r["run"].get("summary") or {}).get("mode"),
-                                                            "text": " ".join(lines), "robustness": rob, "explanation_source": "deterministic"})]
+                                                            "text": ans["headline"] + " " + " ".join(lines), "robustness": rob, "answer": ans, "explanation_source": "deterministic"})]
 
     def _breakdown(self, sid: str, version: dict, by: str, focus: str | None) -> list[dict]:
         r, res, err = self._need_result(sid, version)
@@ -1575,8 +1585,16 @@ class Agent(ResearchV5):
             txt = (f"{len(rows)} option fill{'s' if len(rows) != 1 else ''} in {len(trades)} trade{'s' if len(trades) != 1 else ''}. Each price is " + " or ".join(what.get(k, str(k)) for k in kinds) + "."
                    + (f" Stored datasets read: {ds}." if ds else "") + (" Nothing here is modelled." if "model" not in kinds else " THEORETICAL prices are marked as such.")
                    + (" Trade prints carry no bid or ask: the spread at those moments is unknown." if "trade_print" in kinds else ""))
+        ans = None
+        if rows:
+            src_plain = {"trade_print": "real trades of that contract at that minute (no bid/ask)", "quote": "observed bid/ask quotes", "model": "THEORETICAL prices from a pricing model"}
+            ans = {"kind": "fills", "headline": f"Every price used: {len(rows)} option fill{'s' if len(rows) != 1 else ''} in {len(trades)} trade{'s' if len(trades) != 1 else ''}, priced from "
+                                                + " and ".join(src_plain.get(k, str(k)) for k in kinds) + ".",
+                   "happened": ["Open the list to see each trade's contract, the premium paid and received per share, and the result after fees; open any trade to see the prints themselves on the chart."],
+                   "limits": (["Trade prints carry no bid or ask: what you would actually have paid could have been worse."] if "trade_print" in kinds else []) + ([f"Stored datasets read: {ds}."] if ds else []),
+                   "numbers": [{"label": "Trades and their option prices", "value": f"{len(trades):,}", "explore": {"kind": "trades", "run_id": r["run_id"], "filter": "all"}}], "followups": []}
         return [db.add_message(sid, "assistant", "result", {"view": "fills", "run_id": r["run_id"], "version_id": version["id"], "label": r["label"], "text": txt, "explanation_source": "deterministic",
-                                                            "fills": {"rows": rows[:500], "count": len(rows), "trades": len(trades), "sources": kinds, "datasets": used, "pricing": pricing}})]
+                                                            "fills": {"rows": rows[:500], "count": len(rows), "trades": len(trades), "sources": kinds, "datasets": used, "pricing": pricing}, **({"answer": ans} if ans else {})})]
 
     def _check_for(self, cur: Draft | None) -> dict | None:
         if cur is None or cur.kind != "options":
@@ -1688,12 +1706,27 @@ class Agent(ResearchV5):
         if not text:
             raise ValueError("empty message")
         s, version, cur = self._state(sid)
+        prev_state = dict(s["state"])
         out = [db.add_message(sid, "user", "text", {"text": text})]
         r, interp, note = self.interpret(sid, text, cur, version, s["state"].get("last_field"))
         act = r["action"]
         needs_cur = act in ("sweep", "show_trades", "oos", "robustness", "breakdown", "timing", "skipped", "export", "derive", "fills", "untested", "cost")
         if act == "failed":
             out.append(self._say(sid, r["text"], "error", interpreter=interp))
+        elif act == "profile":
+            out += self._profile(sid, r["frame"], interp)
+        elif act == "show_trades":
+            out += self._explore(sid, version, r)
+        elif act == "undo":
+            out += self._undo(sid, interp)
+        elif act == "compare_versions":
+            out += self._compare_versions(sid, version, interp)
+        elif act == "explain_trade":
+            out += self._explain_trade(sid, version, r.get("which") or "worst")
+        elif act == "teach":
+            out += self._teach(sid, r["topic"], interp)
+        elif act == "noop":
+            out.append(self._say(sid, r["text"], interpreter=interp))
         elif act == "new":
             out += self._propose(sid, r["draft"], None, False, interp, note, run=not r.get("sweep"))
             if r.get("sweep"):
@@ -1770,16 +1803,6 @@ class Agent(ResearchV5):
             out += self._skipped(sid, version)
         elif act == "export":
             out += self._export(sid, version)
-        elif act == "show_trades":
-            done = self._done_runs(version)
-            if not done:
-                out.append(self._say(sid, "No finished run for the current version yet - run it first."))
-            else:
-                x = done[-1]
-                study = x["run"]["kind"] == "study"
-                noun = "sessions" if study else "trades"
-                which = {"loss": "missed " if study else "losing ", "win": "successful " if study else "winning ", "all": "qualifying " if study else ""}[r["filter"]]
-                out.append(db.add_message(sid, "assistant", "trades", {"text": f"Showing the {which}{noun} of \"{re.sub(r'^v[0-9]+ - ', '', x['label'])}\" in the workspace. Click a row to replay that day.", "run_id": x["run_id"], "mode": "study" if study else x.get("mode"), "filter": r["filter"]}))
         elif act == "answer":
             facts = self._results_facts(version)
             bad = EX.ungrounded_numbers(r["text"], [{"value": float(n), "unit": "ratio"} for n in re.findall(r"\d+(?:\.\d+)?", json.dumps(facts or {}) + (cur.model_dump_json() if cur else ""))], [])
@@ -1790,9 +1813,14 @@ class Agent(ResearchV5):
         elif act == "clarify":
             # the reader's own words about what it could not place (a correction that fits two things, a question with nothing
             # to count): composed from the request and the current reading, never a result
-            out.append(self._say(sid, r["text"], interpreter=interp))
+            out.append(self._say(sid, r["text"], interpreter=interp, **({"declined": True} if r.get("declined") else {}), **({"unread": r["unread"]} if r.get("unread") else {})))
         else:
             out.append(self._say(sid, HELP + (f"\n\n{note}" if note else "")))
+        self._v8_after(sid, r, out, prev_state, text)
+        first = next((m for m in out if m.get("role") == "assistant"), None)
+        if first is not None and isinstance(first.get("content"), dict):
+            first["content"]["route"] = act  # which path this message took (shown in the details view; read by the evaluation)
+            db.update_message(first["id"], first["content"])
         self._attach_intent(out, r, text, cur)
         return out
 
@@ -1902,7 +1930,19 @@ class Agent(ResearchV5):
         v = db.get_version(version_id)
         if v is None or v["session_id"] != sid:
             raise LookupError("version not found")
-        db.update_session(sid, state={**s["state"], "current": v["id"]})
+        st = s["state"]
+        upd = {"current": v["id"], "pending": None}
+        # the question frame goes back with the version, so that the next edit ("use 5 min") changes what is on screen
+        fr = (st.get("frames") or {}).get(str(v["id"]))
+        if fr is None and isinstance(v.get("draft"), dict):
+            d = v["draft"]
+            fr = {"kind": "strategy" if d.get("kind") == "options" else "study", "symbol": d.get("symbol"), "draft": d, "text": v.get("label") or ""}
+        if fr is not None:
+            log = list(st.get("frame_log") or [])
+            if st.get("frame"):
+                log.append({"frame": st["frame"], "version": st.get("current")})
+            upd.update(frame=fr, frame_log=log[-30:])
+        db.update_session(sid, state={**st, **upd})
         return [self._say(sid, f"Restored version {v['id']} ({v['label']}). New changes will branch from it; later versions are kept.", "note", version_id=v["id"])]
 
     def pin(self, sid: str, run_id: str, on: bool = True) -> dict:
@@ -1915,6 +1955,7 @@ class Agent(ResearchV5):
     def finalize(self, sid: str) -> list[dict]:
         """Turn finished runs into result messages (explanation, comparison, findings, or the
         options when coverage fell short). Idempotent."""
+        self._tl.sid = sid  # the answers written here read this notebook's versions (a request thread has not seen post())
         out = []
         llm, _ = self.llm()
         for m in db.list_messages(sid):
@@ -2017,6 +2058,9 @@ class Agent(ResearchV5):
                 content.update({"view": "failed", "text": "The run did not finish: " + "; ".join(f"{f['label']}: {f['error'] or f['status']}" for f in failed[:4])})
             if failed and content.get("view") != "failed":
                 content["text"] = (content.get("text") or "") + " Not completed: " + "; ".join(f"{f['label']} ({f['error'] or f['status']})" for f in failed[:4]) + "."
+            if c.get("frame"):
+                content["frame"] = c["frame"]
+            self._v8_answer(m["kind"], c, content, ([e for e in entries if e["run"]["id"] in main_ids] or entries) if content.get("view") not in ("compare", "sweep") else entries)
             out.append(db.add_message(sid, "assistant", "result", content))
             db.update_message(m["id"], {**c, "finalized": True, **({"state": "done"} if m["kind"] == "plan" else {})})
         return out

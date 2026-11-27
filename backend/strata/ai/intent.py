@@ -224,10 +224,52 @@ def stage(intent: dict, name: str, status: str = "done", detail: str = "", **dat
     return intent
 
 
+def from_frame(f: dict) -> dict:
+    """A V8 question frame (strata.ai.semantics) in the same schema."""
+    from strata.ai import semantics as SM
+    conds = []
+    for c in f.get("conditions") or []:
+        if c.get("key") == "weekday":
+            conds.append({"key": "weekday", "op": "is", "value": c.get("value"), "when": "open", "text": SM.describe_condition(c)})
+            continue
+        e = SM.cond_expr(c)
+        if e:
+            for x in _cond_from_expr(e[0], e[1]):
+                if c.get("values"):
+                    x["values"] = list(c["values"])
+                conds.append(x)
+        elif c.get("key") == "first_candle":
+            conds.append({"key": "first_candle", "op": None, "value": c.get("minutes"), "when": "open", "text": SM.describe_condition(c)})
+    o = f.get("outcome") or {}
+    outcome = None
+    end = str(f.get("end") or "close")
+    hz = end if end.startswith("sessions:") else "session" if end == "close" else f"time:{end}"
+    if o.get("key") == "touch":
+        outcome = {"direction": "up" if o["value"] > 0 else "down", "size": abs(float(o["value"])), "measure": "close" if o.get("at_end") else "touch", "from": f.get("start") or "open", "horizon": hz}
+    elif o.get("key") == "close_vs":
+        outcome = {"direction": o.get("direction"), "size": None, "measure": "close", "from": f.get("start") or "open", "horizon": hz if end.startswith("sessions:") else "sessions:1" if f.get("next_session") else hz, "reference": o.get("ref")}
+    elif o.get("key") == "touch_level":
+        outcome = {"direction": o.get("direction"), "size": None, "measure": "touch", "level": o.get("level"), "from": f.get("start") or "open", "horizon": "session"}
+    elif o.get("key") == "event":
+        ev = o.get("event") or {}
+        outcome = {"event": ev.get("key"), "direction": "up" if (ev.get("value") or 0) > 0 or ev.get("op") in (">", ">=") else "down", "size": abs(float(ev.get("value") or 0)) or None, "measure": "event"}
+    return {"kind": "study" if f.get("kind") in ("frequency", "movement", "agreement", "timing", "breakdown") else f.get("kind"), "reader": "frame", "question": f.get("kind"), "symbol": f.get("symbol"),
+            "conditions": conds, "outcome": outcome, "period": list(f.get("period") or [None, None]), "unsupported": list(f.get("unread") or []) if False else [],
+            "assumptions": [a.get("text") for a in f.get("assumptions") or []], **{k: f[k] for k in ("candle", "scope", "predictor", "by", "measure", "bucket") if f.get(k) is not None}}
+
+
 def from_route(r: dict, text: str, store, default_symbol: str = "SPY") -> dict:
     """The routing decision of one message as ONE intent, with the first two stages done: understood, and checked against the sentence."""
     from strata.ai.draft import compile_draft
     act = r.get("action")
+    if r.get("frame") and (r["frame"].get("kind") in ("frequency", "movement", "agreement", "timing", "breakdown")) and act in ("new", "investigate", "profile"):
+        intent = from_frame(r["frame"])
+        intent["text"] = text
+        stage(intent, "understand", "done", "a question about the underlying", reader="frame")
+        intent["checks"] = validate(intent, text)
+        bad = [c for c in intent["checks"] if not c["ok"]]
+        stage(intent, "validate", "done" if not bad else "attention", "; ".join(c["detail"] for c in bad)[:300] if bad else "every part of the sentence has a place in the interpretation")
+        return intent
     if act == "graph" and r.get("graph"):
         intent = from_graph(r["graph"])
     elif act in ("new", "modify", "derive") and r.get("draft") is not None:

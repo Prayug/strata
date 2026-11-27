@@ -1,0 +1,4 @@
+V8 sealed evaluation set, written 2026-11-27 before the V8 reader existed.
+sha256 be3d93236350fdff99e1367b81dfbcbdaf79c5b8290fe55afed71ce89a1a464c
+52 single requests, 8 conversations (35 turns), 10 answers checked against independent calculations.
+Not to be edited, read while developing, or used for tuning; scored once at the end.

@@ -27,7 +27,7 @@ let notebook = "";
 test("a broad question becomes a bounded plan, every configuration is shown, and a candidate is taken further", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
-  await page.goto("/");
+  await page.goto("/lab");
   await ask(page, "Investigate whether LNG tends to reverse following large down days.");
   await expect(page).toHaveURL(/\/lab\/[0-9a-f]+/);
   notebook = page.url();

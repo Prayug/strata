@@ -1,0 +1,768 @@
+{
+ "which": "probe",
+ "summary": {
+  "single": {
+   "n": 30,
+   "correct": 17,
+   "asked": 9,
+   "silent": 4
+  },
+  "conversation_turns": {
+   "n": 9,
+   "correct": 7,
+   "asked": 0,
+   "silent": 2,
+   "context_kept": "6 of 6"
+  }
+ },
+ "singles": [
+  {
+   "text": "how often does iwm close red after gapping up 1% or more",
+   "level": "beginner",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "IWM",
+    "conditions": [
+     "gap>=1"
+    ],
+    "outcome": "close<open",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 0.11
+  },
+  {
+   "text": "what % of days does spy trade above yesterday's high",
+   "level": "beginner",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "SPY",
+    "conditions": [],
+    "outcome": "touch:prev_high",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 0.01
+  },
+  {
+   "text": "chances qqq finishes green when it opens down half a percent or more",
+   "level": "beginner",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "QQQ",
+    "conditions": [
+     "gap<=-0.5"
+    ],
+    "outcome": "close>open",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 0.01
+  },
+  {
+   "text": "how many times has spy fallen 3% in one day since 2020",
+   "level": "beginner",
+   "category": "probe",
+   "status": "silent",
+   "why": [
+    "outcome: expected ['event:day_return<=-3', 'event:prev_return<=-3', 'event:move<=-3'], got 'touch:-3'"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "SPY",
+    "conditions": [],
+    "outcome": "touch:-3",
+    "start": "open",
+    "end": "close",
+    "period": [
+     "2020-01-01",
+     null
+    ]
+   },
+   "seconds": 0.25
+  },
+  {
+   "text": "on fridays how often does qqq close higher than it opened",
+   "level": "beginner",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "QQQ",
+    "conditions": [
+     "weekday=Fri"
+    ],
+    "outcome": "close>open",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 0.01
+  },
+  {
+   "text": "how often does spy fill the gap when it gaps down more than 0.5%",
+   "level": "intermediate",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "SPY",
+    "conditions": [
+     "gap<=-0.5"
+    ],
+    "outcome": "touch:prev_close",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 0.01
+  },
+  {
+   "text": "what does spy usually do in the first hour after a 1% gap down",
+   "level": "intermediate",
+   "category": "probe",
+   "status": "asked",
+   "why": [
+    "clarify: What should be counted? I found it opened 1% or more below the previous close, but nothing to measure after it."
+   ],
+   "got": {
+    "response": "clarify",
+    "text": "What should be counted? I found it opened 1% or more below the previous close, but nothing to measure after it."
+   },
+   "seconds": 0.0
+  },
+  {
+   "text": "is the opening 15 min candle predictive for QQQ",
+   "level": "beginner",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "agreement",
+    "symbol": "QQQ",
+    "candle": [
+     15
+    ],
+    "scope": "both",
+    "predictor": "first_candle",
+    "conditions": [],
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 0.03
+  },
+  {
+   "text": "does yesterday's direction predict today for IWM",
+   "level": "intermediate",
+   "category": "probe",
+   "status": "asked",
+   "why": [
+    "clarify: I understood part of this (On IWM: how often the session goes the same way as the previous session) but not \"yesterday's\", 'today', so nothing was run. Rephrase"
+   ],
+   "got": {
+    "response": "clarify",
+    "text": "I understood part of this (On IWM: how often the session goes the same way as the previous session) but not \"yesterday's\", 'today', so nothing was run. Rephrase that part, or leave it out if it does not matter."
+   },
+   "seconds": 0.22
+  },
+  {
+   "text": "what time of day does qqq usually put in its high",
+   "level": "beginner",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "timing",
+    "symbol": "QQQ",
+    "measure": "high_time",
+    "bucket": 30,
+    "conditions": [],
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 0.1
+  },
+  {
+   "text": "when is spy most volatile during the day",
+   "level": "beginner",
+   "category": "probe",
+   "status": "asked",
+   "why": [
+    "flag: I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after fall"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after falling 3% or more the previous trading day?\"\n- \"Wait until SPY drops 0.5% from the open, then buy calls when it recovers half of that decline\"\n- \"Find out whether SPY tends to reverse after large down days\" or \"Investigate mean reversion after unusually large SPY declines\"\n- then: \"compare that with 2% and 4% down days\", \"test ATM 0DTE calls on those days using option trade prices\", \"include commissions and conservative slippage\", \"show every skipped signal\", \"is this statistically significant?\", \"test out of sample\", \"export the report\"."
+   },
+   "seconds": 0.01
+  },
+  {
+   "text": "which month has been best for spy",
+   "level": "beginner",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "breakdown",
+    "symbol": "SPY",
+    "by": "month",
+    "measure": "open_to_close",
+    "conditions": [],
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 0.09
+  },
+  {
+   "text": "is monday a bad day for iwm",
+   "level": "beginner",
+   "category": "probe",
+   "status": "asked",
+   "why": [
+    "flag: I could read part of this question but not all of it. Not understood: \"'bad' in \"is monday a bad day for iwm\"\"; \"a bad day\". Running the rest would answer a dif"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "I could read part of this question but not all of it. Not understood: \"'bad' in \"is monday a bad day for iwm\"\"; \"a bad day\". Running the rest would answer a different question, so nothing has been run. You can rephrase, or run it without those parts."
+   },
+   "seconds": 0.01
+  },
+  {
+   "text": "buy spy puts at 10am et if spy is down 0.5% from the open, sell at 3pm et",
+   "level": "intermediate",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "SPY",
+    "structure": "long_put",
+    "dte": null,
+    "strike": null,
+    "quantity": 1,
+    "entry": "10:00",
+    "exit": "15:00",
+    "conditions": [
+     "from_open<=-0.5"
+    ],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 3.72
+  },
+  {
+   "text": "backtest buying 7dte qqq calls at the open when vix closed above 25 the day before",
+   "level": "experienced",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "QQQ",
+    "structure": "long_call",
+    "dte": 7,
+    "strike": null,
+    "quantity": 1,
+    "entry": "open",
+    "exit": null,
+    "conditions": [
+     "vix>25"
+    ],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 3.39
+  },
+  {
+   "text": "how often does spy rise after an fomc announcement",
+   "level": "intermediate",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "flag",
+    "text": "\"fomc\" cannot be tested: no calendar of real economic or earnings events is stored (the event dates in the sandbox are simulated)."
+   },
+   "seconds": 0.0
+  },
+  {
+   "text": "will spy go up tomorrow",
+   "level": "beginner",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "flag",
+    "text": "Strata does not forecast. It can tell you how often something like this happened before, on the stored history, for example \"How often does SPY close above its open after a down day?\""
+   },
+   "seconds": 0.0
+  },
+  {
+   "text": "does spy rally when the dollar is weak",
+   "level": "intermediate",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "flag",
+    "text": "I could read part of this question but not all of it. Not understood: \"'dollar' in \"the dollar is weak\"\". Running the rest would answer a different question, so nothing has been run. You can rephrase, or run it without those parts."
+   },
+   "seconds": 0.02
+  },
+  {
+   "text": "how does TSLA trade after earnings",
+   "level": "beginner",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "flag",
+    "text": "\"earnings\" cannot be tested: no calendar of real economic or earnings events is stored (the event dates in the sandbox are simulated)."
+   },
+   "seconds": 0.0
+  },
+  {
+   "text": "hw often does spy dump 2% intrday",
+   "level": "beginner",
+   "category": "probe",
+   "status": "asked",
+   "why": [
+    "flag: I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after fall"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "I couldn't turn that into a strategy, a market question or a change to the current one. Try, for example:\n- \"How often does SPY rise 1% from the open after falling 3% or more the previous trading day?\"\n- \"Wait until SPY drops 0.5% from the open, then buy calls when it recovers half of that decline\"\n- \"Find out whether SPY tends to reverse after large down days\" or \"Investigate mean reversion after unusually large SPY declines\"\n- then: \"compare that with 2% and 4% down days\", \"test ATM 0DTE calls on those days using option trade prices\", \"include commissions and conservative slippage\", \"show every skipped signal\", \"is this statistically significant?\", \"test out of sample\", \"export the report\"."
+   },
+   "seconds": 0.01
+  },
+  {
+   "text": "qqq green after a red open? how often",
+   "level": "beginner",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "flag",
+    "text": "I could read part of this question but not all of it. Not understood: \"a red open\". Running the rest would answer a different question, so nothing has been run. You can rephrase, or run it without those parts."
+   },
+   "seconds": 0.22
+  },
+  {
+   "text": "how often does spy hit +0.5% before 7am pacific",
+   "level": "intermediate",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "SPY",
+    "conditions": [],
+    "outcome": "touch:+0.5",
+    "start": "open",
+    "end": "10:00",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 0.01
+  },
+  {
+   "text": "if spy is up at 10:30 CT does it usually close up",
+   "level": "intermediate",
+   "category": "probe",
+   "status": "silent",
+   "why": [
+    "conditions: expected ['from_open>0'], got []"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "SPY",
+    "conditions": [],
+    "outcome": "close>prev_close",
+    "start": "11:30",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 0.01
+  },
+  {
+   "text": "after 3 red days in a row how often is the next day green for spy",
+   "level": "intermediate",
+   "category": "probe",
+   "status": "asked",
+   "why": [
+    "flag: I could read part of this question but not all of it. Not understood: \"'next' in \"3 red days in a row how often is the next day green for spy\"\"; \"red day\". Runn"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "I could read part of this question but not all of it. Not understood: \"'next' in \"3 red days in a row how often is the next day green for spy\"\"; \"red day\". Running the rest would answer a different question, so nothing has been run. You can rephrase, or run it without those parts."
+   },
+   "seconds": 0.02
+  },
+  {
+   "text": "how often does qqq drop 1% from the open and still close green",
+   "level": "intermediate",
+   "category": "probe",
+   "status": "silent",
+   "why": [
+    "conditions: expected ['from_open<=-1'], got ['prev_return<=-1']"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "frequency",
+    "symbol": "QQQ",
+    "conditions": [
+     "prev_return<=-1"
+    ],
+    "outcome": "close>open",
+    "start": "open",
+    "end": "close",
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 0.01
+  },
+  {
+   "text": "what usually happens to iwm after it falls 2.5% in a day",
+   "level": "beginner",
+   "category": "probe",
+   "status": "asked",
+   "why": [
+    "flag: Research graph: 7 steps, 3 analyses. Every condition is checked to be known before the outcome starts, and every analysis is reported, including any that find n"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "Research graph: 7 steps, 3 analyses. Every condition is checked to be known before the outcome starts, and every analysis is reported, including any that find nothing. 0 configurations have been tested in this notebook so far."
+   },
+   "seconds": 0.01
+  },
+  {
+   "text": "how often is spy higher a week after a 2% down day",
+   "level": "intermediate",
+   "category": "probe",
+   "status": "asked",
+   "why": [
+    "flag: Research graph: 7 steps, 3 analyses. Every condition is checked to be known before the outcome starts, and every analysis is reported, including any that find n"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "Research graph: 7 steps, 3 analyses. Every condition is checked to be known before the outcome starts, and every analysis is reported, including any that find nothing. 0 configurations have been tested in this notebook so far."
+   },
+   "seconds": 0.02
+  },
+  {
+   "text": "does qqq tend to keep falling after a 2% drop",
+   "level": "intermediate",
+   "category": "probe",
+   "status": "asked",
+   "why": [
+    "flag: Research plan: 36 explicitly listed configurations will be evaluated against their baselines - no more, and all of them will be reported. Selection uses a train"
+   ],
+   "got": {
+    "response": "flag",
+    "text": "Research plan: 36 explicitly listed configurations will be evaluated against their baselines - no more, and all of them will be reported. Selection uses a training period, a validation period can only veto, and a final test period is scored once for whatever qualifies. 0 configurations have been tested in this session so far; significance is corrected for all of them plus these."
+   },
+   "seconds": 0.51
+  },
+  {
+   "text": "how often does spy close within 0.2% of its open",
+   "level": "experienced",
+   "category": "probe",
+   "status": "correct",
+   "why": [],
+   "got": {
+    "response": "clarify",
+    "text": "I could not find anything to count in that question. A frequency needs an event (\"rises 1% from the open\", \"closes above its open\") and usually a condition (\"after a 3% down day\", \"when the first 15 minutes were up\"), and I could read neither, so nothing was run. For example: \"How often does SPY close above its open after a 2% down day?\""
+   },
+   "seconds": 0.01
+  },
+  {
+   "text": "sell spy 0dte puts at noon et every day and buy them back at 3:50pm et",
+   "level": "experienced",
+   "category": "probe",
+   "status": "silent",
+   "why": [
+    "exit: expected '15:50', got None"
+   ],
+   "got": {
+    "response": "ran",
+    "type": "strategy",
+    "symbol": "SPY",
+    "structure": "short_put",
+    "dte": 0,
+    "strike": null,
+    "quantity": 1,
+    "entry": "12:00",
+    "exit": null,
+    "conditions": [],
+    "premium_target": null,
+    "premium_stop": null,
+    "underlying_target": null,
+    "underlying_stop": null,
+    "hold": null,
+    "period": [
+     null,
+     null
+    ]
+   },
+   "seconds": 7.18
+  }
+ ],
+ "conversations": [
+  {
+   "id": "probe-gap",
+   "turns": [
+    {
+     "text": "how often does qqq gap up more than 1%?",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "QQQ",
+      "outcome": "event:gap>=1",
+      "conditions": [],
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": null
+    },
+    {
+     "text": "what about iwm",
+     "status": "silent",
+     "why": [
+      "outcome: expected 'event:gap>=1', got 'close_vs_prev_close:1'"
+     ],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "IWM",
+      "conditions": [],
+      "outcome": "close_vs_prev_close:1",
+      "start": "open",
+      "end": "09:31",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": true
+    },
+    {
+     "text": "only since 2022",
+     "status": "silent",
+     "why": [
+      "outcome: expected 'event:gap>=1', got 'close_vs_prev_close:1'"
+     ],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "IWM",
+      "conditions": [],
+      "outcome": "close_vs_prev_close:1",
+      "start": "open",
+      "end": "09:31",
+      "period": [
+       "2022-01-01",
+       null
+      ]
+     },
+     "context_kept": true
+    },
+    {
+     "text": "show me those days",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "explore"
+     },
+     "context_kept": null
+    }
+   ]
+  },
+  {
+   "id": "probe-follow",
+   "turns": [
+    {
+     "text": "How often does SPY close above its open after a 1% gap down?",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "SPY",
+      "conditions": [
+       "gap<=-1"
+      ],
+      "outcome": "close>open",
+      "start": "open",
+      "end": "close",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": null
+    },
+    {
+     "text": "make it 2%",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "SPY",
+      "conditions": [
+       "gap<=-2"
+      ],
+      "outcome": "close>open",
+      "start": "open",
+      "end": "close",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": true
+    },
+    {
+     "text": "and only on mondays",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "SPY",
+      "conditions": [
+       "weekday=Mon",
+       "gap<=-2"
+      ],
+      "outcome": "close>open",
+      "start": "open",
+      "end": "close",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": true
+    },
+    {
+     "text": "undo",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "SPY",
+      "conditions": [
+       "gap<=-2"
+      ],
+      "outcome": "close>open",
+      "start": "open",
+      "end": "close",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": true
+    },
+    {
+     "text": "try qqq",
+     "status": "correct",
+     "why": [],
+     "got": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "QQQ",
+      "conditions": [
+       "gap<=-2"
+      ],
+      "outcome": "close>open",
+      "start": "open",
+      "end": "close",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "context_kept": true
+    }
+   ]
+  }
+ ],
+ "answers": null,
+ "sealed_hash": "be3d93236350fdff99e1367b81dfbcbdaf79c5b8290fe55afed71ce89a1a464c"
+}

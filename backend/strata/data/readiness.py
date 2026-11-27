@@ -232,8 +232,26 @@ def precheck(config: dict, store: MarketStore | None = None, max_rows: int = 300
                 + (f" On {counts['no_contract']:,} no contract with the required expiration was listed, so they cannot be tested with any data." if counts["no_contract"] else "")
                 + plural("missing", "has no stored option prices", "have no stored option prices")
                 + (f" {len(fetch):,} of the unpriced sessions can be downloaded from {fetch[0]['downloadable']['label']} at no cost." if fetch else "")
-                + " A run confirms each one: these are sessions the stored data supports, not trades.")
+                + " A run confirms each one: these are sessions the stored data supports, not trades."
+                + (_option_span_text(sym) if not priced else ""))
     return {"symbol": sym, "signal_sessions": n, "priced": priced, "potential": potential, "fetchable": len(fetch), "priced_pct": round(priced / n * 100, 1) if n else None, "counts": counts, "first": need.get("first"), "last": need.get("last"),
             "intraday": intraday_needed, "contract_existence": need.get("contract_existence"), "text": text, "alternatives": alts, "sessions": rows[-max_rows:], "sessions_listed": min(n, max_rows),
             "untested": [r["date"] for r in rows if r["status"] not in PRICED][-max_rows:], "budget": budget, "executable": potential > 0, "blocking": potential == 0 and n > 0 and not fetch,
             "settings": rd.get("settings") or {}, "not_evaluable": need.get("not_evaluable") or {}, "why": WHY, **({"readiness_error": rd["error"]} if rd.get("error") else {})}
+
+
+def _option_span_text(sym: str) -> str:
+    """When none of the signals can be priced: the span in which option profits CAN be tested for this symbol (V8)."""
+    try:
+        from datetime import date as _d
+
+        from strata.data.catalog import catalog
+        from strata.data.store import MarketStore
+        c = next((x for x in catalog(MarketStore()) if x["symbol"] == sym), None)
+        tr = (c or {}).get("option_trades")
+        if not tr:
+            return ""
+        f, l_ = _d.fromisoformat(tr["first"][:10]), _d.fromisoformat(tr["last"][:10])
+        return f" Real historical option trades for {sym} are stored from {f:%B} {f.year} to {l_:%B} {l_.year}: option profits can be tested only in that span."
+    except Exception:  # noqa: BLE001
+        return ""

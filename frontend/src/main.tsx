@@ -1,4 +1,5 @@
 import "./index.css";
+import "./pages/v8/v8.css";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
@@ -10,6 +11,8 @@ import { TooltipProvider } from "@/components/ui";
 import { queryClient } from "@/lib/api";
 
 const Lab = lazy(() => import("@/pages/lab/Lab"));
+const Home = lazy(() => import("@/pages/v8/Home"));
+const Notebook = lazy(() => import("@/pages/v8/NotebookPage"));
 const Explorer = lazy(() => import("@/pages/Explorer"));
 const Settings = lazy(() => import("@/pages/Settings"));
 const Builder = lazy(() => import("@/pages/builder/Builder"));
@@ -35,7 +38,9 @@ const router = createBrowserRouter([
     path: "/",
     element: <Shell />,
     children: [
-      { index: true, element: S(<Lab />) },
+      { index: true, element: S(<Home />) },
+      { path: "ask/:sid", element: S(<Notebook />) },
+      { path: "lab", element: S(<Lab />) },
       { path: "lab/:sid", element: S(<Lab />) },
       { path: "explore", element: S(<Explorer />) },
       { path: "settings", element: S(<Settings />) },

@@ -11,6 +11,8 @@ import json
 
 from strata.api import db
 from strata.config import ENGINE_VERSION
+
+STUDY_OUTPUT = "paths-1"
 from strata.data.store import MarketStore
 from strata.engine.models import BacktestConfig
 
@@ -51,7 +53,9 @@ def launch_study(jobs, cfg, name: str = "", force: bool = False) -> dict:
     syms |= set(extra_symbols(cfg.condition))
     vers = {k: s.dataset_version(k) for k in sorted(syms)}
     body = json.dumps(cfg.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
-    key = hashlib.sha256(("study" + body + json.dumps(vers, sort_keys=True) + s.events_version() + ENGINE_VERSION).encode()).hexdigest()[:24]
+    # STUDY_OUTPUT changes when a study's stored result gains fields (V8: the price paths behind movement answers), so that a
+    # result computed before is not reused without them; the measured outcomes themselves are unchanged
+    key = hashlib.sha256(("study" + body + json.dumps(vers, sort_keys=True) + s.events_version() + ENGINE_VERSION + STUDY_OUTPUT).encode()).hexdigest()[:24]
     if not force:
         hit = db.find_cached(key)
         if hit:

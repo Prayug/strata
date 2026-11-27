@@ -19,7 +19,7 @@ const idle = async (page: Page) => {
 test("a market question is answered with a report whose numbers open their observations", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
-  await page.goto("/");
+  await page.goto("/lab");
   await expect(page.getByRole("heading", { name: "What do you want to find out about the market?" })).toBeVisible();
   await ask(page, "How often does TST rise 1% after a 3% down day?");
   await expect(page).toHaveURL(/\/lab\/[0-9a-f]+/);
@@ -58,7 +58,7 @@ test("a market question is answered with a report whose numbers open their obser
 });
 
 test("follow-ups reuse the question: sessions, option trade prices, skipped signals, export", async ({ page, request }) => {
-  await page.goto("/");
+  await page.goto("/lab");
   await ask(page, "How often does TST rise 1% after a 3% down day?");
   await expect(page.getByTestId("result-single")).toBeVisible();
   await ask(page, "Show every qualifying historical session.");
@@ -97,7 +97,7 @@ test("follow-ups reuse the question: sessions, option trade prices, skipped sign
 });
 
 test("review mode asks the one ambiguous detail and waits for confirmation", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/lab");
   await page.getByRole("button", { name: "Review first" }).click();
   await ask(page, "Buy TST 0DTE calls at the open with a 1% target after a 3% down day");
   const q = page.getByTestId("question");
@@ -115,7 +115,7 @@ test("review mode asks the one ambiguous detail and waits for confirmation", asy
 });
 
 test("a part that cannot be represented is named, and nothing is put in its place", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/lab");
   await ask(page, "Buy TST 0DTE calls at 10:00 ET after a 3% down day when dealers are short gamma and the realized skew is inverted");
   const conv = page.getByTestId("conversation");
   await expect(conv).toContainText("Part of the request could not be represented");
@@ -126,7 +126,7 @@ test("a part that cannot be represented is named, and nothing is put in its plac
 });
 
 test("pinned results are compared with their differences disclosed", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/lab");
   await ask(page, "How often does TST rise 1% after a 3% down day?");
   await expect(page.getByTestId("result-single")).toBeVisible();
   await page.getByTestId("result-single").getByRole("button", { name: /Pin to compare/ }).click();

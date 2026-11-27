@@ -1,0 +1,253 @@
+{
+ "which": "sealed answers (re-run after harness fix)",
+ "answers": [
+  {
+   "id": "a1",
+   "ok": false,
+   "checks": [
+    [
+     "pct",
+     false,
+     "reference 55.2632"
+    ],
+    [
+     "k",
+     true,
+     "reference 189.0000"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reply": "Here is how I read that question.  On SPY, 190 of the 342 sessions that met the condition (1993-01-29 to 2026-11-25) saw the outcome - the horizon ended above the open - a historical frequency of 55.6% (95% confidence interval 50.3% to 60.7%). Across all 8,513 evaluated sessions the same outcome occurred 52.3% of the time, so the condition raises it by 3.2 percentage points; the difference is not statistically distinguishable from the other sessions (p 0.223). After the starting point the average best move was +1.42% and the average worst move -1.37%; the horizon ended +0.24% on average and higher on 55.6% of sessions. These are underlying price statistics, not option returns, and past frequency is not a forecast. SPY closes above its open on 190 of 342 days when the previous session fell 2% or more (55.6%). That is about the same as on any day: 52.3% of all 8,513 days. Allowing for how few days there are, the true rate is likely between 50.3% and 60.7%.",
+   "reference": {
+    "n": 342,
+    "k": 189,
+    "pct": 55.26315789473685
+   },
+   "seconds": 1.2
+  },
+  {
+   "id": "a2",
+   "ok": true,
+   "checks": [
+    [
+     "pct",
+     true,
+     "reference 52.5872"
+    ],
+    [
+     "must:baseline/unrelated",
+     true,
+     ""
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reply": "Research plan: 2 related configurations will be run and compared with their baselines. On every QQQ session with intraday bars: the direction of the first 15 minutes (close against the open) is compared with the direction of the rest of the session (the candle's close to the session's close). Up and down candles are counted separately, each against all sessions.  The direction of QQQ's first 15 minutes and the direction of the rest of the session: from the end of the candle to the close it matched on 52.6%, against 50.1% for unrelated directions: that differs from chance in both directions after adjusting for the 2 comparisons. First 15 minutes: matched the rest of the session (09:45 to the close) on 52.6% of 2,728 sessions (95% interval 50.7% to 54.4%; 50.1% if unrelated). The first 15-minute candle matched the direction of the rest of the session 52.6% of the time, more often than two unrelated directions would. If the two directions were unrelated they would match about 50.1% of the time; the measured rate's likely range is 50.7% to 54.4%. Simply guessing \"up\" every day would have matched the rest of the session 54.6% of the time, which is better than following the candle.",
+   "reference": {
+    "n": 2725,
+    "agree": 1433,
+    "pct": 52.587155963302756,
+    "rest_up_pct": 54.60550458715596
+   },
+   "seconds": 1.6
+  },
+  {
+   "id": "a3",
+   "ok": false,
+   "checks": [
+    [
+     "weekday",
+     false,
+     "reference Wednesday"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reply": "I understood part of this (On IWM: the average move from open to close, by weekday) but not 'highest', 'open', 'close', so nothing was run. Rephrase that part, or leave it out if it does not matter. ",
+   "reference": {
+    "weekday": "Wednesday",
+    "mean": 0.004333924936548739,
+    "n": 1368
+   },
+   "seconds": 0.2
+  },
+  {
+   "id": "a4",
+   "ok": true,
+   "checks": [
+    [
+     "bucket",
+     true,
+     "reference 09:30"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reply": "SPY made its high of the day between 09:30 and 10:00 on 24.4% of sessions, more than any other half hour; the next most common was 15:30\u201316:00 (23.3%). SPY made its high of the day between 09:30 and 10:00 on 24.4% of sessions, more than any other half hour; the next most common was 15:30\u201316:00 (23.3%). If the high could fall anywhere, each part of the day would hold about 7.7%. Counted on 2,741 sessions from Jan 2016 to Nov 2026 (New York time).",
+   "reference": {
+    "bucket": "09:30",
+    "share": 24.407150674936155,
+    "sessions": 2741
+   },
+   "seconds": 0.2
+  },
+  {
+   "id": "a5",
+   "ok": false,
+   "checks": [
+    [
+     "must:luck/chance",
+     false,
+     ""
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reply": "Here is how I read that strategy. The entry rule fires on 1,079 sessions (1993-02-17 to 2026-11-23). 75 pass every check on stored option observations (75 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 7.0% of them. 1 is held only in part by the provider. On 45 no contract with the required expiration was listed, so they cannot be tested with any data. 958 have no stored option prices. A run confirms each one: these are sessions the stored data supports, not trades. Not specified, so I assumed defaults you can edit: stop loss, exit rule.  The entry rule fired on 1,079 sessions, but only 75 of them have usable observed option prices; the remaining 1,004 could not be tested and are not part of these figures. Historical options backtest on option trade prices, 2024-02-01 to 2026-11-23: 75 trades made a net profit of $5,354.50 after $97.50 in commissions (5.4% on starting capital). 44.0% of trades were winners; the average winner was $427.73 against an average loser of -$208.59, for $71.39 per trade and a profit factor of 1.61. The largest winner was $4,406.70 and the largest loser -$473.30; the deepest drawdown was -2.7% of equity. The per-trade profit has a t-statistic of 1.05, which is below the conventional threshold of two, so the edge is not statistically distinguishable from zero in this sample. Over 75 trades from Feb 2024 to Nov 2026, this made +$5,354.50 after $97.50 in fees: +$71.39 per trade on average. That av",
+   "reference": null,
+   "seconds": 10.4
+  },
+  {
+   "id": "a6",
+   "ok": false,
+   "checks": [
+    [
+     "must:2024/January 18",
+     false,
+     ""
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ],
+    [
+     "no trades in 2021",
+     true,
+     "0 trades"
+    ]
+   ],
+   "reply": "Here is how I read that strategy. The entry rule fires on 47 sessions (2021-01-04 to 2021-12-27). None passes every check on stored option observations: 0.0% of them. 47 have no stored option prices. A run confirms each one: these are sessions the stored data supports, not trades. Not specified, so I assumed defaults you can edit: strike, stop loss, exit rule.  None of the 47 qualifying sessions has usable bid/ask quotes: the entry is not at the close, but only end-of-day quotes are stored (one snapshot at 16:00 ET) (47 signals). ",
+   "reference": null,
+   "seconds": 1.0
+  },
+  {
+   "id": "a7",
+   "ok": true,
+   "checks": [
+    [
+     "pct",
+     true,
+     "reference 7.2629"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reply": "IWM opened 1% or more above the previous close on 484 of 6,664 sessions (7.3%), from May 30, 2000 to November 25, 2026. IWM opened 1% or more above the previous close on 484 of 6,664 sessions (7.3%), from May 30, 2000 to November 25, 2026. About once every 14 sessions.",
+   "reference": {
+    "n": 6664,
+    "k": 484,
+    "pct": 7.2629051620648255
+   },
+   "seconds": 0.0
+  },
+  {
+   "id": "a8",
+   "ok": false,
+   "checks": [
+    [
+     "mean",
+     false,
+     "reference 0.1066"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reply": "Research graph: 6 steps, 2 analyses. Every condition is checked to be known before the outcome starts, and every analysis is reported, including any that find nothing. 1 configuration has been tested in this notebook so far.  SPY, sessions where SPY fell 1% or more overnight (open against the previous close): the outcome (the session closes above its entry price) occurred on 199 of 384 (51.8%, 95% interval 46.7% to 56.9%), against 52.4% of the other 8,130 evaluated sessions. That difference is within what chance produces (p 0.80, weeks resampled). ",
+   "reference": {
+    "n": 384,
+    "mean": 0.10661293407353262
+   },
+   "seconds": 0.4
+  },
+  {
+   "id": "a9",
+   "ok": false,
+   "checks": [
+    [
+     "pct",
+     false,
+     "reference 23.4313"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reply": "Here is how I read that question.  On QQQ, 297 of the 1,257 sessions that met the condition (1999-03-10 to 2026-11-25) saw the outcome - the horizon ended above the previous close - a historical frequency of 23.6% (95% confidence interval 21.4% to 26.1%). Across all 6,972 evaluated sessions the same outcome occurred 54.2% of the time, so the condition lowers it by 30.6 percentage points; the difference is statistically distinguishable from the other sessions (p < 0.001). After the starting point the average best move was +1.40% and the average worst move -1.26%; the horizon ended +0.03% on average and higher on 50.3% of sessions. These are underlying price statistics, not option returns, and past frequency is not a forecast. QQQ closes above the previous session's close on 297 of 1,257 days when it opened 0.5% or more below the previous close (23.6%). That is less often than on a typical day, when it happened 54.2% of the time (6,972 days). Allowing for how few days there are, the true rate is likely between 21.4% and 26.1%.",
+   "reference": {
+    "n": 1259,
+    "k": 295,
+    "pct": 23.431294678316124
+   },
+   "seconds": 0.7
+  },
+  {
+   "id": "a10",
+   "ok": true,
+   "checks": [
+    [
+     "pnl",
+     true,
+     "reference -607.3000"
+    ],
+    [
+     "date",
+     true,
+     "reference 2026-11-20"
+    ],
+    [
+     "forbidden statements",
+     true,
+     ""
+    ]
+   ],
+   "reply": "Here is how I read that strategy. The entry rule fires on 1,320 sessions (1999-03-15 to 2026-11-25). 121 pass every check on stored option observations (121 on trade prints, with the contract stored, a print inside the entry window and the exit window covered): 9.2% of them. 1,199 have no stored option prices. A run confirms each one: these are sessions the stored data supports, not trades. Not specified, so I assumed defaults you can edit: stop loss.  The entry rule fired on 1,320 sessions, but only 121 of them have usable observed option prices; the remaining 1,199 could not be tested and are not part of these figures. Historical options backtest on option trade prices, 2024-02-01 to 2026-11-25: 121 trades made a net profit of $2,325.70 after $157.30 in commissions (2.3% on starting capital). 38.0% of trades were winners; the average winner was $409.96 against an average loser of -$220.43, for $19.22 per trade and a profit factor of 1.14. The largest winner was $4,275.70 and the largest loser -$607.30; the deepest drawdown was -4.7% of equity. The per-trade profit has a t-statistic of 0.41, which is below the conventional threshold of two, so the edge is not statistically distinguishable from zero in this sample. Over 121 trades from Feb 2024 to Nov 2026, this made +$2,325.70 after $157.30 in fees: +$19.22 per trade on average. That average is not reliably different from zero. Given how much single trades vary, the average per trade is likely between -$62.84 and +$122.17: a",
+   "reference": {
+    "pnl": -607.3,
+    "date": "2026-11-20"
+   },
+   "seconds": 11.5
+  }
+ ],
+ "summary": {
+  "n": 10,
+  "ok": 4
+ },
+ "seconds": 27.2,
+ "scored_at": "2026-11-27T02:09:01Z",
+ "sealed_hash": "be3d93236350fdff99e1367b81dfbcbdaf79c5b8290fe55afed71ce89a1a464c"
+}

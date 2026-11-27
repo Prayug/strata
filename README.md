@@ -14,6 +14,7 @@ limits stated next to every number.
 
 ## Contents
 - [Quick start](#quick-start)
+- [What V8 adds](#what-v8-adds)
 - [What V7 adds](#what-v7-adds)
 - [What V6 adds](#what-v6-adds)
 - [What V5 adds](#what-v5-adds)
@@ -78,6 +79,29 @@ main path through each; *Advanced* adds the specialist tools. The calculations a
    option contract's own prints underneath; press `?` for the keyboard shortcuts.
 5. **Market Explorer**, **Strategy Builder**, **Backtests** and **Data** remain for working
    by hand. Everything the lab runs appears there too.
+
+## What V8 adds
+V8 changes how Strata is used, not what it computes. The first screen is a question box; the answer comes first, in
+plain words, with one picture chosen by the kind of question, and every number opens the days or trades behind it. The
+full record is [docs/V8_REPORT.md](docs/V8_REPORT.md).
+
+- **A question reader that accounts for every clause** (`strata/ai/semantics.py`): slang, typos and number words are
+  normalised; instruments, conditions, outcomes, time anchors and clock times are tagged as composable pieces; a word
+  that no piece claims stops the run with "I understood part of this ... but not ...". The older readers still read
+  what it cannot, and what they drop is listed before anything runs.
+- **One investigation per conversation** (`converse.py`, `agent_v8.py`): "use 15 min", "nah do qqq", "only when
+  yesterday was red", "what if I bought calls instead?", "compare both", "undo". Each change is said in one line.
+- **Answers first** (`answer.py`): headline, what happened, why it matters, what it cannot tell you, a few numbers,
+  then Explore (the observations, with filters, selection and replay) and Technical details (intervals, tests, the full
+  report). Statistics are worded correctly (a p-value is never "the chance it works"); baselines are measured, not 50%.
+- **Strategies as editable sentences**, with changes said before they run; **explanations from the run's own trades**
+  ("explain this like I'm new to options", "why did the option lose value if SPY went up?"), with illustrations marked
+  as such; **data limits in plain words** (`/api/v8/scope/{symbol}`).
+
+**Measured on sentences nobody tuned on** (sealed set, scored once): 37 of 52 questions read correctly, 4 asked back,
+11 read wrongly without saying so; conversation context kept 16 of 16. A set written after the fixes that followed:
+19 of 28 correct, 7 asked, 2 silent. No independent usability tester was available. Interface: `/` and `/ask/:id`;
+the V7 workspace is at `/lab`.
 
 ## What V7 adds
 V7 adds no architecture. V6 ended with real history on disk, now 89.1 million one-minute option trade bars for SPY,
