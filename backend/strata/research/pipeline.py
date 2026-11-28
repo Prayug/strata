@@ -41,6 +41,7 @@ STAGES = [("interpret", "Interpreting strategy"), ("coverage", "Checking histori
 MODE_LABEL = {"study": "Historical market study", "historical": "Historical options backtest (bid/ask quotes)", "trades": "Historical options backtest (trade prices)",
               "modeled": "Modeled options backtest (theoretical premiums)"}
 SHORTFALL_TOLERANCE = 0.02
+OPTION_SHORTFALL_TOLERANCE = 0.10  # the share of qualifying sessions that may be without usable option prices before a dated run asks
 
 
 MAX_EXPANSIONS = 3  # adaptive contract discovery: how many times a strike range may be widened for one run
@@ -311,7 +312,10 @@ class Pipeline:
                 why = "; ".join(f"{x['reason']} ({x['signals']} signal{'s' if x['signals'] != 1 else ''})" for x in opt_cov["issues"][:3]) or "no observed option prices for any qualifying session"
                 raise NeedsDecision(f"None of the {k:,} qualifying sessions has usable {opt_cov['observation']}: {why}.",
                                     self._choices(spec, record["unavailable"], pending_large, None, kind, mode, tried=mode), coverage=record, mode=mode)
-            if stated and k_ok < k and not approvals.get("reduced_window"):
+            # V10: a few qualifying sessions without a usable print do not stop the run (the result says how many were left out
+            # and why); it stops to ask only when a material share of the period that was asked for cannot be priced. Until
+            # V10 a single such session in a stated period stopped it, so nearly every dated backtest came back as a question.
+            if stated and (k - k_ok) > max(2, OPTION_SHORTFALL_TOLERANCE * k) and not approvals.get("reduced_window"):
                 why = "; ".join(f"{x['reason']} ({x['signals']})" for x in opt_cov["issues"][:3])
                 raise NeedsDecision(f"Only {k_ok:,} of the {k:,} qualifying sessions in the period you asked for have usable {opt_cov['observation']}. {why}.",
                                     self._choices(spec, record["unavailable"], pending_large, {"sessions": k_ok, "what": "qualifying sessions"}, kind, mode, tried=mode), coverage=record, mode=mode)

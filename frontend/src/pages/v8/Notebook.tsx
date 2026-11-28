@@ -7,6 +7,7 @@ import { api } from "@/lib/api";
 import type { AiMessage } from "@/lib/lab";
 import { AnswerView } from "./Answer";
 import { ExploreSheet } from "./Explore";
+import { ReadingLine } from "./Reading";
 import { StrategySentence, describeChange } from "./StrategySentence";
 import { said, turns, useNotebook } from "./data";
 
@@ -44,14 +45,29 @@ function Needs({ m, sid, nb }: { m: AiMessage; sid: string; nb: ReturnType<typeo
           </div>
         </div>
       )}
-      {!qs.length && !unsupported.length && c.state === "awaiting_confirmation" && (
-        <div className="flex flex-wrap items-center gap-2"><span className="small soft">{c.text}</span><button className="act primary" onClick={() => nb.act.mutate(() => api.post(`/api/ai/sessions/${sid}/confirm`, { version_id: c.version_id }))}>Run it</button></div>
-      )}
+      {!qs.length && !unsupported.length && c.state === "awaiting_confirmation" && (() => {
+        const review: string[] = c.draft?.review || [];
+        const several = review.filter((x) => /several parts/.test(x));
+        const wrong = review.filter((x) => !/several parts/.test(x));
+        const why = review.length ? [] : [String(c.text || "").replace(/^Here is how I read that (strategy|question)\.\s*/, "").replace(/^Updated the (strategy|study)\.\s*/, "")].filter(Boolean);
+        return (
+          <div className="aside-rule" data-testid="confirm-strategy">
+            <div className="kicker mb-2">{wrong.length ? "Check this reading: something in it may not be what you meant" : "Check this reading before it runs"}</div>
+            {wrong.map((x, i) => <p key={i} className="small mb-1.5" style={{ color: "var(--down)" }} data-testid="confirm-reason">{x}</p>)}
+            {several.length > 0 && !wrong.length && <p className="small soft mb-1.5">This trade has several parts. The sentence above is how each one was read.</p>}
+            {why.map((x, i) => <p key={i} className="small soft mb-1.5">{x}</p>)}
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button className="act primary" disabled={nb.act.isPending} onClick={() => nb.act.mutate(() => api.post(`/api/ai/sessions/${sid}/confirm`, { version_id: c.version_id }))} data-testid="run-strategy">Yes, run it</button>
+              <span className="tiny mute">Nothing has run. Click an underlined value above to change it first, or say what to change below.</span>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
 
-type Ctx = { latestResult?: number; latestPlan?: number; prevDraft: Record<number, any>; prevAnswer: Record<number, any>; expanded: Set<number>; toggle: (id: number) => void };
+type Ctx = { latestResult?: number; latestPlan?: number; lastId?: number; prevDraft: Record<number, any>; prevAnswer: Record<number, any>; expanded: Set<number>; toggle: (id: number) => void };
 
 function Reply({ m, sid, nb, open, onOpen, onTrade, symbols, ctx }: { m: AiMessage; sid: string; nb: ReturnType<typeof useNotebook>; open: boolean; onOpen: (s: any) => void; onTrade: (r: string, id: number) => void; symbols: string[]; ctx: Ctx }) {
   const c = m.content || {};
@@ -71,12 +87,19 @@ function Reply({ m, sid, nb, open, onOpen, onTrade, symbols, ctx }: { m: AiMessa
     const editable = strat && m.id === ctx.latestPlan;
     const prev = ctx.prevDraft[m.id];
     const edited = strat && prev && !c.change && (c.diff || []).length > 0 ? describeChange(prev, c.draft, 0) : [];
+    // a research plan that stopped to ask (a part it could not read, data to download): its choices, which the notebook did not show
+    const waitingPlan = m.kind === "graph" && ["awaiting", "needs_data"].includes(c.state) && (c.choices || []).length > 0;
     return (
       <div className="flex flex-col gap-4" id={`msg-${m.id}`}>
-        {c.reading && <p className="small mute">Reading: <span className="soft">{c.reading}</span></p>}
         {edited.length > 0 && <p className="small soft" data-testid="version-change"><span className="kicker mr-2">New version</span>{edited.join(" ")} Everything else stays the same.</p>}
-        {editable && open && <StrategySentence draft={c.draft} symbols={symbols} busy={nb.act.isPending} onRun={(d) => nb.act.mutate(() => api.post(`/api/ai/sessions/${sid}/edit`, { draft: d, run: true }))} />}
-        {!c.reading && !strat && c.text && <p className="small soft">{String(c.text).slice(0, 400)}</p>}
+        {editable && open && <StrategySentence draft={c.draft} symbols={symbols} busy={nb.act.isPending} more={c.sentence?.more} effective={c.effective} onRun={(d) => nb.act.mutate(() => api.post(`/api/ai/sessions/${sid}/edit`, { draft: d, run: true }))} />}
+        {!c.reading && !strat && c.text && !waitingPlan && <p className="small soft">{String(c.text).slice(0, 400)}</p>}
+        {waitingPlan && (
+          <div data-testid="plan-decision">
+            <p className="lede">{c.text}</p>
+            <div className="mt-2 flex flex-wrap gap-2">{c.choices.map((x: any) => <button key={x.id} className={x.id === "cancel" ? "act" : "act primary"} onClick={() => nb.act.mutate(() => api.post(`/api/ai/sessions/${sid}/graph/decide`, { message_id: m.id, choice: x.id }))}>{x.label}</button>)}</div>
+          </div>
+        )}
         {needs ? <Needs m={m} sid={sid} nb={nb} /> : (c.runs || []).length > 0 && !c.finalized ? <Progress c={c} /> : null}
       </div>
     );
@@ -104,6 +127,24 @@ function Reply({ m, sid, nb, open, onOpen, onTrade, symbols, ctx }: { m: AiMessa
       </div>
     );
   }
+  // a reading shown before it runs: the sentence with its parts to change, why it waits, and the go-ahead
+  if (c.confirm && c.reading) {
+    const live = m.id === ctx.lastId;
+    const reasons: string[] = c.confirm.reasons || [];
+    return (
+      <div className="aside-rule" data-testid="confirm-reading">
+        <div className="kicker mb-2">{reasons.length ? "Check this reading: part of your message is not in it" : "Check this reading before it runs"}</div>
+        <p className="serif" style={{ fontSize: 20, lineHeight: 1.6 }}><ReadingLine parts={c.reading_parts} text={c.reading} live={live} onSay={nb.send} /></p>
+        {reasons.map((r, i) => <p key={i} className="small mt-2" style={{ color: "var(--down)" }} data-testid="confirm-reason">{r}</p>)}
+        {live ? (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button className="act primary" disabled={nb.act.isPending} onClick={() => nb.send("Run it as read")} data-testid="run-as-read">{reasons.length ? "Run it as read" : "Yes, run it"}</button>
+            <span className="tiny mute">Nothing has run. Click an underlined part to change it, or say it another way below.</span>
+          </div>
+        ) : <p className="tiny mute mt-2">This reading was not run.</p>}
+      </div>
+    );
+  }
   // a question back (clarify), a refusal (with the closest question that can be answered, when there is one), a note
   return (
     <div data-testid={c.declined ? "declined" : c.clarify ? "clarify" : "note"}>
@@ -114,7 +155,10 @@ function Reply({ m, sid, nb, open, onOpen, onTrade, symbols, ctx }: { m: AiMessa
 }
 
 export function Notebook({ sid }: { sid: string }) {
-  const nb = useNotebook(sid);
+  const nb0 = useNotebook(sid);
+  const [sending, setSending] = useState<string | null>(null);
+  const nb = useMemo(() => ({ ...nb0, send: (t: string) => { setSending(t); nb0.send(t); } }), [nb0]); // eslint-disable-line
+  useEffect(() => { if (!nb0.act.isPending) setSending(null); }, [nb0.act.isPending]);
   const [text, setText] = useState("");
   const [spec, setSpec] = useState<any>(null);
   const [frame, setFrame] = useState<any>(null);
@@ -146,7 +190,7 @@ export function Notebook({ sid }: { sid: string }) {
       const a = m.kind === "result" ? m.content?.answer : null;
       if (a?.viz?.kind) { if (changed && lastOfKind[a.viz.kind]) prevAnswer[m.id] = lastOfKind[a.viz.kind]; lastOfKind[a.viz.kind] = a; }
     }
-    return { latestResult: [...nb.messages].reverse().find((m) => m.kind === "result")?.id, latestPlan: plans[plans.length - 1]?.id, prevDraft, prevAnswer, expanded,
+    return { latestResult: [...nb.messages].reverse().find((m) => m.kind === "result")?.id, latestPlan: plans[plans.length - 1]?.id, lastId: nb.messages[nb.messages.length - 1]?.id, prevDraft, prevAnswer, expanded,
              toggle: (id: number) => setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; }) };
   }, [nb.messages, expanded]);
   // a new answer opens at its question, not at the bottom of the page; while a question is being read, the bottom is shown
@@ -189,6 +233,9 @@ export function Notebook({ sid }: { sid: string }) {
             const user = t.q;
             const change = t.a.find((m) => m.content?.change)?.content?.change;
             const assumed: string[] = (t.a.find((m) => m.content?.assumed)?.content?.assumed || []).map((x: any) => (typeof x === "string" ? x : x.text)).filter(Boolean);
+            // how this question was read, said once under it; a reading that is still waiting says itself in its own block
+            const read = t.a.find((m) => m.content?.reading && !m.content?.confirm)?.content;
+            const leftOut: string[] = t.a.find((m) => m.content?.left_out)?.content?.left_out || [];
             const isOpen = latest || (user && opened.has(user.id));
             return (
               <section key={user?.id ?? i} id={user ? `turn-${user.id}` : undefined} className={i ? "rule mt-10 pt-8" : ""} data-testid="turn">
@@ -204,6 +251,11 @@ export function Notebook({ sid }: { sid: string }) {
                         {latest && change.undo && <button className="link inline-flex items-center gap-1" onClick={undo} data-testid="undo"><RotateCcw size={13} />Undo</button>}
                       </div>
                     )}
+                    {read && (
+                      <p className="small mute mt-3" data-testid="reading"><span className="kicker mr-2">Read as</span>
+                        <span className="soft"><ReadingLine parts={read.reading_parts} text={read.reading} live={latest && !nb.act.isPending} onSay={nb.send} /></span></p>
+                    )}
+                    {leftOut.map((x, k) => <p key={k} className="tiny mt-1.5" style={{ color: "var(--down)" }} data-testid="left-out">{x} The answer below does not include it.</p>)}
                     {assumed.length > 0 && <ul className="tiny mute mt-2 flex flex-col gap-0.5" data-testid="assumed">{assumed.map((x, k) => <li key={k}>Assumed: {x}</li>)}</ul>}
                   </header>
                 )}
@@ -212,11 +264,17 @@ export function Notebook({ sid }: { sid: string }) {
                     <Reply key={m.id} m={m} sid={sid} nb={nb} open={!!isOpen} ctx={ctx} symbols={symbols.length ? symbols : ["SPY", "QQQ", "IWM"]}
                       onOpen={(s) => openSpec(s, m.content?.frame)} onTrade={(r, id) => openSpec({ kind: "replay", run_id: r, trade: id })} />
                   ))}
-                  {latest && nb.act.isPending && <div className="small mute flex items-center gap-2"><Loader2 className="size-4 animate-spin" />Reading the question…</div>}
+                  {latest && nb.act.isPending && !sending && <div className="small mute flex items-center gap-2"><Loader2 className="size-4 animate-spin" />Working…</div>}
                 </div>
               </section>
             );
           })}
+          {sending && nb.act.isPending && (
+            <section className={ts.length ? "rule mt-10 pt-8" : ""} data-testid="turn-sending">
+              <h1 className="display" style={{ fontSize: "clamp(26px, 3vw, 36px)" }}>{sending}</h1>
+              <div className="small mute mt-4 flex items-center gap-2"><Loader2 className="size-4 animate-spin" />Reading the question…</div>
+            </section>
+          )}
           <div ref={end} />
         </main>
       </div>

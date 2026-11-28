@@ -34,6 +34,8 @@ def _is_new_question(r: SM.Reading, text: str) -> bool:
     kinds = {m.value["kind"] for m in r.mentions if m.kind == "kind"}
     if EDIT_LEAD.match(text) and len(text.split()) <= 9:
         return False
+    if re.search(r"\b(?:too|as well|also|on top of that|in addition)\s*[?.!]*\s*$", text.lower()) and len(text.split()) <= 12 and not any(m.kind == "symbol" for m in r.mentions):
+        return False  # V10: "What happens if yesterday was red too?" adds a condition to the question on screen; it is not a new one
     if kinds & {"frequency", "agreement", "timing", "breakdown", "movement"}:
         return True
     has_event = any(m.kind == "event" for m in r.mentions)
@@ -201,7 +203,7 @@ class ResearchV8:
             unknown = next((p_ for p_ in problems if p_.startswith("no price history for")), None)
             if unknown:
                 sym_ = unknown.split("for ")[1].split(" ")[0]
-                return {"action": "clarify", "declined": True, "text": f"No price history for {sym_} is stored, so it cannot be backtested. Stored: {', '.join(k for k in known if k != 'VIX')}. Nothing was run.",
+                return {"action": "clarify", "declined": True, "text": f"No price history for {sym_} is stored, so it cannot be backtested. Stored: {', '.join(k for k in known if k != 'VIX' and not k.startswith('DEMO'))}. Nothing was run.",
                         "options": [{"label": re.sub(re.escape(sym_), "SPY", text, flags=re.I), "ask": re.sub(re.escape(sym_), "SPY", text, flags=re.I)}]}, None, name
             left = MR.coverage(text, quotes, known)
             if problems or left:
@@ -221,7 +223,7 @@ class ResearchV8:
             base = frame if (act == "edit" and frame and frame.get("kind") in CV.QUESTION_KINDS) else None
             f, problems, quotes = MR.question_frame(raw, text, known, frame.get("symbol") if base else default_symbol, base)
             if f and f.get("kind") == "unsupported":
-                return {"action": "clarify", "declined": True, "text": f"{f['why']} Stored: {', '.join(known)}. Nothing was run.",
+                return {"action": "clarify", "declined": True, "text": f"{f['why']} Stored: {', '.join(k for k in known if not k.startswith('DEMO'))}. Nothing was run.",
                         "options": [{"label": re.sub(re.escape(f['symbol']), s, text, flags=re.I), "ask": re.sub(re.escape(f['symbol']), s, text, flags=re.I)} for s in ("SPY", "QQQ") if s in known]}, None, name
             also = [((raw.get("candle") or {}).get("q") or "")]
             left = MR.coverage(text, quotes + [x for x in also if x], known)
@@ -292,16 +294,23 @@ class ResearchV8:
         frame, pending = st.get("frame"), st.get("pending")
         tick = [k for k in known if k.isupper()] or list(SM.STORED_DEFAULT)
         # 0. the answer to a question that was just asked
-        if pending:
+        if pending and pending.get("kind") not in ("say", "part_value"):
             a = CV.answer_clarification(text, pending)
             if a is not None:
                 return self._v8_apply_option(pending, a["option"], text)
         # 1. conversational actions on what exists
         if CV.UNDO.match(text):
             return {"action": "undo"}
-        if (frame or current) and bare_compare(text):
+        from strata.ai import intent as I
+        if frame or current is not None:
+            cmd = I.command_of(text)  # V10: what the message asks for about the result on screen, whatever its wording
+            if cmd is not None and not (cmd["action"] == "robustness" and frame and frame.get("kind") in CV.QUESTION_KINDS and not self._latest_result(sid)):
+                return cmd
+        if (frame or current) and (bare_compare(text) or CV.COMPARE_WITH_BEFORE.match(text)):
             return {"action": "compare_versions"}
         topic = TEACH.topic_of(text)
+        if topic and I.own_terms(text, known) and current is not None and current.kind == "options":
+            topic = None  # V10: "how much would I have made risking $500 each time?" changes the trade (its size); it is not a request to explain
         if topic and (frame or current or self._latest_result(sid) if sid else False):
             return {"action": "compare_versions"} if topic in ("difference", "outperform") else {"action": "teach", "topic": topic}
         if (frame or current) and EXPLAIN_TRADE.search(text):
@@ -315,14 +324,56 @@ class ResearchV8:
             k = (frame or {}).get("kind") or ("strategy" if current is not None and current.kind == "options" else "frequency")
             f = _explore_filter(text, k)
             return {"action": "show_trades", "filter": OLD_FILTER.get(f, "all"), "explore_filter": f}
+        if pending and pending.get("kind") == "confirm_frame" and (CV.EXPLORE.search(text) or I.command_of(text)):
+            return {"action": "noop", "text": "The reading above has not been run yet, so there are no days or results to show. Run it first (\"yes\"), or change the part that is wrong."}
+        # 1b. V10: a reading is waiting for its go-ahead and the message changes a part of it ("use QQQ instead", a click on
+        # one of its parts): THAT reading is edited, shown again and waits again. (Until the held-out run it ran at once when
+        # it had waited only for being complex. 20 of the 41 silent failures there were this: a correction fixed one part of
+        # a reading that was wrong in several, and the changed reading ran.)
+        pend_frame = pending.get("frame") if (pending and pending.get("kind") == "confirm_frame" and (pending.get("frame") or {}).get("kind") in CV.QUESTION_KINDS) else None
+        if pend_frame is not None and not I.new_trade(text, known):
+            r_p = SM.read(text, known, pend_frame.get("symbol") or default_symbol)
+            if not _is_new_question(r_p, text):
+                e = CV.edit_question(text, pend_frame, tick, None)
+                if e["action"] == "edit":
+                    nf = e["frame"]
+                    route = SM.to_route(SM.Reading(text=nf.get("text") or text, frame=nf, mentions=[]))
+                    if nf.get("kind") == "frequency" and (nf.get("outcome") or {}).get("key") == "event":
+                        route = {"action": "profile", "frame": nf}
+                    # why it waited may be settled by this very change: the word with no size now has one
+                    notes_ = [x for x in pending.get("notes") or [] if not (x.startswith("Your message gives no size") and not any(c_.get("values") for c_ in nf.get("conditions") or []))]
+                    if notes_:
+                        # it waited because part of the message is not in it; that is still so after the change
+                        opts = [{"label": "Run it as read", "patch": {}}]
+                        return {"action": "clarify", "text": f"Here is how I read it now: {SM.describe(nf)} " + " ".join(notes_) + " Nothing was run.", "options": opts,
+                                "waiting": {"reasons": list(notes_), "complex": False},
+                                "pending": {"kind": "confirm_frame", "options": opts, "frame": nf, "notes": list(notes_)}}
+                    if route.get("action") == "clarify":
+                        return route  # the changed reading cannot be run as it stands (a condition the engines cannot combine)
+                    from strata.api.settings import get_setting as _gs
+                    if _gs("ai.confirm_complex"):
+                        opts = [{"label": "Run it as read", "patch": {}}]
+                        said_ = CV.summary_text(e["changes"]) if e.get("changes") else ""
+                        return {"action": "clarify", "text": f"{said_} Here is how I read it now: {SM.describe(nf)} Nothing was run.".strip(), "options": opts,
+                                "waiting": {"reasons": [], "complex": True},
+                                "pending": {"kind": "confirm_frame", "options": opts, "frame": nf, "notes": []}}
+                    route.update(frame=nf, edit=True, changes=e["changes"], slot=e["slot"], base=pend_frame)
+                    return route
         # 2. the current question, edited or traded
-        if frame and frame.get("kind") in CV.QUESTION_KINDS:
-            if CV.CONVERT.search(text):
+        fresh_trade = bool(frame and frame.get("kind") in CV.QUESTION_KINDS and I.new_trade(text, known))  # V10: a trade of its own is not an edit of the question
+        if frame and frame.get("kind") in CV.QUESTION_KINDS and not fresh_trade:
+            # V10: only a message that leans on the question ("what if I bought calls instead?") trades the question's own
+            # condition and times. A trade described in full is read as written: converted, "Buy calls at the open after a 3%
+            # down day, exit at 15:55" took the previous question's 1% move as a target nobody asked for.
+            if CV.CONVERT.search(text) and not I.own_terms(text, known):
                 conv = CV.to_strategy(frame, text)
                 d = conv["draft"]
                 nf = {"kind": "strategy", "symbol": d.symbol, "draft": d.model_dump(mode="json"), "text": text}
                 return {"action": "new", "draft": d, "frame": nf, "edit": True, "changes": CV.summary(frame, nf), "assumptions": conv["assumptions"]}
             r_new = SM.read(text, known, frame.get("symbol") or default_symbol)
+            view = self._v8_other_view(text, frame, r_new)
+            if view is not None:
+                return view
             if not _is_new_question(r_new, text):
                 e = CV.edit_question(text, frame, tick, st.get("last_slot"))
                 if e["action"] == "edit":
@@ -357,6 +408,37 @@ class ResearchV8:
                     return None
         # 3. the current strategy: its sizing in a trader's words, a bare number, or a time moved relative to itself
         if current is not None and current.kind == "options":
+            _sh = CV.relative_shift(text, current)
+            if _sh and _sh[1] and not CV.NUMBER_ONLY.match(text) and _sh[0] == "exit_time":
+                # V10: "what if I risked $200 and exited an hour later?" An exit moved later than the close is not a time
+                # of day: it is that long after getting in. And the rest of the message (the $200) is read too; until V10 a
+                # moved time was all that such a message changed.
+                new_m, old_m = int(_sh[1][:2]) * 60 + int(_sh[1][3:]), int(_sh[2][:2]) * 60 + int(_sh[2][3:])
+                d2 = current.model_copy(deep=True)
+                notes_ = []
+                if new_m > 960:
+                    d2.exit_time, d2.exit_time_stated, d2.hold_minutes = None, None, new_m - old_m
+                    changed_ = ["exit_time", "hold_minutes"]
+                    notes_.append(f"{new_m - old_m} minutes later than the current exit ({_sh[2]} New York time) would be after the close, so it is read as: out {new_m - old_m} minutes after getting in.")
+                elif new_m >= 570:
+                    d2.exit_time, d2.exit_time_stated = _sh[1], None
+                    changed_ = ["exit_time"]
+                else:
+                    d2 = None
+                if d2 is not None:
+                    rest = I.edit_trade(d2, text, known)
+                    if rest is not None and not rest.get("noop"):
+                        return {"action": "modify", "draft": rest["draft"], "changed": list(dict.fromkeys(changed_ + rest["changed"])), "edit": True, "assumptions": notes_ + list(rest["notes"] or [])}
+                    return {"action": "modify", "draft": d2, "changed": changed_, "edit": True, **({"assumptions": notes_} if notes_ else {})}
+            if not (_sh and _sh[1]) and not CV.NUMBER_ONLY.match(text):
+                ed = I.edit_trade(current, text, known)  # V10: a change read from what it names (a part, a ticker, a size with its role)
+                if ed is not None and ed.get("noop"):
+                    return {"action": "noop", "text": ed["notes"][0]}
+                if ed is not None:
+                    return {"action": "modify", "draft": ed["draft"], "changed": ed["changed"], "edit": True, **({"compare": True} if ed.get("compare") else {}), **({"assumptions": ed["notes"]} if ed["notes"] else {})}
+                pw = I.part_without_value(text, current)  # "put a stop on it": which stop? (no level is filled in)
+                if pw is not None:
+                    return pw
             sz = CV.sizing_from_text(text, current)
             if sz is not None and not re.search(r"\b(?:calls?|puts?|straddles?|strangles?|spreads?|condors?)\b", text.lower()):
                 d2 = current.model_copy(deep=True)
@@ -407,7 +489,7 @@ class ResearchV8:
                 return {"action": "clarify", "text": r.clarify["text"], "options": r.clarify.get("options") or [],
                         "pending": {"kind": "frame_patch", "options": r.clarify.get("options") or [], "frame": r.frame}} if r.clarify.get("options") else \
                        {"action": "clarify", "text": r.clarify["text"], "unread": [m.text for m in r.unclaimed]}
-            if r.frame.get("kind") == "frequency" and (r.frame.get("outcome") or {}).get("key") == "event":
+            if r.frame.get("kind") == "frequency" and (r.frame.get("outcome") or {}).get("key") in ("event", "rel"):
                 return {"action": "profile", "frame": r.frame}
             route = SM.to_route(r)
             route["frame"] = r.frame
@@ -417,6 +499,46 @@ class ResearchV8:
         if k == "explore" and current is None and not frame:
             return {"action": "clarify", "text": "There is nothing to show yet: no question has been answered in this conversation."}
         return None
+
+    def _v8_other_view(self, text: str, frame: dict, r_new: SM.Reading) -> dict | None:
+        """V10: a short follow-up that only asks for another VIEW of the question on screen ("Are Fridays any different?",
+        "which weekday is best?", "when in the day does that happen?") keeps that question's ticker, conditions and period.
+        Until V10 it was read as a new question about every day, and the condition the user was asking about was gone
+        without a word. What is kept is said in the change line, and each kept condition can be removed with a click."""
+        nf0 = r_new.frame
+        if nf0.get("kind") not in ("breakdown", "timing") or len(text.split()) > 9 or r_new.flag or r_new.unread or r_new.unclaimed:
+            return None
+        if nf0.get("symbol_stated") or nf0.get("conditions") or any(m.kind in ("period", "symbol") for m in r_new.mentions):
+            return None  # it names its own subject: a question of its own
+        carried = [c for c in frame.get("conditions") or [] if c.get("key") in ("prev_return", "gap", "vix", "up_streak", "down_streak") or (c.get("key") == "weekday" and nf0.get("kind") == "timing")]
+        if len(carried) != len([c for c in frame.get("conditions") or [] if not (c.get("key") == "weekday" and nf0.get("kind") == "breakdown")]):
+            return None  # a condition this view cannot apply (the first candle, a level at a time of day): not carried silently
+        o_ = frame.get("outcome") or {}
+        share = frame.get("kind") == "frequency" and o_.get("key") == "close_vs" and o_.get("direction") in ("up", "down") and o_.get("ref") in ("open", "prev_close")
+        said_measure = any(m.kind == "outcome" for m in r_new.mentions)
+        if not carried and not (frame.get("period") or [None, None])[0] and frame.get("symbol") == nf0.get("symbol") and not (nf0.get("kind") == "breakdown" and share and not said_measure):
+            return None  # nothing to keep: the plain new question is the same thing
+        nf = copy.deepcopy(nf0)
+        nf.update(symbol=frame.get("symbol") or nf0.get("symbol"), symbols=[frame.get("symbol") or nf0.get("symbol")], symbol_stated=bool(frame.get("symbol_stated", True)),
+                  conditions=copy.deepcopy(carried), period=list(frame.get("period") or [None, None]), text=text)
+        if frame.get("zone"):
+            nf["zone"] = frame["zone"]
+        if nf["kind"] == "breakdown" and not said_measure:
+            # the same thing that was being measured, by weekday: a share when the question counted closes, an average otherwise
+            o = frame.get("outcome") or {}
+            if frame.get("kind") == "frequency" and o.get("key") == "close_vs" and o.get("direction") in ("up", "down") and o.get("ref") in ("open", "prev_close"):
+                nf["measure"] = ("close>" if o["direction"] == "up" else "close<") + o["ref"]
+            elif frame.get("kind") == "breakdown" and frame.get("measure"):
+                nf["measure"] = frame["measure"]
+            nf["assumptions"] = [a for a in nf.get("assumptions") or [] if a.get("slot") != "measure"]
+        kept = [SM.describe_condition(c) for c in carried]
+        per = SM._describe_period(nf.get("period")).strip()
+        what = "by weekday" if nf["kind"] == "breakdown" and nf.get("by") == "weekday" else "by month" if nf["kind"] == "breakdown" else "by time of day"
+        meas = {"close>open": "how often it closes above its open", "close<open": "how often it closes below its open", "close>prev_close": "how often it closes above the previous close",
+                "close<prev_close": "how often it closes below the previous close"}.get(nf.get("measure") or "") if nf["kind"] == "breakdown" and not said_measure else None
+        keeps = ([meas] if meas else []) + kept
+        changes = [f"Now {what}."] + ([f"Kept from the question before: {'; '.join(keeps)}{(' ' + per) if per else ''}."] if keeps or per else [])
+        return {"action": "profile", "frame": nf, "edit": True, "changes": changes, "slot": None}
 
     def _v8_check_reading(self, text: str, r: dict, known: list[str]) -> dict:
         """Any reading from the older readers, held against the pieces this layer recognised in the sentence.
@@ -511,6 +633,17 @@ class ResearchV8:
     def _v8_apply_option(self, pending: dict, option: dict, text: str) -> dict:
         patch = option.get("patch") or {}
         fr = copy.deepcopy(pending.get("frame") or {})
+        if pending.get("kind") == "confirm_frame":
+            # V10: a reading that waited with its reasons listed, and was told to run as read
+            route = SM.to_route(SM.Reading(text=fr.get("text") or text, frame=fr, mentions=[]))
+            if fr.get("kind") == "frequency" and (fr.get("outcome") or {}).get("key") == "event":
+                route = {"action": "profile", "frame": fr}
+            route.update(frame=fr, confirmed=True, **({"edit": True} if pending.get("edit") else {}))
+            if pending.get("notes"):
+                route["left_out"] = list(pending["notes"])  # said again on the answer: it was run without these
+            if pending.get("assumptions"):
+                route["assumptions"] = list(pending["assumptions"])
+            return route
         if pending.get("kind") == "frame_number":
             res = CV._apply_number(fr, (patch["slot"], option.get("label"), patch.get("index")), float(patch["value"]), pending.get("frame") or {})
             nf = res["frame"]
@@ -561,6 +694,10 @@ class ResearchV8:
                 res = PR.breakdown(self.store, f["symbol"], f.get("by") or "weekday", f.get("measure") or "open_to_close", f.get("period"), f.get("conditions"))
                 ans = ANS.breakdown(res, f)
                 compact = {**res, "groups": [{k: v for k, v in g.items() if k != "dates"} for g in res["groups"]]}
+            elif (f.get("outcome") or {}).get("key") == "rel":
+                res = PR.relation_frequency(self.store, f["symbol"], f["outcome"]["rel"], f.get("period"), f.get("conditions"), (f.get("then") or {}).get("rel"))
+                ans = ANS.relation_frequency(res, f)
+                compact = {k: v for k, v in res.items() if k not in ("dates", "miss_dates")} | ({"then": {k: v for k, v in res["then"].items() if k != "dates"}} if res.get("then") else {})
             else:
                 ev = (f.get("outcome") or {}).get("event") or {}
                 res = PR.event_frequency(self.store, f["symbol"], ev, f.get("period"), f.get("conditions"))
@@ -569,6 +706,11 @@ class ResearchV8:
         except (LookupError, ValueError) as e:
             return [self._say(sid, str(e), interpreter=interp)]
         self._trials(sid, 1)
+        try:  # V10: these answers are recalculated independently too (until V10 they carried no check line)
+            from strata.research import verify as VF
+            ans["check"] = VF.profile(f, res)
+        except Exception as ex:  # noqa: BLE001
+            ans["check"] = {"status": "not_covered", "level": "Not verified", "text": f"The independent check could not run ({type(ex).__name__})."}
         return [db.add_message(sid, "assistant", "result", {"view": "profile", "frame": {k: v for k, v in f.items() if k != "text"}, "result": compact, "answer": ans, "text": ans["headline"],
                                                             "explanation_source": "deterministic", "interpreter": interp})]
 
@@ -875,10 +1017,24 @@ class ResearchV8:
             upd: dict = {}
             if act == "clarify":
                 upd["pending"] = r.get("pending")
-                if first is not None and r.get("options"):
+                if not upd["pending"] and any(o.get("ask") for o in r.get("options") or []):
+                    # choices that are whole messages ("Which ticker?" -> the request on SPY): typed as their label, or as
+                    # "the first one", they are sent as that message (agent.post)
+                    upd["pending"] = {"kind": "say", "options": [{"label": o["label"], "ask": o["ask"]} for o in r["options"] if o.get("ask")]}
+                pend = r.get("pending") or {}
+                if first is not None and (r.get("options") or pend.get("kind") == "confirm_frame"):
                     c = first["content"]
-                    c["options"] = [{"label": o["label"], **({"ask": o["ask"]} if o.get("ask") else {})} for o in r["options"]]
+                    c["options"] = [{"label": o["label"], **({"ask": o["ask"]} if o.get("ask") else {})} for o in r.get("options") or []]
                     c["clarify"] = True
+                    if pend.get("kind") == "confirm_frame" and (pend.get("frame") or {}).get("kind") in CV.QUESTION_KINDS:
+                        # V10: the reading that waits, as a sentence whose parts can be changed in place, and why it waits
+                        from strata.ai import intent as I
+                        c["reading"] = SM.describe(pend["frame"])
+                        try:
+                            c["reading_parts"] = I.reading_parts(pend["frame"], sorted(self.store.stored_symbols()))
+                        except Exception:  # noqa: BLE001
+                            pass
+                        c["confirm"] = {"reasons": list((r.get("waiting") or {}).get("reasons") or []), "complex": bool((r.get("waiting") or {}).get("complex"))}
                     db.update_message(first["id"], c)
                 db.update_session(sid, state={**st, **upd})
                 return
@@ -909,11 +1065,20 @@ class ResearchV8:
                 c = first["content"]
                 c["frame"] = {k: x for k, x in new.items() if k != "draft"}
                 c["reading"] = SM.describe(new) if new.get("kind") in CV.QUESTION_KINDS else None
-                if prev and (r.get("edit") or act == "modify" or r.get("answered")):
-                    lines = list(r.get("changes") or []) or CV.summary(prev, new)
-                    c["change"] = {"lines": lines, "text": CV.summary_text(lines), "undo": True}
+                if c["reading"]:
+                    try:  # V10: the same sentence with the parts that can be changed in place marked
+                        from strata.ai import intent as I
+                        c["reading_parts"] = I.reading_parts(new, sorted(self.store.stored_symbols()))
+                    except Exception:  # noqa: BLE001
+                        pass
+                base = r.get("base")  # a reading that was waiting when this change came: the change is against it
+                if (prev or base) and (r.get("edit") or act == "modify" or r.get("answered")):
+                    lines = list(r.get("changes") or []) or CV.summary(base or prev, new)
+                    c["change"] = {"lines": lines, "text": CV.summary_text(lines), "undo": bool(prev)}
                 if r.get("assumptions"):
                     c["assumed"] = r["assumptions"]
+                if r.get("left_out"):
+                    c["left_out"] = r["left_out"]
                 db.update_message(first["id"], c)
         except Exception:  # noqa: BLE001  (the record of a turn must never be the reason the turn fails)
             return
@@ -927,7 +1092,10 @@ class ResearchV8:
             if view == "single" and entries:
                 e = entries[-1]
                 if e["run"]["kind"] == "study":
-                    content["answer"] = (ANS.movement if frame.get("kind") == "movement" else ANS.frequency)(e["result"], frame or None, e["run"]["id"])
+                    # a study with no target measures how the price moved: it has no outcome to count. (Found by the V10
+                    # held-out audit: without a frame it was worded as "the outcome happened on 0 of N days".)
+                    moves = frame.get("kind") == "movement" or (not frame.get("kind") and (e["run"].get("config") or {}).get("target") is None)
+                    content["answer"] = (ANS.movement if moves else ANS.frequency)(e["result"], frame or None, e["run"]["id"])
                 else:
                     from strata.api.results import load_trades
                     from strata.research import performance as PF
@@ -960,9 +1128,17 @@ class ResearchV8:
             elif view == "single" and entries:
                 from strata.api.results import load_trades
                 draft = (c.get("draft") if isinstance(c.get("draft"), dict) else None) or (frame.get("draft") if isinstance(frame.get("draft"), dict) else None)
-                a["check"] = VF.backtest(entries[-1]["run"], load_trades(entries[-1]["run"]["id"]), draft)
+                trades_ = load_trades(entries[-1]["run"]["id"])
+                a["check"] = VF.backtest(entries[-1]["run"], trades_, draft)
+                if a["check"].get("status") == "not_covered" and trades_:
+                    # V10: a strategy the full re-pricing does not cover still has its fills re-read from the raw files and its
+                    # sums re-added: partly verified, and said so
+                    a["check"] = VF.fills(entries[-1]["run"], trades_)
             elif view == "investigation" and content.get("report", {}).get("agreement"):
                 a["check"] = VF.agreement(content["report"], frame or (c.get("plan") or {}).get("frame"))
+            elif view == "investigation" and a.get("kind") == "frequency_set":
+                # V10: an answer made of several variants says how far it was verified too (until V10 it said nothing)
+                a["check"] = VF.day_part(frame or (c.get("plan") or {}).get("frame"), (content.get("report") or {}).get("rows") or [])
         except Exception as ex:  # noqa: BLE001
             content.setdefault("answer", {})["check"] = {"status": "not_covered", "text": f"The independent check could not run ({type(ex).__name__})."}
 
@@ -1020,8 +1196,13 @@ def _serial(r: dict) -> str:
         v = r.get(k)
         if v is None:
             continue
+        if k == "graph" and isinstance(v, dict):
+            v = {k2: x for k2, x in v.items() if k2 not in ("question", "title", "text")}  # the sentence itself is not something the graph holds
         if hasattr(v, "model_dump"):
-            v = v.model_dump(mode="json")
+            # V10: the user's own words kept on a draft (its title, its notes, the words of a time, what it listed as not
+            # represented) are not what the draft HOLDS. With them in, every word of the sentence was "accounted for" by
+            # the title that quotes it, and nothing was ever missing.
+            v = {k2: x for k2, x in v.model_dump(mode="json").items() if k2 not in ("title", "notes", "unsupported", "questions", "carried", "review", "entry_time_stated", "exit_time_stated")}
         try:
             parts.append(json.dumps(v, default=str))
         except Exception:  # noqa: BLE001
@@ -1052,6 +1233,24 @@ def frequency_set(rep: dict, frame: dict) -> dict:
     sig = [r for r in rows if r.get("adjusted_p_value") is not None and r["adjusted_p_value"] < 0.05 and r["n"] >= 30]
     happened = [f"{len(sig)} of the {len(rows)} variants differ from an ordinary day by more than chance once the {len(rows)} comparisons are counted." if sig else
                 f"None of the {len(rows)} variants differs from an ordinary day by more than chance once the {len(rows)} comparisons are counted."]
+    part = next((c.get("part") for c in (frame or {}).get("conditions") or [] if c.get("key") == "first_candle" and c.get("part")), None)
+    way = ((frame or {}).get("outcome") or {}).get("direction")
+    ok = [r for r in rows if r.get("probability") is not None and r.get("n")]
+    if part and way in ("opposite", "same") and len(ok) == 2 and len(rows) == 2:
+        # V10: a part of the day against the day before it ("does SPY reverse during lunch?"): the answer to the question
+        # first (both mornings together), then each morning with what any day does
+        n_all = sum(int(r["n"]) for r in ok)
+        k_all = sum(round(float(r["probability"]) * int(r["n"])) for r in ok)
+        sym = (frame or {}).get("symbol") or "It"
+        head = (f"{sym}'s move from {part['window']} went {'the other way from' if way == 'opposite' else 'the same way as'} {part['before']} on {ANS._n(k_all)} of {ANS._n(n_all)} days "
+                f"({ANS._pct(100.0 * k_all / n_all)}).")
+        each = []
+        for r in ok:
+            up = " up " in f" {r['label']} "
+            went = ("fell" if up else "rose") if way == "opposite" else ("rose" if up else "fell")
+            each.append(f"{r['label'][0].upper() + r['label'][1:]} it {went} over that stretch on {ANS._pct(float(r['probability']) * 100)} of {ANS._n(r['n'])} days; on any day it {went} on {ANS._pct((r['baseline'] or 0) * 100)}.")
+        happened = each + [("Neither differs from an ordinary day by more than chance, so the earlier move says little about that stretch." if not sig else
+                            f"{len(sig)} of the 2 differ from an ordinary day by more than chance (both comparisons counted).")]
     return {"kind": "frequency_set", "headline": head, "happened": happened, "limits": rep.get("limitations") or [],
             "numbers": [{"label": r["label"], "value": ANS._pct((r["probability"] or 0) * 100), "detail": f"{ANS._n(r['n'])} days", "explore": {"kind": "sessions", "run_id": r["run_id"], "filter": "all"}} for r in rows[:6]],
             "viz": {"kind": "variants", "rows": [{"label": r["label"], "rate": r["probability"], "ci": r["ci95"], "baseline": r["baseline"], "n": r["n"], "run_id": r["run_id"]} for r in rows]},

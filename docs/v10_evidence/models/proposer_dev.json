@@ -1,0 +1,5085 @@
+{
+ "note": "Development questions the built-in reader stopped on (41 turns), put to each local model as a proposer. An offer is a rewrite that kept every number, time and ticker of the message and that the built-in reader could read completely. developer_verdict is the developer's own reading of each offer against what the author meant (development data, not the held-out set). gemma3:12b was stopped after 5 turns: with the application, a browser and the dev servers running it pushed this 16 GB machine to 19-20 GB of swap.",
+ "rows": [
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 2.24,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 2.39,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 3.01,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 0.75,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 1.29,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 2.56,
+   "offer": "On SPY, at what time of day does it make its high?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 0.58,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 2.43,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 2.52,
+   "offer": "On SPY, how often does it trade back to the previous close?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 3.6,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 2.64,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 3.88,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 1.81,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 1.7,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 840)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 3.14,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "casey/cd-08.1",
+   "expected": "ask",
+   "seconds": 2.26,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "casey/cd-08.1",
+   "expected": "ask",
+   "seconds": 2.79,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "casey/cd-08.1",
+   "expected": "ask",
+   "seconds": 3.84,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "casey/cd-09.1",
+   "expected": "answer",
+   "seconds": 2.01,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "casey/cd-09.1",
+   "expected": "answer",
+   "seconds": 2.54,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "casey/cd-09.1",
+   "expected": "answer",
+   "seconds": 3.64,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "casey/cd-10.1",
+   "expected": "answer",
+   "seconds": 3.06,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "casey/cd-10.1",
+   "expected": "answer",
+   "seconds": 3.78,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 25; added: 2.5)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "casey/cd-10.1",
+   "expected": "answer",
+   "seconds": 3.37,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 15; dropped: 300)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "casey/cd-14.2",
+   "expected": "ask",
+   "seconds": 0.87,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "casey/cd-14.2",
+   "expected": "ask",
+   "seconds": 1.45,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "casey/cd-14.2",
+   "expected": "ask",
+   "seconds": 2.05,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-01.1",
+   "expected": "answer",
+   "seconds": 2.36,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-01.1",
+   "expected": "answer",
+   "seconds": 3.13,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-01.1",
+   "expected": "answer",
+   "seconds": 2.65,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-02.1",
+   "expected": "answer",
+   "seconds": 3.37,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-02.1",
+   "expected": "answer",
+   "seconds": 3.94,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-02.1",
+   "expected": "answer",
+   "seconds": 3.88,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 5)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-03.1",
+   "expected": "ask",
+   "seconds": 1.16,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-03.1",
+   "expected": "ask",
+   "seconds": 1.53,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-03.1",
+   "expected": "ask",
+   "seconds": 2.9,
+   "offer": null,
+   "why_not": "the model found something missing",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-08.1",
+   "expected": "answer",
+   "seconds": 3.08,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-08.1",
+   "expected": "answer",
+   "seconds": 3.72,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-08.1",
+   "expected": "answer",
+   "seconds": 3.81,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 720; added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-12.1",
+   "expected": "answer",
+   "seconds": 4.03,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-12.1",
+   "expected": "answer",
+   "seconds": 3.34,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 3)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-12.1",
+   "expected": "answer",
+   "seconds": 4.23,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 2024; added: 840; added: 2.024)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-13.3",
+   "expected": "answer",
+   "seconds": 0.74,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-13.3",
+   "expected": "answer",
+   "seconds": 1.01,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-13.3",
+   "expected": "answer",
+   "seconds": 2.67,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-13.5",
+   "expected": "answer",
+   "seconds": 0.65,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-13.5",
+   "expected": "answer",
+   "seconds": 1.06,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-13.5",
+   "expected": "answer",
+   "seconds": 3.15,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-14.3",
+   "expected": "ask",
+   "seconds": 1.18,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-14.3",
+   "expected": "ask",
+   "seconds": 2.43,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-14.3",
+   "expected": "ask",
+   "seconds": 2.28,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-14.5",
+   "expected": "answer",
+   "seconds": 1.11,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-14.5",
+   "expected": "answer",
+   "seconds": 1.48,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-14.5",
+   "expected": "answer",
+   "seconds": 4.93,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: IWM; added: 0; added: 720)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-14.6",
+   "expected": "answer",
+   "seconds": 1.83,
+   "offer": "Okay, let's tackle this step by step. The user has a current trade setup and a message asking to \"run that on the Qs and put it next to the SPY numbers\".",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-14.6",
+   "expected": "answer",
+   "seconds": 1.95,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-14.6",
+   "expected": "answer",
+   "seconds": 2.16,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "morgan/md-05.1",
+   "expected": "ask",
+   "seconds": 2.23,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "morgan/md-05.1",
+   "expected": "ask",
+   "seconds": 2.21,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 25; added: 2.5)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "morgan/md-05.1",
+   "expected": "ask",
+   "seconds": 4.49,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "morgan/md-10.1",
+   "expected": "answer",
+   "seconds": 2.51,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "morgan/md-10.1",
+   "expected": "answer",
+   "seconds": 3.04,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "morgan/md-10.1",
+   "expected": "answer",
+   "seconds": 3.84,
+   "offer": "On QQQ, on days when it opens 0.5% or more below the previous close and is below VWAP at 0700, how often does it close below the previous close since 2020?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "morgan/md-11.1",
+   "expected": "answer",
+   "seconds": 4.56,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "morgan/md-11.1",
+   "expected": "answer",
+   "seconds": 4.89,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 600; dropped: 660; added: 70)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "morgan/md-11.1",
+   "expected": "answer",
+   "seconds": 5.61,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 660; added: 80; added: 900)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "morgan/md-12.1",
+   "expected": "ask",
+   "seconds": 2.01,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "morgan/md-12.1",
+   "expected": "ask",
+   "seconds": 1.89,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "morgan/md-12.1",
+   "expected": "ask",
+   "seconds": 2.95,
+   "offer": "Buy 10 SPY 0DTE at-the-money calls at the open. Sell at the close.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "morgan/md-13.3",
+   "expected": "ask",
+   "seconds": 2.59,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "morgan/md-13.3",
+   "expected": "ask",
+   "seconds": 2.96,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 0; added: SPY; added: 12)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "morgan/md-13.3",
+   "expected": "ask",
+   "seconds": 2.19,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "morgan/md-14.4",
+   "expected": "answer",
+   "seconds": 0.69,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "morgan/md-14.4",
+   "expected": "answer",
+   "seconds": 0.82,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "morgan/md-14.4",
+   "expected": "answer",
+   "seconds": 2.52,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 0.4)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "morgan/md-14.5",
+   "expected": "answer",
+   "seconds": 2.83,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "morgan/md-14.5",
+   "expected": "answer",
+   "seconds": 1.81,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "morgan/md-14.5",
+   "expected": "answer",
+   "seconds": 5.26,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 420; added: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "morgan/md-14.6",
+   "expected": "decline",
+   "seconds": 0.72,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "morgan/md-14.6",
+   "expected": "decline",
+   "seconds": 1.29,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "morgan/md-14.6",
+   "expected": "decline",
+   "seconds": 2.22,
+   "offer": "Only since 2022.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "riley/rd-03.1",
+   "expected": "answer",
+   "seconds": 3.95,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "riley/rd-03.1",
+   "expected": "answer",
+   "seconds": 4.41,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "riley/rd-03.1",
+   "expected": "answer",
+   "seconds": 4.8,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "riley/rd-04.1",
+   "expected": "answer",
+   "seconds": 4.15,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "riley/rd-04.1",
+   "expected": "answer",
+   "seconds": 4.16,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "riley/rd-04.1",
+   "expected": "answer",
+   "seconds": 5.66,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "riley/rd-05.1",
+   "expected": "answer",
+   "seconds": 3.93,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "riley/rd-05.1",
+   "expected": "answer",
+   "seconds": 4.33,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "riley/rd-05.1",
+   "expected": "answer",
+   "seconds": 6.7,
+   "offer": "On IWM, on days when the first 30-minute candle is green and up 0.4% or more from the open at 9:30 eastern, what is the average return from 10:00 to the close since 2016? And on days when the first 30-minute candle is red and down 0.4% or more from",
+   "why_not": null,
+   "developer_verdict": "partly"
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "riley/rd-06.1",
+   "expected": "answer",
+   "seconds": 1.73,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 600; dropped: 15; dropped: 5)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "riley/rd-06.1",
+   "expected": "answer",
+   "seconds": 5.11,
+   "offer": null,
+   "why_not": "the rewrite is the message itself",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "riley/rd-06.1",
+   "expected": "answer",
+   "seconds": 4.24,
+   "offer": "Sell 1 SPY 0-DTE iron condors at 10:00 AM Eastern. Short strikes at 15-delta on each side. Long strikes $5 further out. Take profit at 50% of the premium. Stop at 0.7% of SPY from entry. Exit at the open on the next trading day.",
+   "why_not": null,
+   "developer_verdict": "partly"
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "riley/rd-09.1",
+   "expected": "ask",
+   "seconds": 2.05,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "riley/rd-09.1",
+   "expected": "ask",
+   "seconds": 2.53,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "riley/rd-09.1",
+   "expected": "ask",
+   "seconds": 3.39,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 2025)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "riley/rd-10.1",
+   "expected": "ask",
+   "seconds": 2.78,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "riley/rd-10.1",
+   "expected": "ask",
+   "seconds": 2.76,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 20; added: 2)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "riley/rd-10.1",
+   "expected": "ask",
+   "seconds": 5.22,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 50; added: 30; added: 50000)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "riley/rd-13.4",
+   "expected": "ask",
+   "seconds": 0.65,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "riley/rd-13.4",
+   "expected": "ask",
+   "seconds": 0.96,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "riley/rd-13.4",
+   "expected": "ask",
+   "seconds": 2.15,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "riley/rd-14.2",
+   "expected": "answer",
+   "seconds": 0.53,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "riley/rd-14.2",
+   "expected": "answer",
+   "seconds": 1.63,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "riley/rd-14.2",
+   "expected": "answer",
+   "seconds": 2.8,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "riley/rd-14.3",
+   "expected": "answer",
+   "seconds": 0.53,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "riley/rd-14.3",
+   "expected": "answer",
+   "seconds": 2.86,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "riley/rd-14.3",
+   "expected": "answer",
+   "seconds": 2.62,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "sam/sd-03.1",
+   "expected": "answer",
+   "seconds": 2.01,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "sam/sd-03.1",
+   "expected": "answer",
+   "seconds": 2.56,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "sam/sd-03.1",
+   "expected": "answer",
+   "seconds": 3.48,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "sam/sd-07.1",
+   "expected": "ask",
+   "seconds": 1.09,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "sam/sd-07.1",
+   "expected": "ask",
+   "seconds": 1.51,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "sam/sd-07.1",
+   "expected": "ask",
+   "seconds": 3.23,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "sam/sd-08.1",
+   "expected": "ask",
+   "seconds": 2.7,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 0; dropped: 10; dropped: 585)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "sam/sd-08.1",
+   "expected": "ask",
+   "seconds": 2.65,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 20; added: 2)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "sam/sd-08.1",
+   "expected": "ask",
+   "seconds": 3.28,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "sam/sd-09.1",
+   "expected": "ask",
+   "seconds": 1.33,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "sam/sd-09.1",
+   "expected": "ask",
+   "seconds": 1.79,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "sam/sd-09.1",
+   "expected": "ask",
+   "seconds": 3.14,
+   "offer": "On SPY, on days when it gaps up, how often does it trade above the previous day's high by 7:00?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "plain",
+   "id": "sam/sd-14.3",
+   "expected": "ask",
+   "seconds": 0.63,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "focused",
+   "id": "sam/sd-14.3",
+   "expected": "ask",
+   "seconds": 2.05,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:4b",
+   "variant": "schema",
+   "id": "sam/sd-14.3",
+   "expected": "ask",
+   "seconds": 2.95,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 0.3; added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 6.06,
+   "offer": "On QQQ, how far does it move? from <time> to the close",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 2.75,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 2.9,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 2.31,
+   "offer": "On SPY, at what time of day does it make its low?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 1.47,
+   "offer": "On SPY, at what time of day does it make its low?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 2.38,
+   "offer": "On SPY, at what time of day does it make its low?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 2.09,
+   "offer": "On SPY, how far does it move?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 1.76,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 2.44,
+   "offer": "On SPY, how often does it trade above the previous close?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 3.25,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 2; added: 2)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 2.52,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 3.34,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 2.56,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 705; dropped: 840; added: 845)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 2.55,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 705; dropped: 840; added: 525)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 3.02,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 705; dropped: 840; added: 525)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "casey/cd-08.1",
+   "expected": "ask",
+   "seconds": 3.12,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 5; added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "casey/cd-08.1",
+   "expected": "ask",
+   "seconds": 3.29,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "casey/cd-08.1",
+   "expected": "ask",
+   "seconds": 3.97,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "casey/cd-09.1",
+   "expected": "answer",
+   "seconds": 2.4,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "casey/cd-09.1",
+   "expected": "answer",
+   "seconds": 2.18,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 10; dropped: 660)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "casey/cd-09.1",
+   "expected": "answer",
+   "seconds": 3.24,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 10; dropped: 660; added: 600)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "casey/cd-10.1",
+   "expected": "answer",
+   "seconds": 3.7,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 15; added: 900)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "casey/cd-10.1",
+   "expected": "answer",
+   "seconds": 3.23,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 15; added: 8)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "casey/cd-10.1",
+   "expected": "answer",
+   "seconds": 4.02,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 15)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "casey/cd-14.2",
+   "expected": "ask",
+   "seconds": 2.53,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 0.3; added: 0)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "casey/cd-14.2",
+   "expected": "ask",
+   "seconds": 2.17,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 20)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "casey/cd-14.2",
+   "expected": "ask",
+   "seconds": 2.16,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-01.1",
+   "expected": "answer",
+   "seconds": 1.67,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-01.1",
+   "expected": "answer",
+   "seconds": 1.8,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-01.1",
+   "expected": "answer",
+   "seconds": 2.54,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-02.1",
+   "expected": "answer",
+   "seconds": 3.38,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-02.1",
+   "expected": "answer",
+   "seconds": 2.74,
+   "offer": "On IWM, on days when it opens 0.75% or more below the previous close and the first five minute bar is green, how often does it close above its open? since 2018?",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-02.1",
+   "expected": "answer",
+   "seconds": 3.55,
+   "offer": "On IWM, on days when it opens down 0.75% or more and the first five minute bar is green, how often does it finish above its open since 2018?",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-03.1",
+   "expected": "ask",
+   "seconds": 1.85,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-03.1",
+   "expected": "ask",
+   "seconds": 2.25,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-03.1",
+   "expected": "ask",
+   "seconds": 2.91,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-08.1",
+   "expected": "answer",
+   "seconds": 4.42,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-08.1",
+   "expected": "answer",
+   "seconds": 2.16,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 1; dropped: VIX; dropped: 25)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-08.1",
+   "expected": "answer",
+   "seconds": 4.47,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: VIX; dropped: 25; added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-12.1",
+   "expected": "answer",
+   "seconds": 3.18,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 100; dropped: 2024)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-12.1",
+   "expected": "answer",
+   "seconds": 4.78,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-12.1",
+   "expected": "answer",
+   "seconds": 4.39,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-13.3",
+   "expected": "answer",
+   "seconds": 4.81,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-13.3",
+   "expected": "answer",
+   "seconds": 3.71,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-13.3",
+   "expected": "answer",
+   "seconds": 3.93,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-13.5",
+   "expected": "answer",
+   "seconds": 2.74,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-13.5",
+   "expected": "answer",
+   "seconds": 3.29,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-13.5",
+   "expected": "answer",
+   "seconds": 2.58,
+   "offer": "Add the condition: it opens below the previous close. Show the losing trades. Show the winning trades.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-14.3",
+   "expected": "ask",
+   "seconds": 1.31,
+   "offer": null,
+   "why_not": "the model said it cannot be done",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-14.3",
+   "expected": "ask",
+   "seconds": 1.04,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-14.3",
+   "expected": "ask",
+   "seconds": 1.86,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-14.5",
+   "expected": "answer",
+   "seconds": 4.45,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 3; added: SPY; added: 0)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-14.5",
+   "expected": "answer",
+   "seconds": 2.06,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-14.5",
+   "expected": "answer",
+   "seconds": 4.5,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "jordan/jd-14.6",
+   "expected": "answer",
+   "seconds": 3.17,
+   "offer": "Run that on the Qs and put it next to the SPY numbers.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "jordan/jd-14.6",
+   "expected": "answer",
+   "seconds": 1.67,
+   "offer": "Run that on <TICKER>, and put it next to the <TICKER> numbers.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "jordan/jd-14.6",
+   "expected": "answer",
+   "seconds": 2.44,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ; added: IWM)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "morgan/md-05.1",
+   "expected": "ask",
+   "seconds": 5.13,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "morgan/md-05.1",
+   "expected": "ask",
+   "seconds": 3.15,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "morgan/md-05.1",
+   "expected": "ask",
+   "seconds": 3.99,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "morgan/md-10.1",
+   "expected": "answer",
+   "seconds": 4.19,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 0.5)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "morgan/md-10.1",
+   "expected": "answer",
+   "seconds": 2.71,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 0.5)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "morgan/md-10.1",
+   "expected": "answer",
+   "seconds": 4.02,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 2020)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "morgan/md-11.1",
+   "expected": "answer",
+   "seconds": 6.9,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 600; dropped: 660; dropped: 720)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "morgan/md-11.1",
+   "expected": "answer",
+   "seconds": 5.58,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "morgan/md-11.1",
+   "expected": "answer",
+   "seconds": 5.49,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 600; dropped: 660; dropped: 720)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "morgan/md-12.1",
+   "expected": "ask",
+   "seconds": 3.57,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "morgan/md-12.1",
+   "expected": "ask",
+   "seconds": 2.95,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "morgan/md-12.1",
+   "expected": "ask",
+   "seconds": 2.79,
+   "offer": "Buy 10 SPY 0DTE at-the-money calls at the open. Sell at the close.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "morgan/md-13.3",
+   "expected": "ask",
+   "seconds": 2.32,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 10)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "morgan/md-13.3",
+   "expected": "ask",
+   "seconds": 1.18,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 7)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "morgan/md-13.3",
+   "expected": "ask",
+   "seconds": 1.94,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 7)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "morgan/md-14.4",
+   "expected": "answer",
+   "seconds": 1.79,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 0.4)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "morgan/md-14.4",
+   "expected": "answer",
+   "seconds": 2.44,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 0.4; added: 600)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "morgan/md-14.4",
+   "expected": "answer",
+   "seconds": 1.84,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "morgan/md-14.5",
+   "expected": "answer",
+   "seconds": 4.94,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 0.4; added: 945)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "morgan/md-14.5",
+   "expected": "answer",
+   "seconds": 4.68,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 420; added: 765; added: 1000)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "morgan/md-14.5",
+   "expected": "answer",
+   "seconds": 4.14,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 5000)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "morgan/md-14.6",
+   "expected": "decline",
+   "seconds": 3.23,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 0.4; added: 600)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "morgan/md-14.6",
+   "expected": "decline",
+   "seconds": 3.93,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 0.4; added: 600)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "morgan/md-14.6",
+   "expected": "decline",
+   "seconds": 2.26,
+   "offer": "Only since 2022.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "riley/rd-03.1",
+   "expected": "answer",
+   "seconds": 3.99,
+   "offer": "On SPY, on days when it opens 0.75% or more below the previous close and the VIX is above 25, how do the weekdays compare? from 2016 to the present, for the days where it does get there, what is the median time of day it happens?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "riley/rd-03.1",
+   "expected": "answer",
+   "seconds": 2.4,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 2016)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "riley/rd-03.1",
+   "expected": "answer",
+   "seconds": 4.77,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "riley/rd-04.1",
+   "expected": "answer",
+   "seconds": 4.95,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "riley/rd-04.1",
+   "expected": "answer",
+   "seconds": 3.1,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 3; dropped: 5; dropped: 1993)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "riley/rd-04.1",
+   "expected": "answer",
+   "seconds": 4.59,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "riley/rd-05.1",
+   "expected": "answer",
+   "seconds": 6.03,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "riley/rd-05.1",
+   "expected": "answer",
+   "seconds": 3.7,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "riley/rd-05.1",
+   "expected": "answer",
+   "seconds": 4.74,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "riley/rd-06.1",
+   "expected": "answer",
+   "seconds": 5.31,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "riley/rd-06.1",
+   "expected": "answer",
+   "seconds": 5.73,
+   "offer": "Backtest selling 1 SPY same-day-expiry iron condor at 10:00 AM Eastern on every trading day since the option data begins: short strikes at roughly 15 delta on each side, long strikes $5 further out, one contract. Take profit if it can be bought b",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "riley/rd-06.1",
+   "expected": "answer",
+   "seconds": 6.02,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "riley/rd-09.1",
+   "expected": "ask",
+   "seconds": 2.64,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "riley/rd-09.1",
+   "expected": "ask",
+   "seconds": 2.65,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "riley/rd-09.1",
+   "expected": "ask",
+   "seconds": 3.18,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 2005; dropped: 2025)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "riley/rd-10.1",
+   "expected": "ask",
+   "seconds": 2.9,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 5; dropped: 0; dropped: 20)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "riley/rd-10.1",
+   "expected": "ask",
+   "seconds": 2.89,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "riley/rd-10.1",
+   "expected": "ask",
+   "seconds": 3.94,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "riley/rd-13.4",
+   "expected": "ask",
+   "seconds": 3.3,
+   "offer": "Add the condition: it trades above the previous day's high [by <time>]",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "riley/rd-13.4",
+   "expected": "ask",
+   "seconds": 4.22,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 2016)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "riley/rd-13.4",
+   "expected": "ask",
+   "seconds": 2.1,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: VIX; added: 20)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "riley/rd-14.2",
+   "expected": "answer",
+   "seconds": 4.83,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 0; added: 575)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "riley/rd-14.2",
+   "expected": "answer",
+   "seconds": 2.4,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "riley/rd-14.2",
+   "expected": "answer",
+   "seconds": 2.65,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "riley/rd-14.3",
+   "expected": "answer",
+   "seconds": 1.8,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "riley/rd-14.3",
+   "expected": "answer",
+   "seconds": 2.43,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "riley/rd-14.3",
+   "expected": "answer",
+   "seconds": 2.76,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "sam/sd-03.1",
+   "expected": "answer",
+   "seconds": 3.21,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "sam/sd-03.1",
+   "expected": "answer",
+   "seconds": 3.0,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "sam/sd-03.1",
+   "expected": "answer",
+   "seconds": 3.12,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "sam/sd-07.1",
+   "expected": "ask",
+   "seconds": 2.98,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "sam/sd-07.1",
+   "expected": "ask",
+   "seconds": 1.47,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "sam/sd-07.1",
+   "expected": "ask",
+   "seconds": 2.64,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "sam/sd-08.1",
+   "expected": "ask",
+   "seconds": 3.17,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 10)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "sam/sd-08.1",
+   "expected": "ask",
+   "seconds": 3.73,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "sam/sd-08.1",
+   "expected": "ask",
+   "seconds": 3.15,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "sam/sd-09.1",
+   "expected": "ask",
+   "seconds": 3.87,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 600)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "sam/sd-09.1",
+   "expected": "ask",
+   "seconds": 2.27,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "sam/sd-09.1",
+   "expected": "ask",
+   "seconds": 2.93,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "plain",
+   "id": "sam/sd-14.3",
+   "expected": "ask",
+   "seconds": 2.34,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 0.3)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "focused",
+   "id": "sam/sd-14.3",
+   "expected": "ask",
+   "seconds": 3.2,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 575)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:4b",
+   "variant": "schema",
+   "id": "sam/sd-14.3",
+   "expected": "ask",
+   "seconds": 2.7,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 9.75,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 2.56,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 5.19,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 1.25,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 3.49,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1; added: 660)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 5.48,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1; added: 660)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 2.3,
+   "offer": null,
+   "why_not": "the model found something missing",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 3.01,
+   "offer": null,
+   "why_not": "the model found something missing",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 3.6,
+   "offer": null,
+   "why_not": "the model found something missing",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 6.33,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 4.79,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 6.23,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 2.31,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 3.92,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 4.85,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "casey/cd-08.1",
+   "expected": "ask",
+   "seconds": 4.15,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "casey/cd-08.1",
+   "expected": "ask",
+   "seconds": 4.52,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "casey/cd-08.1",
+   "expected": "ask",
+   "seconds": 5.94,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "casey/cd-09.1",
+   "expected": "answer",
+   "seconds": 2.99,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "casey/cd-09.1",
+   "expected": "answer",
+   "seconds": 4.68,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 10; dropped: 660; added: 600)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "casey/cd-09.1",
+   "expected": "answer",
+   "seconds": 5.62,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 10; dropped: 660; added: 600)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "casey/cd-10.1",
+   "expected": "answer",
+   "seconds": 4.69,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 15; added: 900)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "casey/cd-10.1",
+   "expected": "answer",
+   "seconds": 5.85,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 15)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "casey/cd-10.1",
+   "expected": "answer",
+   "seconds": 7.24,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 15)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "casey/cd-14.2",
+   "expected": "ask",
+   "seconds": 1.37,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 20)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "casey/cd-14.2",
+   "expected": "ask",
+   "seconds": 3.35,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 20)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "casey/cd-14.2",
+   "expected": "ask",
+   "seconds": 3.41,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-01.1",
+   "expected": "answer",
+   "seconds": 1.49,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-01.1",
+   "expected": "answer",
+   "seconds": 2.65,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-01.1",
+   "expected": "answer",
+   "seconds": 4.51,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-02.1",
+   "expected": "answer",
+   "seconds": 3.89,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-02.1",
+   "expected": "answer",
+   "seconds": 4.92,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-02.1",
+   "expected": "answer",
+   "seconds": 7.18,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 5)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-03.1",
+   "expected": "ask",
+   "seconds": 2.9,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-03.1",
+   "expected": "ask",
+   "seconds": 3.23,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-03.1",
+   "expected": "ask",
+   "seconds": 5.2,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-08.1",
+   "expected": "answer",
+   "seconds": 4.37,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-08.1",
+   "expected": "answer",
+   "seconds": 5.52,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-08.1",
+   "expected": "answer",
+   "seconds": 7.18,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-12.1",
+   "expected": "answer",
+   "seconds": 4.09,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 585)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-12.1",
+   "expected": "answer",
+   "seconds": 5.86,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 780)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-12.1",
+   "expected": "answer",
+   "seconds": 6.72,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 100; added: 780)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-13.3",
+   "expected": "answer",
+   "seconds": 1.87,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-13.3",
+   "expected": "answer",
+   "seconds": 3.13,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-13.3",
+   "expected": "answer",
+   "seconds": 4.48,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-13.5",
+   "expected": "answer",
+   "seconds": 4.16,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-13.5",
+   "expected": "answer",
+   "seconds": 4.83,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-13.5",
+   "expected": "answer",
+   "seconds": 5.42,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-14.3",
+   "expected": "ask",
+   "seconds": 1.69,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 585)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-14.3",
+   "expected": "ask",
+   "seconds": 2.04,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 20)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-14.3",
+   "expected": "ask",
+   "seconds": 3.85,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 20)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-14.5",
+   "expected": "answer",
+   "seconds": 7.67,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 0; added: 585)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-14.5",
+   "expected": "answer",
+   "seconds": 4.28,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 720)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-14.5",
+   "expected": "answer",
+   "seconds": 10.63,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 720; added: 0)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-14.6",
+   "expected": "answer",
+   "seconds": 1.98,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-14.6",
+   "expected": "answer",
+   "seconds": 2.74,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ; added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-14.6",
+   "expected": "answer",
+   "seconds": 3.96,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "morgan/md-05.1",
+   "expected": "ask",
+   "seconds": 7.08,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "morgan/md-05.1",
+   "expected": "ask",
+   "seconds": 13.82,
+   "offer": null,
+   "why_not": "the rewrite is the message itself",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "morgan/md-05.1",
+   "expected": "ask",
+   "seconds": 5.83,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "morgan/md-10.1",
+   "expected": "answer",
+   "seconds": 4.34,
+   "offer": "On QQQ, on days when it opens 0.5% or more below the previous close and is below VWAP at 0700, how often does it close below the open from 0700 to the close? Since 2020.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "morgan/md-10.1",
+   "expected": "answer",
+   "seconds": 5.06,
+   "offer": "On QQQ, on days when it gaps down 0.5% or more and is below VWAP at 07:00, how often does it close below the previous close from there to the close since 2020?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "morgan/md-10.1",
+   "expected": "answer",
+   "seconds": 7.09,
+   "offer": "On QQQ, on days when it gaps down 0.5% or more and is below VWAP at 07:00, how often does it close below the previous close from there to the close since 2020? What is the average move?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "morgan/md-11.1",
+   "expected": "answer",
+   "seconds": 8.04,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "morgan/md-11.1",
+   "expected": "answer",
+   "seconds": 7.55,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "morgan/md-11.1",
+   "expected": "answer",
+   "seconds": 8.89,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "morgan/md-12.1",
+   "expected": "ask",
+   "seconds": 2.25,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "morgan/md-12.1",
+   "expected": "ask",
+   "seconds": 2.4,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "morgan/md-12.1",
+   "expected": "ask",
+   "seconds": 5.23,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "morgan/md-13.3",
+   "expected": "ask",
+   "seconds": 1.03,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "morgan/md-13.3",
+   "expected": "ask",
+   "seconds": 1.32,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 5)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "morgan/md-13.3",
+   "expected": "ask",
+   "seconds": 3.4,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 5)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "morgan/md-14.4",
+   "expected": "answer",
+   "seconds": 2.94,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 600)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "morgan/md-14.4",
+   "expected": "answer",
+   "seconds": 2.34,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 0.4)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "morgan/md-14.4",
+   "expected": "answer",
+   "seconds": 4.09,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 0.4)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "morgan/md-14.5",
+   "expected": "answer",
+   "seconds": 4.74,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 945; added: 1000)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "morgan/md-14.5",
+   "expected": "answer",
+   "seconds": 6.05,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "morgan/md-14.5",
+   "expected": "answer",
+   "seconds": 7.34,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "morgan/md-14.6",
+   "expected": "decline",
+   "seconds": 0.99,
+   "offer": "Only since 2022.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "morgan/md-14.6",
+   "expected": "decline",
+   "seconds": 6.02,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 0.4; added: 600)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "morgan/md-14.6",
+   "expected": "decline",
+   "seconds": 3.6,
+   "offer": "Add the condition: since 2022.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "riley/rd-03.1",
+   "expected": "answer",
+   "seconds": 6.2,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "riley/rd-03.1",
+   "expected": "answer",
+   "seconds": 7.43,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "riley/rd-03.1",
+   "expected": "answer",
+   "seconds": 9.04,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "riley/rd-04.1",
+   "expected": "answer",
+   "seconds": 5.2,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "riley/rd-04.1",
+   "expected": "answer",
+   "seconds": 5.56,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "riley/rd-04.1",
+   "expected": "answer",
+   "seconds": 8.06,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "riley/rd-05.1",
+   "expected": "answer",
+   "seconds": 6.38,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30; added: 2023)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "riley/rd-05.1",
+   "expected": "answer",
+   "seconds": 7.14,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 2023)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "riley/rd-05.1",
+   "expected": "answer",
+   "seconds": 8.39,
+   "offer": "On IWM, since 2016, on days when the first 30-minute candle is green and up 0.4% or more, what are the average and median return from 10:00 to the close? And how do these compare with days when the first 30-minute candle is red and down 0.4% or mor",
+   "why_not": null,
+   "developer_verdict": "partly"
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "riley/rd-06.1",
+   "expected": "answer",
+   "seconds": 5.56,
+   "offer": "Sell 1 SPY 0DTE iron condors at 10:00 AM ET on every trading day since the option data begins. Short strikes at roughly 15 delta on each side, long strikes $5 further out. Take profit at 50% of the premium. Stop at 0.7% move of SPY from entry.",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "riley/rd-06.1",
+   "expected": "answer",
+   "seconds": 7.72,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "riley/rd-06.1",
+   "expected": "answer",
+   "seconds": 6.81,
+   "offer": "Sell 1 SPY same-day-expiry iron condors at 10:00 AM ET on every trading day. Short strikes at roughly 15 delta on each side. Long strikes $5 further out. Take profit at 50% of the premium. Stop at 0.7% move of SPY from entry. Exit at expiration.",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "riley/rd-09.1",
+   "expected": "ask",
+   "seconds": 3.02,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 2025)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "riley/rd-09.1",
+   "expected": "ask",
+   "seconds": 3.98,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 2025)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "riley/rd-09.1",
+   "expected": "ask",
+   "seconds": 5.75,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 2025)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "riley/rd-10.1",
+   "expected": "ask",
+   "seconds": 5.15,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 20)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "riley/rd-10.1",
+   "expected": "ask",
+   "seconds": 4.39,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "riley/rd-10.1",
+   "expected": "ask",
+   "seconds": 6.97,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 50000)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "riley/rd-13.4",
+   "expected": "ask",
+   "seconds": 1.16,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: VIX; added: 20)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "riley/rd-13.4",
+   "expected": "ask",
+   "seconds": 7.34,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 2016)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "riley/rd-13.4",
+   "expected": "ask",
+   "seconds": 6.82,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 2016; added: VIX)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "riley/rd-14.2",
+   "expected": "answer",
+   "seconds": 2.36,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 959)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "riley/rd-14.2",
+   "expected": "answer",
+   "seconds": 2.55,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "riley/rd-14.2",
+   "expected": "answer",
+   "seconds": 4.82,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "riley/rd-14.3",
+   "expected": "answer",
+   "seconds": 1.68,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "riley/rd-14.3",
+   "expected": "answer",
+   "seconds": 3.01,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "riley/rd-14.3",
+   "expected": "answer",
+   "seconds": 4.14,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "sam/sd-03.1",
+   "expected": "answer",
+   "seconds": 3.36,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "sam/sd-03.1",
+   "expected": "answer",
+   "seconds": 4.73,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "sam/sd-03.1",
+   "expected": "answer",
+   "seconds": 6.14,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "sam/sd-07.1",
+   "expected": "ask",
+   "seconds": 2.41,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "sam/sd-07.1",
+   "expected": "ask",
+   "seconds": 2.92,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "sam/sd-07.1",
+   "expected": "ask",
+   "seconds": 5.39,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "sam/sd-08.1",
+   "expected": "ask",
+   "seconds": 2.77,
+   "offer": "Sell 1 QQQ 0DTE 10-delta puts at 0945 ET. Take profit at 20% of the premium.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "sam/sd-08.1",
+   "expected": "ask",
+   "seconds": 3.48,
+   "offer": "Sell 1 QQQ 0DTE 10-delta puts at 09:45 ET. Take profit at 20% of the premium.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "sam/sd-08.1",
+   "expected": "ask",
+   "seconds": 5.54,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "sam/sd-09.1",
+   "expected": "ask",
+   "seconds": 2.48,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "sam/sd-09.1",
+   "expected": "ask",
+   "seconds": 3.48,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 600; added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "sam/sd-09.1",
+   "expected": "ask",
+   "seconds": 5.4,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "plain",
+   "id": "sam/sd-14.3",
+   "expected": "ask",
+   "seconds": 1.7,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "focused",
+   "id": "sam/sd-14.3",
+   "expected": "ask",
+   "seconds": 2.75,
+   "offer": "Change the stop to 0.3.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "qwen3:8b",
+   "variant": "schema",
+   "id": "sam/sd-14.3",
+   "expected": "ask",
+   "seconds": 4.52,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 9.63,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 2.96,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 5.27,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 1)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 4.95,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 2.35,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 4.77,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 5.76,
+   "offer": null,
+   "why_not": "the model found something missing",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 2.89,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 4.29,
+   "offer": null,
+   "why_not": "the model said it cannot be done",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 6.35,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 4.7,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 6.5,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 2.6,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 4.07,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 5.17,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "casey/cd-08.1",
+   "expected": "ask",
+   "seconds": 3.32,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "casey/cd-08.1",
+   "expected": "ask",
+   "seconds": 4.44,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "casey/cd-08.1",
+   "expected": "ask",
+   "seconds": 4.69,
+   "offer": null,
+   "why_not": "the model said it cannot be done",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "casey/cd-09.1",
+   "expected": "answer",
+   "seconds": 2.85,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 10; dropped: 660; added: 600)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "casey/cd-09.1",
+   "expected": "answer",
+   "seconds": 4.28,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 10; dropped: 660; added: 600)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "casey/cd-09.1",
+   "expected": "answer",
+   "seconds": 6.29,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "casey/cd-10.1",
+   "expected": "answer",
+   "seconds": 5.55,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "casey/cd-10.1",
+   "expected": "answer",
+   "seconds": 6.46,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "casey/cd-10.1",
+   "expected": "answer",
+   "seconds": 7.83,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "casey/cd-14.2",
+   "expected": "ask",
+   "seconds": 0.86,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "casey/cd-14.2",
+   "expected": "ask",
+   "seconds": 5.53,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 0)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "casey/cd-14.2",
+   "expected": "ask",
+   "seconds": 3.59,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-01.1",
+   "expected": "answer",
+   "seconds": 1.46,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-01.1",
+   "expected": "answer",
+   "seconds": 2.88,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-01.1",
+   "expected": "answer",
+   "seconds": 4.54,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 30)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-02.1",
+   "expected": "answer",
+   "seconds": 4.54,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 5)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-02.1",
+   "expected": "answer",
+   "seconds": 5.51,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 5)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-02.1",
+   "expected": "answer",
+   "seconds": 7.38,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 5)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-03.1",
+   "expected": "ask",
+   "seconds": 1.97,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-03.1",
+   "expected": "ask",
+   "seconds": 3.56,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-03.1",
+   "expected": "ask",
+   "seconds": 5.71,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-08.1",
+   "expected": "answer",
+   "seconds": 4.29,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 720; added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-08.1",
+   "expected": "answer",
+   "seconds": 5.37,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 720; added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-08.1",
+   "expected": "answer",
+   "seconds": 6.97,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 720; added: SPY; added: 2018)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-12.1",
+   "expected": "answer",
+   "seconds": 3.78,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-12.1",
+   "expected": "answer",
+   "seconds": 5.47,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 2024)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-12.1",
+   "expected": "answer",
+   "seconds": 4.8,
+   "offer": null,
+   "why_not": "the model said it cannot be done",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-13.3",
+   "expected": "answer",
+   "seconds": 3.51,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-13.3",
+   "expected": "answer",
+   "seconds": 2.42,
+   "offer": null,
+   "why_not": "the model said it cannot be done",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-13.3",
+   "expected": "answer",
+   "seconds": 5.4,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-13.5",
+   "expected": "answer",
+   "seconds": 4.8,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-13.5",
+   "expected": "answer",
+   "seconds": 6.11,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-13.5",
+   "expected": "answer",
+   "seconds": 5.43,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-14.3",
+   "expected": "ask",
+   "seconds": 1.27,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 20)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-14.3",
+   "expected": "ask",
+   "seconds": 1.91,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-14.3",
+   "expected": "ask",
+   "seconds": 4.07,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-14.5",
+   "expected": "answer",
+   "seconds": 2.82,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 0; added: 585)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-14.5",
+   "expected": "answer",
+   "seconds": 7.18,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: IWM; added: 0.03)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-14.5",
+   "expected": "answer",
+   "seconds": 9.46,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: IWM)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "jordan/jd-14.6",
+   "expected": "answer",
+   "seconds": 1.06,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "jordan/jd-14.6",
+   "expected": "answer",
+   "seconds": 3.28,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "jordan/jd-14.6",
+   "expected": "answer",
+   "seconds": 4.82,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: QQQ)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "morgan/md-05.1",
+   "expected": "ask",
+   "seconds": 5.58,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 25; added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "morgan/md-05.1",
+   "expected": "ask",
+   "seconds": 4.89,
+   "offer": null,
+   "why_not": "the model found something missing",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "morgan/md-05.1",
+   "expected": "ask",
+   "seconds": 8.39,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "morgan/md-10.1",
+   "expected": "answer",
+   "seconds": 5.76,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "morgan/md-10.1",
+   "expected": "answer",
+   "seconds": 7.76,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "morgan/md-10.1",
+   "expected": "answer",
+   "seconds": 8.56,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "morgan/md-11.1",
+   "expected": "answer",
+   "seconds": 8.68,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 720; added: 900)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "morgan/md-11.1",
+   "expected": "answer",
+   "seconds": 9.74,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 600; dropped: 660; dropped: 720)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "morgan/md-11.1",
+   "expected": "answer",
+   "seconds": 11.7,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 600; dropped: 660; dropped: 720)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "morgan/md-12.1",
+   "expected": "ask",
+   "seconds": 2.92,
+   "offer": "Buy 10 SPY 0DTE at-the-money calls at the open. Sell at the close. Does this trade make money on average?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "morgan/md-12.1",
+   "expected": "ask",
+   "seconds": 2.81,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "morgan/md-12.1",
+   "expected": "ask",
+   "seconds": 5.8,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "morgan/md-13.3",
+   "expected": "ask",
+   "seconds": 1.46,
+   "offer": null,
+   "why_not": "the model found something missing",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "morgan/md-13.3",
+   "expected": "ask",
+   "seconds": 1.92,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 10)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "morgan/md-13.3",
+   "expected": "ask",
+   "seconds": 4.19,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 10)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "morgan/md-14.4",
+   "expected": "answer",
+   "seconds": 1.91,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: 0.4)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "morgan/md-14.4",
+   "expected": "answer",
+   "seconds": 1.79,
+   "offer": "Remove the gap filter.",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "morgan/md-14.4",
+   "expected": "answer",
+   "seconds": 3.7,
+   "offer": "Remove the gap filter.",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "morgan/md-14.5",
+   "expected": "answer",
+   "seconds": 7.92,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 0.4; added: 945)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "morgan/md-14.5",
+   "expected": "answer",
+   "seconds": 7.15,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 420; added: 765)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "morgan/md-14.5",
+   "expected": "answer",
+   "seconds": 11.32,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 0.4; added: 20)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "morgan/md-14.6",
+   "expected": "decline",
+   "seconds": 4.88,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 0.4; added: 600)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "morgan/md-14.6",
+   "expected": "decline",
+   "seconds": 6.83,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 0.4; added: 600)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "morgan/md-14.6",
+   "expected": "decline",
+   "seconds": 4.01,
+   "offer": "Only for 2022.",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "riley/rd-03.1",
+   "expected": "answer",
+   "seconds": 6.53,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "riley/rd-03.1",
+   "expected": "answer",
+   "seconds": 7.79,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "riley/rd-03.1",
+   "expected": "answer",
+   "seconds": 9.58,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "riley/rd-04.1",
+   "expected": "answer",
+   "seconds": 6.35,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "riley/rd-04.1",
+   "expected": "answer",
+   "seconds": 6.7,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "riley/rd-04.1",
+   "expected": "answer",
+   "seconds": 8.67,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "riley/rd-05.1",
+   "expected": "answer",
+   "seconds": 6.74,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "riley/rd-05.1",
+   "expected": "answer",
+   "seconds": 8.01,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "riley/rd-05.1",
+   "expected": "answer",
+   "seconds": 9.85,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "riley/rd-06.1",
+   "expected": "answer",
+   "seconds": 7.08,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 0)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "riley/rd-06.1",
+   "expected": "answer",
+   "seconds": 9.3,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 0)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "riley/rd-06.1",
+   "expected": "answer",
+   "seconds": 8.23,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 0)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "riley/rd-09.1",
+   "expected": "ask",
+   "seconds": 3.77,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "riley/rd-09.1",
+   "expected": "ask",
+   "seconds": 4.91,
+   "offer": "On SPY, from 2005 to 2025, on days when it opens more than 0.5% below the previous close, what percentage of those days close above the previous close?",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "riley/rd-09.1",
+   "expected": "ask",
+   "seconds": 6.56,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "riley/rd-10.1",
+   "expected": "ask",
+   "seconds": 5.04,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "riley/rd-10.1",
+   "expected": "ask",
+   "seconds": 1.55,
+   "offer": null,
+   "why_not": "the model said it cannot be done",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "riley/rd-10.1",
+   "expected": "ask",
+   "seconds": 4.88,
+   "offer": null,
+   "why_not": "the model said it cannot be done",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "riley/rd-13.4",
+   "expected": "ask",
+   "seconds": 4.45,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 2016)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "riley/rd-13.4",
+   "expected": "ask",
+   "seconds": 4.92,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 2016)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "riley/rd-13.4",
+   "expected": "ask",
+   "seconds": 7.62,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 2016)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "riley/rd-14.2",
+   "expected": "answer",
+   "seconds": 2.63,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "riley/rd-14.2",
+   "expected": "answer",
+   "seconds": 3.33,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "riley/rd-14.2",
+   "expected": "answer",
+   "seconds": 5.66,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "riley/rd-14.3",
+   "expected": "answer",
+   "seconds": 2.47,
+   "offer": "Add the condition: take it off as soon as the straddle is worth 40% more than the initial premium paid.",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "riley/rd-14.3",
+   "expected": "answer",
+   "seconds": 3.79,
+   "offer": "Add an early exit condition: remove the straddle when its value increases by 40% from the purchase price.",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "riley/rd-14.3",
+   "expected": "answer",
+   "seconds": 4.69,
+   "offer": "Add an early exit: remove the straddle when it increases in value by 40%.",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "sam/sd-03.1",
+   "expected": "answer",
+   "seconds": 3.59,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "sam/sd-03.1",
+   "expected": "answer",
+   "seconds": 4.84,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "sam/sd-03.1",
+   "expected": "answer",
+   "seconds": 6.33,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "sam/sd-07.1",
+   "expected": "ask",
+   "seconds": 2.01,
+   "offer": "On SPY, on days when it drops 2% or more, how often does it recover?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "sam/sd-07.1",
+   "expected": "ask",
+   "seconds": 3.33,
+   "offer": "On SPY, on days when it drops 2% or more from the open, how often does it close above the open?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "sam/sd-07.1",
+   "expected": "ask",
+   "seconds": 5.04,
+   "offer": "On SPY, how often does it drop 2% or more from the open and then recover?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "sam/sd-08.1",
+   "expected": "ask",
+   "seconds": 6.08,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "sam/sd-08.1",
+   "expected": "ask",
+   "seconds": 4.47,
+   "offer": "Sell 1 QQQ 0DTE put 10-delta below the money at 0945 ET. Take profit at 20% of the premium.",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "sam/sd-08.1",
+   "expected": "ask",
+   "seconds": 6.71,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "sam/sd-09.1",
+   "expected": "ask",
+   "seconds": 2.54,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "sam/sd-09.1",
+   "expected": "ask",
+   "seconds": 3.38,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "sam/sd-09.1",
+   "expected": "ask",
+   "seconds": 5.47,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "plain",
+   "id": "sam/sd-14.3",
+   "expected": "ask",
+   "seconds": 3.6,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 0; added: 575)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "focused",
+   "id": "sam/sd-14.3",
+   "expected": "ask",
+   "seconds": 5.63,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY; added: 575; added: 0)",
+   "developer_verdict": null
+  },
+  {
+   "model": "granite3.3:8b",
+   "variant": "schema",
+   "id": "sam/sd-14.3",
+   "expected": "ask",
+   "seconds": 4.07,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "plain",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 17.37,
+   "offer": null,
+   "why_not": "the model found something missing",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "focused",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 8.11,
+   "offer": null,
+   "why_not": "the model found something missing",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "schema",
+   "id": "brief/bd-04.1",
+   "expected": "ask",
+   "seconds": 8.95,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "plain",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 7.84,
+   "offer": "On SPY, at what time of day does it make its low?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "focused",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 4.6,
+   "offer": "On SPY, at what time of day does it make its low?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "schema",
+   "id": "brief/bd-06.1",
+   "expected": "answer",
+   "seconds": 7.57,
+   "offer": "On SPY, at what time of day does it make its low?",
+   "why_not": null,
+   "developer_verdict": "wrong"
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "plain",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 8.91,
+   "offer": null,
+   "why_not": "the model found something missing",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "focused",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 6.31,
+   "offer": null,
+   "why_not": "the model found something missing",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "schema",
+   "id": "brief/bd-09.1",
+   "expected": "ask",
+   "seconds": 7.6,
+   "offer": null,
+   "why_not": "the model found something missing",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "plain",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 10.38,
+   "offer": "On SPY, on days when it has closed down 2 days in a row and then opens below the previous close, how often does it close above its open since 2020?",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "focused",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 7.81,
+   "offer": "On SPY, on days when it has closed down 2 days in a row and then opens below the previous close, how often does it close above the previous close since 2020?",
+   "why_not": null,
+   "developer_verdict": "right"
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "schema",
+   "id": "casey/cd-04.1",
+   "expected": "answer",
+   "seconds": 11.24,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "plain",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 13.04,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "focused",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 7.81,
+   "offer": null,
+   "why_not": "the built-in reader could not read the rewrite either",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "schema",
+   "id": "casey/cd-05.1",
+   "expected": "answer",
+   "seconds": 9.05,
+   "offer": null,
+   "why_not": "the rewrite changed the content (dropped: 705; dropped: 840; added: 525)",
+   "developer_verdict": null
+  },
+  {
+   "model": "gemma3:12b",
+   "variant": "plain",
+   "id": "casey/cd-08.1",
+   "expected": "ask",
+   "seconds": 14.04,
+   "offer": null,
+   "why_not": "the rewrite changed the content (added: SPY)",
+   "developer_verdict": null
+  }
+ ]
+}

@@ -1,0 +1,3 @@
+#!/bin/zsh
+# The held-out run's command, with its environment (offline: nothing is downloaded; the stored history is read where it is).
+cd /Users/prayugsigdel/Coding/strata/backend && STRATA_INSTANCE_GUARD=0 STRATA_DATA_DIR=/Users/prayugsigdel/Coding/strata/data STRATA_OFFLINE=1 exec .venv/bin/python -m strata.ai.heldout_v10 "$@"

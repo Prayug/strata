@@ -168,7 +168,8 @@ class ResearchV5:
         return g
 
     # ------------------------------------------------------------------ launching a graph
-    def _graph(self, sid: str, graph: dict, interp: str, note: str | None = None, title: str | None = None, force: bool = False, include_holdout: bool = False, derived_from: list[str] | None = None) -> list[dict]:
+    def _graph(self, sid: str, graph: dict, interp: str, note: str | None = None, title: str | None = None, force: bool = False, include_holdout: bool = False, derived_from: list[str] | None = None,
+               review: dict | None = None) -> list[dict]:
         s, _, _ = self._state(sid)
         desc = G.describe(graph, self.store)
         if desc.get("errors"):
@@ -182,6 +183,11 @@ class ResearchV5:
                "sweeps": graph.get("sweeps"), "planner": graph.get("planner") or interp, "include_holdout": include_holdout}
         base = {"graph": pub, "raw": graph, "question": q, "data": desc["required"], "problems": desc.get("problems") or [], "interpreter": interp, "finalized": False, "runs": [], "include_holdout": include_holdout,
                 "derived_from": list(derived_from or [])}
+        from strata.ai import intent as I
+        sentence = I.describe_graph(graph) if graph.get("core") else None
+        if sentence:  # V10: what the plan measures, in one sentence; the steps stay in the technical view
+            base["reading"] = sentence
+            base["assumed"] = [a if isinstance(a, str) else a.get("text", "") for a in (graph.get("assumptions") or [])]
         missing = sorted({r["symbol"] for r in desc["required"] if not r.get("ok") and r["what"].startswith("Daily bars")})
         if missing:
             txt = (f"This question reads {', '.join(missing)}, for which no price history is stored yet. Daily history is free; nothing has been run."
@@ -194,6 +200,14 @@ class ResearchV5:
             txt = ("I could read part of this question but not all of it. Not understood: " + "; ".join(f"\"{u}\"" for u in pub["unsupported"][:4])
                    + ". Running the rest would answer a different question, so nothing has been run. You can rephrase, or run it without those parts.")
             return [db.add_message(sid, "assistant", "graph", {**base, "text": txt, "state": "awaiting", "choices": [{"id": "run", "label": "Run it without those parts"}, {"id": "cancel", "label": "I'll rephrase"}]})]
+        if review and not force:
+            # V10: the plan as one sentence, why it waits (something of the message is not in it, or simply that a plan has
+            # several steps), and the go-ahead. Nothing runs until the user says so.
+            reasons = [str(x) for x in (review.get("reasons") or [])]
+            txt = ((f"Here is how I read it: {sentence} " if sentence else "") + (" ".join(reasons) if reasons else "This is a research plan with several steps, so check that it is what you meant.")
+                   + " Nothing has been run.")
+            return [db.add_message(sid, "assistant", "graph", {**base, "text": txt, "state": "awaiting", "confirm": {"reasons": reasons, "complex": not reasons},
+                                                              "choices": [{"id": "run", "label": "Run it as read" if reasons else "Yes, run it"}, {"id": "cancel", "label": "I'll rephrase"}]})]
         if include_holdout and not force:
             syms = sorted({n["params"]["symbol"].upper() for n in graph["nodes"] if n["op"] == "data"})
             hs = [h for sym in syms for h in (LG.current(sid, sym), LG.current(sid, sym + "@intraday")) if h and h["status"] in ("sealed", "used")]

@@ -1,0 +1,17 @@
+You are judging suggestions made by a small language model inside a research tool called Strata. Read first, in full:
+
+1. /Users/prayugsigdel/Coding/strata/docs/v10_evidence/eval/product_brief.md   (what Strata is and what is in scope)
+
+Then read: /Users/prayugsigdel/Coding/strata/docs/v10_evidence/heldout_run/A/shadow_offers.jsonl
+(one JSON object per line). Each line is a turn on which Strata stopped (it asked, or showed a reading and waited). `user_message` is what the user typed, `author.intent` what they meant, `author.also_fine` other readings they accept. `model_offer` is a rewrite of the user's message that a language model would have offered as a button ("did you mean ..."), or null when it offered nothing (`no_offer_because` says why).
+
+For every line whose `model_offer` is not null, decide whether running the offered sentence would answer what the author meant:
+
+- "right": it states the author's intent (or an also_fine reading) on every material point (the ticker; what is measured or traded; every condition with its direction, size, unit and time; time window and zone; every exit and its unit; the size of the trade; the period);
+- "partly": it keeps the main request but drops or changes a material point;
+- "wrong": it asks something else.
+
+Write your verdicts with the Write tool to: /Users/prayugsigdel/Coding/strata/docs/v10_evidence/heldout_run/A/judging/offers_JUDGE.jsonl
+as JSON lines, one per offer, in the order of the file: {"key": "<key>", "verdict": "right|partly|wrong", "why": "<one sentence>"}
+
+Rules: read only the two files named above; run no commands; judge independently. Your final message to me must contain ONLY counts: lines read, offers judged, and how many right, partly and wrong. Do not quote or describe any turn.

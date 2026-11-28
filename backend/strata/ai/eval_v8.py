@@ -116,6 +116,12 @@ def _study_facts(cfg: dict, frame_kind: str | None = None) -> dict:
         outcome = f"touch:{float(t['value']):+g}"
     hz = cfg.get("horizon") or {}
     end = "close" if hz.get("kind") == "session" else hz.get("time") if hz.get("kind") == "time" else f"sessions:{hz.get('sessions')}"
+    if cfg.get("reference") == "prev_close" and hz.get("kind") in ("sessions", "session") and (t is None or meas == "close"):
+        # since the V10 held-out audit "N sessions later" is counted from the day the condition was met: the engine is given
+        # N - 1 sessions after the observation session and measures from the previous close. The question's N is reported.
+        nn_ = (int(hz.get("sessions") or 0) if hz.get("kind") == "sessions" else 0) + 1
+        if nn_ > 1 or (frame_kind == "movement" and hz.get("kind") == "session" and cfg.get("target") is None):
+            end = f"sessions:{nn_}"
     out = {"type": frame_kind or ("movement" if t is None else "frequency"), "symbol": cfg.get("symbol"), "conditions": conds, "outcome": outcome, "start": "open" if start in ("open", "09:30") else start,
            "end": end, "period": [cfg.get("start"), cfg.get("end")]}
     if seq:
@@ -176,8 +182,8 @@ def facts_of_turn(msgs: list[dict], state: dict, version, store, history: list[d
         pc = plan.get("content") or {}
         if pc.get("state") == "awaiting_answer":
             return {"response": "clarify", "text": pc.get("text", "")}
-        if pc.get("state") == "awaiting_confirmation" and (pc.get("unsupported") or (pc.get("draft") or {}).get("unsupported")):
-            return {"response": "flag", "text": pc.get("text", "")}
+        if pc.get("state") == "awaiting_confirmation" and (pc.get("unsupported") or (pc.get("draft") or {}).get("unsupported") or (pc.get("draft") or {}).get("review") or "Your message leaves" in str(pc.get("text") or "")):
+            return {"response": "flag", "text": pc.get("text", "")}  # V10: a reading that waits with the reasons listed (Draft.review) has not run either
     if route in (None, "unknown") and first and first["kind"] == "text":
         return {"response": "flag", "text": c.get("text", "")}
     if route in ("explore", "show_trades"):
@@ -225,6 +231,22 @@ def facts_of_turn(msgs: list[dict], state: dict, version, store, history: list[d
             return {"response": "ran", "type": "timing", "symbol": f.get("symbol"), "measure": f.get("measure"), "bucket": f.get("bucket"), "conditions": _frame_conds(f), "period": list(f.get("period") or [None, None])}
         if f.get("kind") == "breakdown":
             return {"response": "ran", "type": "breakdown", "symbol": f.get("symbol"), "by": f.get("by"), "measure": f.get("measure"), "conditions": _frame_conds(f), "period": list(f.get("period") or [None, None])}
+        if (f.get("outcome") or {}).get("key") == "rel":
+            rl = lambda x: f"{x['a']}{x['op']}{x['b']}" + (f"@{x['pct']:g}" if x.get("pct") else "")  # noqa: E731
+            o_ = f["outcome"]["rel"]
+            a_, b_ = str(o_.get("a")), str(o_.get("b"))
+            conds_ = [c for c in _frame_conds(f)] + ["rel:" + rl(c["rel"]) for c in f.get("conditions") or [] if c.get("key") == "rel"]
+            if not f.get("then") and not o_.get("pct"):
+                # V10 reads these as one price against a level. Where the older sets expect the same question in the older
+                # words, it is scored in those words: "above its open at 11:00" is close>open counted until 11:00, and "takes
+                # out yesterday's high in the first hour" is a touch of that level from the open until 10:30.
+                if a_.startswith("at:") and b_ in ("open", "prev_close"):
+                    return {"response": "ran", "type": "frequency", "symbol": f.get("symbol"), "outcome": f"close{o_['op']}{b_}", "start": "open", "end": a_[3:], "conditions": conds_, "period": list(f.get("period") or [None, None])}
+                if a_.split(":")[0] in ("high_by", "low_by", "high", "low") and b_ in ("prev_high", "prev_low") and (a_.startswith("high") == (b_ == "prev_high")):
+                    return {"response": "ran", "type": "frequency", "symbol": f.get("symbol"), "outcome": f"touch:{b_}", "start": "open", "end": a_.split(":", 1)[1] if ":" in a_ else "close", "conditions": conds_,
+                            "period": list(f.get("period") or [None, None])}
+            return {"response": "ran", "type": "frequency", "symbol": f.get("symbol"), "outcome": "rel:" + rl(f["outcome"]["rel"]), "then": ("rel:" + rl(f["then"]["rel"])) if f.get("then") else None,
+                    "conditions": [c for c in _frame_conds(f)] + ["rel:" + rl(c["rel"]) for c in f.get("conditions") or [] if c.get("key") == "rel"], "period": list(f.get("period") or [None, None])}
         ev = (f.get("outcome") or {}).get("event") or {}
         return {"response": "ran", "type": "frequency", "symbol": f.get("symbol"), "outcome": f"event:{ev.get('key')}{ev.get('op')}{_num(ev.get('value') or 0)}", "conditions": _frame_conds(f),
                 "period": list(f.get("period") or [None, None])}
@@ -326,6 +348,10 @@ def _value_match(key: str, exp, got) -> bool:
     if key in ("candle", "symbols"):
         return sorted(exp) == sorted(got or [])
     if key == "outcome":
+        if isinstance(got, (list, tuple)):
+            # V10 measures a word with two readings ("close green") both ways and shows each: the expected reading is right
+            # when it is one of those measured
+            return any(_value_match(key, exp, g_) for g_ in got)
         e, g = str(exp), str(got)
         if e == g:
             return True

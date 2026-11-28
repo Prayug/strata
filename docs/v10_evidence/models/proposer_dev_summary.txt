@@ -1,0 +1,17 @@
+model           approach turns offers right partly wrong  median   p90
+qwen3:4b        plain       41      1     0      0     1    2.0s   3.9s
+qwen3:4b        focused     41      0     0      0     0    2.4s   4.2s
+qwen3:4b        schema      41      8     0      2     6    3.2s   5.2s
+gemma3:4b       plain       41      6     0      0     6    3.2s   5.1s
+gemma3:4b       focused     41      4     2      0     2    2.7s   4.2s
+gemma3:4b       schema      41      6     1      0     5    3.1s   4.6s
+qwen3:8b        plain       41      4     1      0     3    3.0s   6.4s
+qwen3:8b        focused     41      3     0      0     3    4.3s   7.3s
+qwen3:8b        schema      41      4     1      1     2    5.5s   8.1s
+granite3.3:8b   plain       41      3     1      0     2    3.8s   6.7s
+granite3.3:8b   focused     41      5     3      0     2    4.7s   7.8s
+granite3.3:8b   schema      41      4     3      0     1    5.7s   9.5s
+gemma3:12b      plain        6      2     1      0     1   13.0s  17.4s
+gemma3:12b      focused      5      2     1      0     1    7.8s   8.1s
+gemma3:12b      schema       5      1     0      0     1    8.9s  11.2s
+all offers: {'wrong': 36, 'partly': 3, 'right': 14}

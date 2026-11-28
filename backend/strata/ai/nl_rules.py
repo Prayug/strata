@@ -17,8 +17,11 @@ NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "se
 TICKERS = ["SPY", "QQQ", "IWM", "DIA", "SPX", "NDX", "AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "META", "GOOGL", "AMD", "DEMO", "DEMOX"]
 ALIASES = {"s&p 500": "SPY", "s&p": "SPY", "sp500": "SPY", "nasdaq": "QQQ", "russell": "IWM", "apple": "AAPL", "nvidia": "NVDA", "tesla": "TSLA", "microsoft": "MSFT", "amazon": "AMZN"}
 TZ_OFFSET = {"pacific": 180, "pt": 180, "pst": 180, "pdt": 180, "mountain": 120, "mt": 120, "mst": 120, "mdt": 120, "central": 60, "ct": 60, "cst": 60, "cdt": 60,
-             "eastern": 0, "et": 0, "est": 0, "edt": 0, "new york": 0}
-TZ_NAME = {180: "Pacific", 120: "Mountain", 60: "Central", 0: "Eastern"}
+             "eastern": 0, "et": 0, "est": 0, "edt": 0, "new york": 0,
+             # V10. London is five hours ahead of New York except for about three weeks a year, when the two change their clocks
+             # on different dates and it is four; a time given in London time is converted with five and that is said
+             "ny": 0, "nyc": 0, "chicago": 60, "west coast": 180, "london": -300, "uk": -300, "bst": -300, "gmt": -300}
+TZ_NAME = {180: "Pacific", 120: "Mountain", 60: "Central", 0: "Eastern", -300: "London"}
 DAYNAMES = {"monday": "Mon", "tuesday": "Tue", "wednesday": "Wed", "thursday": "Thu", "friday": "Fri", "mon": "Mon", "tue": "Tue", "tues": "Tue", "wed": "Wed", "thu": "Thu", "thur": "Thu", "thurs": "Thu", "fri": "Fri"}
 N = r"(\d+(?:\.\d+)?)"
 PREV = r"(?:previous|prior|preceding|yesterday'?s?|the day before|day before|last)"
@@ -47,8 +50,16 @@ def _num(tok: str) -> float | None:
         return None
 
 
+def zoneless_offset() -> int:
+    """The zone a time written without one is read in, when the words of the message leave it open (V10). Market times are
+    quoted in New York time by convention, so that is the reading unless the user has said (Settings, Time zone) that their
+    times are in another zone. A time that cannot be New York time ("7am", "845") is not decided here: see find_times."""
+    from strata.api.settings import get_setting
+    return default_tz_offset() if get_setting("ui.timezone_confirmed") else 0
+
+
 def default_tz_offset() -> int:
-    """Offset (minutes behind New York) assumed for clock times given without a timezone."""
+    """Offset (minutes behind New York) of the time zone set in Settings."""
     from strata.api.settings import get_setting
     tz = str(get_setting("ui.timezone") or "auto")
     if tz == "auto":
@@ -60,7 +71,23 @@ def default_tz_offset() -> int:
 
 # "6:30 AM Pacific", "9:30ET", "15:30", and as people type them in a hurry: "6:30a, PST" (a letter for the half of the day,
 # attached to the digits; a comma before the zone)
-TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?|(?<=\d)[ap](?![a-z.]))?(?:\s*,?\s*(pacific|pst|pdt|pt|mountain|mst|mdt|mt|central|cst|cdt|ct|eastern|est|edt|et|new york)(?:\s*time)?)?\b", re.I)
+_ZONE = r"pacific|pst|pdt|pt|mountain|mst|mdt|mt|central|cst|cdt|ct|eastern|est|edt|et|new york|nyc|ny|chicago|west coast|london|uk|bst|gmt"
+_AMPM = r"a\.?m\.?|p\.?m\.?|(?<=\d)[ap](?![a-z.])"
+TIME_RE = re.compile(rf"\b(\d{{1,2}})(?::(\d{{2}}))?\s*({_AMPM})?(?:\s*,?\s*({_ZONE})(?:\s*time)?)?\b", re.I)
+# V10: times as traders type them without a colon. "1245 PST", "0935", "out by 1245" (four digits, read as hours and
+# minutes); "by 2", "at 10", "from 10 to 2" (an hour alone). Neither is a time on its face, so each needs a reason to be
+# one: a zone or am/pm after it, or a word before it that introduces a time, and nothing after it that makes it a quantity.
+MILITARY_RE = re.compile(rf"(?<![\d$.,:/-])([01]?\d|2[0-3])([0-5]\d)(?![\d:/%-]|[.,]\d|\s*%)\s*({_AMPM})?(?:\s*,?\s*({_ZONE})(?:\s*time)?)?\b", re.I)
+BARE_HOUR_RE = re.compile(r"(?<![\d$.,:/-])(1[0-2]|[1-9])(?:(?=ish\b)|(?![\d:/%-]|[.,]\d|\s*%)\b)")
+# "SPY at 630", "QQQ above 505": a price of the ticker just named, not a time
+PRICE_BEFORE = re.compile(r"\b(?:spy|qqq|iwm|spx|ndx|es|nq)\b\s*(?:is|was|trades?|hits?|reaches|gets? to|breaks?|crosses)?\s*(?:at|above|below|over|under|near|to)?\s*$", re.I)
+TIME_CUE = re.compile(r"(?:\bat|\bby|\buntil|\btill?|\bbefore|\bafter|\baround|\bfrom|\bbetween|@)\s*(?:the\s+)?(?:about\s+|around\s+|roughly\s+|like\s+)?$", re.I)
+RANGE_CUE = re.compile(r"^\s*(?:-|–|to|and|until|till?|through)\s*$", re.I)
+# words after a number that make it a quantity, not an hour ("at 10 delta", "after 3 red days", "by 2 points")
+NOT_A_TIME = re.compile(r"\s*(?:%|percent|pct|dte|delta|contracts?|lots?|shares?|days?|sessions?|weeks?|months?|years?|mins?\b|minutes?|hours?|hrs?\b|points?|pts\b|bucks|dollars?|k\b|x\b|times\b|strikes?|wide|wings?|"
+                        r"red|green|up\b|down\b|straight|consecutive|more\b|less\b|or more|st\b|nd\b|rd\b|th\b|bps?\b|sd\b|sigma|atr|handles?|ticks?|cents?|\d)", re.I)
+# a level, not a time: "when vix is at 12", "the 10 delta", "strike at 5"
+LEVEL_BEFORE = re.compile(r"\b(?:vix|rsi|iv|ivr|iv rank|delta|strikes?|level|price)\b\s*(?:is|was|sits|closes?|closed|reading|of)?\s*(?:at|of|above|below|over|under|near)?\s*$", re.I)
 EXIT_CUE = re.compile(r"\b(exit|sell (?:them|it|at|when|by)|close (?:the position|it|them|out)|clos(?:e|ing) (?:at|by)|take profits?|until|till|hold(?:ing)?\b|out by|\bor at\b|get out|"
                       r"buy (?:them|it|the (?:puts?|calls?|options?|contracts?)) back|cover (?:them|it|at|by)|buy to close)", re.I)
 
@@ -96,34 +123,124 @@ def exit_clauses(text: str) -> list[tuple[int, int]]:
 def _session_readings(h: int, mi: int, ap: str | None) -> list[tuple[int, int]]:
     """(offset to New York, hour) readings of a time with no zone that land inside the regular session."""
     cand = []
-    for o in dict.fromkeys((0, default_tz_offset(), 180)):
+    for o in dict.fromkeys((0, zoneless_offset(), 180)):
         hh = h if ap else (h + 12 if (h < 7 and o == 0) or (h < 6 and o == 180) else h)
         if 570 <= hh * 60 + mi + o <= 960:
             cand.append((o, hh))
     return cand
 
 
-def find_times(text: str, msg_offset: int | None) -> list[dict]:
-    """Clock times in the text, converted to New York time. Each: {pos, et, stated, assumed_tz}.
-    Times written without a zone are all read in ONE zone: the first of (the zone set in Settings, Eastern,
-    Pacific) in which every one of them falls inside the regular session. "Enter at 10:00, out by 15:30" is
-    therefore never half Pacific and half Eastern."""
-    out = []
+class _T:
+    """One written time: where it stands, and the regex-like accessors the code below was written against."""
+
+    def __init__(self, a: int, b: int, words: str, how: str):
+        b = a + len(words.rstrip(" ,"))  # the optional am/pm and zone groups take the spaces before them even when absent
+        self.a, self.b, self.words, self.how = a, b, words[:b - a], how
+
+    def start(self) -> int:
+        return self.a
+
+    def end(self) -> int:
+        return self.b
+
+    def group(self, _i: int = 0) -> str:
+        return self.words
+
+
+# what may follow an hour written alone after a weak cue ("after 2", "from 10") for it to be a time: the end of the clause,
+# or a word that cannot make it a quantity. After "at", "by", "until" anything but a quantity word may follow.
+_AFTER_HOUR_OK = re.compile(r"\s*(?:$|[,.;:!?)]|(?:and|or|to|then|if|when|on|in|every|each|sell|exit|out|close|buy|enter|with|using|for|the|i|we|but|unless|only|instead|sharp|o'?clock|today|"
+                            r"tomorrow|my time|local|not|no|so|also|latest|at the latest|max|ish|monday|tuesday|wednesday|thursday|friday|-|–|until|till?|through)\b)", re.I)
+
+
+def _written_times(text: str) -> list[tuple]:
+    """Every clock time written in the text, left to right: (where, hour, minute, am/pm, zone). A time on its face (a colon,
+    am/pm or a zone) is taken as before. Four digits ("1245", "0935") and an hour alone ("by 2") are times only with a
+    reason: a zone or am/pm, or a word before them that introduces a time, and nothing after them that makes them a
+    quantity or a level ("at 10 delta", "after 3 red days", "when VIX is at 12")."""
     low = text.lower()
-    found = []
+    taken = [False] * (len(text) + 1)
+    found: list[tuple] = []
+
+    def free(a: int, b: int) -> bool:
+        return not any(taken[a:b])
+
+    def take(a: int, b: int):
+        for i in range(a, b):
+            taken[i] = True
+
     for m in TIME_RE.finditer(text):
         h, mi, ap, tz = m.group(1), m.group(2), m.group(3), m.group(4)
         if not (mi or ap or tz):
-            continue  # a bare number is not a time
+            continue  # a bare number is not a time on its face
         if text[m.end():m.end() + 1] == "%" or low[m.end():m.end() + 4].lstrip().startswith(("dte", "min", "day", "delta")):
             continue
         h, mi = int(h), int(mi or 0)
         if h > 23 or mi > 59:
             continue
+        found.append((_T(m.start(), m.end(), m.group(0), "clock"), h, mi, ap, tz))
+        take(m.start(), m.end())
+    for m in MILITARY_RE.finditer(text):
+        if not free(m.start(), m.end()):
+            continue
+        h, mi, ap, tz = int(m.group(1)), int(m.group(2)), m.group(3), m.group(4)
+        pre = text[max(0, m.start() - 28):m.start()]
+        cue = bool(TIME_CUE.search(pre)) or bool(re.search(r"(?:\b(?:out|in|on|off|enter(?:ing)?|entry|entries|exit(?:ing)?|flat|sell|buy|time ?stop|open(?:ing)?|clos(?:e|ing))|@|,|\band)\s*$", pre, re.I)) \
+            or bool(re.search(r"\b(?:move[sd]?|chang(?:e|ed|ing)|push(?:ed)?|shift(?:ed)?|set|make|slide|bump(?:ed)?)\b[^.;,]{0,24}\bto\s*$", pre, re.I))  # "move the exit to 1245"
+        if not (ap or tz or cue):
+            continue
+        if not (ap or tz) and (NOT_A_TIME.match(text[m.end():]) or LEVEL_BEFORE.search(pre) or PRICE_BEFORE.search(pre) or not (m.group(1).startswith("0") or _session_readings(h, mi, None))):
+            continue  # "at 2020", "by 1500 shares": not a time of the session in any zone, or a quantity
+        found.append((_T(m.start(), m.end(), m.group(0), "digits"), h, mi, ap, tz))
+        take(m.start(), m.end())
+    found.sort(key=lambda f: f[0].a)
+    for m in BARE_HOUR_RE.finditer(text):
+        if not free(m.start(), m.end()):
+            continue
+        pre = text[max(0, m.start() - 28):m.start()]
+        post = text[m.end():]
+        strong = re.search(r"(?:\bat|\bby|\buntil|\btill?|@)\s*(?:about\s+|around\s+|roughly\s+|like\s+)?$", pre, re.I)
+        ranged = any(f[0].b <= m.start() and RANGE_CUE.match(text[f[0].b:m.start()]) for f in found)  # "from 10 to 2", "10:30-2"
+        weak = TIME_CUE.search(pre) or ranged
+        if not (strong or weak) or LEVEL_BEFORE.search(pre) or NOT_A_TIME.match(post):
+            continue
+        if not strong and not _AFTER_HOUR_OK.match(post):
+            continue
+        h = int(m.group(1))
+        if not _session_readings(h, 0, None):
+            continue
+        end = m.end() + (3 if low[m.end():m.end() + 3] == "ish" else 0)
+        found.append((_T(m.start(), end, text[m.start():end], "hour"), h, 0, None, None))
+        take(m.start(), end)
+        found.sort(key=lambda f: f[0].a)
+    return found
+
+
+def _plausible_zones(h: int, mi: int, ap: str | None) -> list[int]:
+    """Every US zone (minutes behind New York) in which a time written without one falls inside the regular session. More
+    than one means the zone is a choice the words do not make."""
+    out = []
+    for o in (0, 60, 120, 180):
+        hs = [h] if ap or h >= 12 else [h, h + 12]
+        if any(570 <= hh * 60 + mi + o <= 960 for hh in hs):
+            out.append(o)
+    return out
+
+
+def find_times(text: str, msg_offset: int | None) -> list[dict]:
+    """Clock times in the text, converted to New York time. Each: {pos, end, et, stated, assumed_tz, how, zones}.
+    Times written without a zone are all read in ONE zone: the first of (the zone set in Settings, Eastern,
+    Pacific) in which every one of them falls inside the regular session. "Enter at 10:00, out by 15:30" is
+    therefore never half Pacific and half Eastern. `zones` lists every zone in which a zone-less time falls inside the
+    session: more than one means the zone was a choice, which the reading has to say (intent.check asks when it matters)."""
+    out = []
+    low = text.lower()
+    found = []
+    for m, h, mi, ap, tz in _written_times(text):
         if ap:
             h = (h % 12) + (12 if ap.lower().startswith("p") else 0)
         found.append((m, h, mi, ap, tz))
-    pref = default_tz_offset()
+    pref = zoneless_offset()
     common = None
     named = {TZ_OFFSET[tz.lower()] for _m, _h, _mi, _ap, tz in found if tz and tz.lower() in TZ_OFFSET}
     if msg_offset is None and len(named) == 1:
@@ -136,16 +253,33 @@ def find_times(text: str, msg_offset: int | None) -> list[dict]:
         # York time, and so is every other zone-less time in the sentence; the interpretation still says which zone it assumed.
         if 0 in shared and any((h, mi) == (9, 30) and not tz and (ap or "a").lower().startswith("a") for _m, h, mi, ap, tz in found):
             common = 0
+        # V10: every US zone is considered. When exactly one puts every zone-less time of the message inside the session,
+        # that is the zone ("8:45 ... out by 2:30" can only be Central), whatever the setting says.
+        plaus = [set(_plausible_zones(h, mi, ap)) for _m, h, mi, ap, tz in found if not tz]
+        shared4 = set.intersection(*plaus) if plaus else set()
+        if len(shared4) == 1:
+            common = next(iter(shared4))
+    else:
+        shared4 = set()
     for m, h, mi, ap, tz in found:
         off = TZ_OFFSET.get(tz.lower()) if tz else msg_offset
         assumed = None
+        zones: list[str] = []
         if off is None:
             cand = _session_readings(h, mi, ap)
+            zs = _plausible_zones(h, mi, ap)
+            zones = [TZ_NAME[o] for o in (sorted(shared4) if shared4 else zs)]
             want = common if common is not None else pref
-            off, h = next((c for c in cand if c[0] == want), cand[0] if cand else (want, h))
+            pick = next((c for c in cand if c[0] == want), None)
+            if pick is None and want in zs:
+                pick = (want, h if (ap or 570 <= h * 60 + mi + want <= 960) else h + 12)
+            off, h = pick if pick is not None else (cand[0] if cand else (want, h))
             assumed = TZ_NAME.get(off, "Eastern")
         elif not ap:
-            if off == 0 and h < 7:
+            # an hour with a zone and no am/pm is the one inside the session ("2:30 CT" is the afternoon, "3 London" is 15:00)
+            if h < 12 and not (570 <= h * 60 + mi + off <= 960) and 570 <= (h + 12) * 60 + mi + off <= 960:
+                h += 12
+            elif off == 0 and h < 7:
                 h += 12
             elif off >= 120 and h < 6:
                 h += 12
@@ -153,12 +287,20 @@ def find_times(text: str, msg_offset: int | None) -> list[dict]:
         if not (0 <= et < 24 * 60):
             continue
         stated = m.group(0).strip()
-        out.append({"pos": m.start(), "et": f"{et // 60:02d}:{et % 60:02d}", "stated": stated + (f" ({assumed} assumed)" if assumed else ""), "assumed_tz": assumed, "minutes": et})
+        out.append({"pos": m.start(), "end": m.end(), "et": f"{et // 60:02d}:{et % 60:02d}", "stated": stated + (f" ({assumed} assumed)" if assumed else ""), "assumed_tz": assumed, "minutes": et,
+                    "how": getattr(m, "how", "clock"), "zones": zones, "zone": TZ_NAME.get(off, "Eastern")})
     for pat, val in ((r"\b(?:at|on|from|after) the (?:market )?open(?:ing bell)?\b|\bat (?:market )?open\b|\bmarket open\b|\bopening bell\b", "open"),
                      (r"\b(?:at|on|by|into|near) the (?:market )?close\b|\bat (?:market )?close\b|\bmarket close\b|\bclosing bell\b|\bend of (?:the )?day\b|\beod\b", "close"),
                      (r"\bnoon\b|\bmidday\b", "12:00")):
         for m in re.finditer(pat, low):
-            out.append({"pos": m.start(), "et": val, "stated": m.group(0).strip(), "assumed_tz": None, "minutes": {"open": 570, "close": 960}.get(val, 720)})
+            mins = {"open": 570, "close": 960}.get(val, 720)
+            if val == "12:00":
+                # V10: noon is noon in the zone of the message's other times ("at 8:45 ct ... out at noon" is 13:00 New York)
+                zs = {x["zone"] for x in out if x.get("how") != "named"}
+                off = {"Eastern": 0, "Central": 60, "Mountain": 120, "Pacific": 180, "London": -300}.get(next(iter(zs)), 0) if len(zs) == 1 else (msg_offset or 0)
+                if 570 <= 720 + off <= 960:
+                    mins, val = 720 + off, f"{(720 + off) // 60:02d}:{(720 + off) % 60:02d}"
+            out.append({"pos": m.start(), "end": m.end(), "et": val, "stated": m.group(0).strip(), "assumed_tz": None, "minutes": mins, "how": "named", "zones": [], "zone": "Eastern"})
     return sorted(out, key=lambda x: x["pos"])
 
 
@@ -180,18 +322,49 @@ def find_symbol(text: str, known: list[str]) -> str | None:
     return None
 
 
+_SELL_OPEN = r"\b(?:sell|selling|sold|short|shorting|write|writing|sto)\b(?! (?:it|them|out|half|the rest|everything|all|both|at|when|by|if|once|before|after|into)\b)"
+_BUY_OPEN = r"\b(?:buy|buying|bought|long|bto)\b(?! (?:it|them)(?: all)? back)"
+
+
+def _sold_to_open(low: str, pos: int) -> bool:
+    """Is the position named at `pos` opened by a sale? The last opening verb before it decides. "Buying a straddle at 9:35
+    and selling it at 11:30" is bought: "selling it" closes it. (Until V10 any "sell" in the message made it a short one.)"""
+    before = low[:pos]
+    verbs = [(m.end(), True) for m in re.finditer(_SELL_OPEN, before)] + [(m.end(), False) for m in re.finditer(_BUY_OPEN, before)]
+    if verbs:
+        return max(verbs)[1]
+    after = low[pos:]
+    return bool(re.search(_SELL_OPEN, after)) and not re.search(_BUY_OPEN, after) and bool(re.search(r"\b(?:credit|premium (?:received|collected)|short)\b", low))
+
+
 def find_structure(low: str) -> str | None:
     short = bool(re.search(r"\b(sell|selling|short|shorting|write|writing|sold)\b", low))
+    ms = re.search(r"\bstraddles?\b|\bstrangles?\b", low)
+    if ms and not re.search(r"iron condor|iron (?:butter)?fl(?:y|ies)", low):
+        return ("short_" if _sold_to_open(low, ms.start()) else "long_") + ("straddle" if "straddle" in ms.group(0) else "strangle")
     table = [
         (r"iron condor", "iron_condor"), (r"iron (?:butter)?fl(?:y|ies)", "iron_butterfly"),
         (r"straddle", "short_straddle" if short else "long_straddle"), (r"strangle", "short_strangle" if short else "long_strangle"),
         (r"put credit spread|bull put|short put spread|credit put spread", "bull_put_spread"), (r"call credit spread|bear call|short call spread|credit call spread", "bear_call_spread"),
-        (r"call debit spread|bull call|long call spread|debit call spread|call spread", "bull_call_spread"), (r"put debit spread|bear put|long put spread|debit put spread|put spread", "bear_put_spread"),
+        (r"call debit spread|bull call|long call spread|debit call spread", "bull_call_spread"), (r"put debit spread|bear put|long put spread|debit put spread", "bear_put_spread"),
         (r"covered calls?", "covered_call"), (r"cash[- ]secured puts?|csp\b", "short_put"),
+        # V10: a covered call said by its parts: "own 100 shares, sell the call about 30 days out", "sell a call against my shares"
+        (r"\b(?:own|owning|hold|holding|long|have|buy)\s+(?:the\s+|my\s+)?(?:\d+\s+)?(?:shares|stock)\b[^.;]{0,70}\b(?:sell|selling|write|writing|short)\s+(?:an?\s+|the\s+|one\s+|1\s+)?(?:[\w.%-]+\s+){0,4}?calls?\b"
+         r"|\b(?:sell|selling|write|writing)\s+(?:an?\s+|the\s+|one\s+|1\s+)?(?:[\w.%-]+\s+){0,4}?calls?\s+against\s+(?:my\s+|the\s+|\d+\s+)?(?:[a-z]{2,5}\s+)?(?:shares|stock|position)\b", "covered_call"),
     ]
     for pat, s in table:
         if re.search(pat, low):
             return s
+    # V10: a spread named without "credit" or "debit" is the one its verb opens. "Sell a put spread: short the 20 delta, long
+    # the strike 5 under it" is a put CREDIT spread; until V10 every bare "put spread" was read as a debit spread that is bought.
+    m = re.search(r"\b(?P<r>put|call)s? (?:spread|vertical)s?\b|\b(?P<r2>pcs|ccs|pds|cds)\b", low)
+    if m:
+        if m.group("r2"):
+            return {"pcs": "bull_put_spread", "ccs": "bear_call_spread", "pds": "bear_put_spread", "cds": "bull_call_spread"}[m.group("r2")]
+        before = low[:m.start()]
+        sold = re.search(r"\b(?:sell|selling|sold|short|shorting|write|writing|sto)\b(?! (?:it|them|out|half|the rest|everything|all)\b)[^.;]{0,48}$", before) and not re.search(r"\b(?:buy|buying|bought|bto)\b[^.;]{0,30}$", before)
+        credit = bool(sold) or bool(re.search(r"\bcredit\b|\bcollect\w*", low))
+        return ("bull_put_spread" if credit else "bear_put_spread") if m.group("r") == "put" else ("bear_call_spread" if credit else "bull_call_spread")
     put = re.search(r"\bputs?\b", low)
     call = re.search(r"\bcalls?\b", low)
     if put and call:
@@ -489,6 +662,16 @@ def find_period(low: str) -> tuple[date | None, date | None, str | None]:
     m = re.search(r"(?:from|between)\s+((?:19|20)\d{2})\s*(?:to|-|through|and|until)\s*((?:19|20)\d{2})(?![-/]\d)", low)
     if m:
         return date(int(m.group(1)), 1, 1), date(int(m.group(2)), 12, 31), None
+    # V10: "2016 through 2025", "2005 to 2025"; "2016 onward", "2016 to the present"; "since the start of 2000", "going back to 1993"
+    m = re.search(r"(?<![-/\d.$])\b((?:19|20)\d{2})\s*(?:to|through|thru|until|till|-|–)\s*((?:19|20)\d{2})\b(?![-/]\d| ?%)", low)
+    if m and int(m.group(1)) <= int(m.group(2)):
+        return date(int(m.group(1)), 1, 1), date(int(m.group(2)), 12, 31), None
+    m = re.search(r"(?<![-/\d.$])\b((?:19|20)\d{2})\s*(?:onwards?|forward|and (?:later|after|on)\b|(?:to|through|thru|until|till|-|–) ?(?:the )?(?:present|now|today|date|latest|current)|on(?=\s*[.,;?!]|\s*$))", low)
+    if m:
+        return date(int(m.group(1)), 1, 1), None, None
+    m = re.search(r"(?:since|from|after) (?:the )?(?:start|beginning|turn|first day) of ((?:19|20)\d{2})\b|\b(?:going |go |goes |all the way )?back to ((?:19|20)\d{2})\b", low)
+    if m:
+        return date(int(m.group(1) or m.group(2)), 1, 1), None, None
     m = re.search(r"(?:since|after|from)\s+((?:19|20)\d{2})\b(?![-/]\d)", low)
     if m:
         return date(int(m.group(1)), 1, 1), None, None

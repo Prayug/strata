@@ -158,6 +158,7 @@ def summary_text(lines: list[str]) -> str:
 
 # ------------------------------------------------------------------------------------------------------------ the cues
 UNDO = re.compile(r"^\s*(?:undo|go back|revert|never ?mind|scratch that|back to (?:the )?(?:previous|last) (?:one|version))\b", re.I)
+COMPARE_WITH_BEFORE = re.compile(r"^\s*(?:now |ok |okay |and |so |please |can you |could you )*compare (?:it|this|that|them|these|the (?:result|new one|version))? ?(?:with|to|against|vs\.?|versus) (?:the )?(?:version|one|result|run|numbers)? ?(?:from )?(?:before|previous|prior|last|earlier|original)\b", re.I)
 COMPARE = re.compile(r"\bcompare\b.*\b(?:both|previous|last|before|old|original|first)\b|\b(?:both|previous|before)\b.*\bcompare\b|^\s*compare (?:them|the two|these)\b|\bside by side\b", re.I)
 CONVERT = re.compile(r"\b(?:what if (?:i|we) |if (?:i|we) |could (?:i|we) |(?:i|we)'?d |let'?s |ok,? so |okay,? so |so |now |then )?(?:buy|bought|buying|trade|traded|trading|sell|sold|selling|use|go long|go short)\b.{0,40}?\b(?:calls?|puts?|options?)\b", re.I)
 EXPLORE = re.compile(r"^\s*(?:show|list|see|give|open|which)(?: me)?\b.{0,40}\b(?:days?|dates?|trades?|sessions?|times|ones|examples?|cases?)\b|\bthe days (?:it|that) (?:happened|worked|failed)\b", re.I)
@@ -225,14 +226,90 @@ def edit_question(text: str, frame: dict, known: list[str], last_slot: str | Non
                 "options": [{"label": name, "patch": {"slot": slot, "index": idx, "value": v}} for slot, name, idx in slots]}
 
     # the instrument
-    syms = [x for x in ms if x.kind == "symbol"]
+    # the VIX is a level the question conditions on, never what it is asked about: "remove the vix condition" moved the question
+    # onto VIX itself (V10)
+    syms = [x for x in ms if x.kind == "symbol" and x.value["symbol"] != "VIX"]
     for x in syms:
         x.used = True
         if x.value["stored"] and x.value["symbol"] != f.get("symbol"):
             f["symbol"], f["symbols"], f["symbol_stated"] = x.value["symbol"], [x.value["symbol"]], True
             changed_slot = changed_slot or "symbol"
         elif not x.value["stored"]:
-            return {"action": "clarify", "text": f"No price history for {x.value['symbol']} is stored, so the question cannot be moved to it. Stored: {', '.join(known)}.", "options": []}
+            return {"action": "clarify", "text": f"No price history for {x.value['symbol']} is stored, so the question cannot be moved to it. Stored: {', '.join(k for k in known if not k.startswith('DEMO'))}.", "options": []}
+    if not syms:
+        from strata.ai import intent as I
+        nick = I.named_ticker(text, known)  # V10: "same thing for the q's", "and small caps?"
+        if nick and nick != f.get("symbol"):
+            f["symbol"], f["symbols"], f["symbol_stated"] = nick, [nick], True
+            changed_slot = changed_slot or "symbol"
+    # V10, questions about one price against a level (semantics._relation)
+    is_rel = (f.get("outcome") or {}).get("key") == "rel"
+    # ("how does that change in high-volatility periods?" has the word "high" and is not about the high: V10)
+    if is_rel and re.search(r"\b(?:the |its |for the |yesterday'?s |previous |prior )(?:lows?|highs?)\b(?![- ](?:vol|vix|beta|risk|volume))|^\s*(?:and|what about|how about|same for|now|do|try)\b[^.?]{0,24}\b(?:lows?|highs?)\s*[.?!]*$", low) \
+            and not re.search(r"\b(?:high|low)[- ]?(?:vol\w*|vix|volume|beta|risk)\b", low) and not [x for x in ms if x.kind == "rel"] and len(low.split()) <= 9:
+        want = "prev_low" if re.search(r"\blows?\b", low) else "prev_high"
+
+        def mirror(rel: dict) -> dict:
+            if rel.get("b") not in ("prev_high", "prev_low") or rel["b"] == want:
+                return rel
+            a = rel["a"].replace("high", "§").replace("low", "high").replace("§", "low")
+            return {**rel, "a": a, "b": want, "op": {">": "<", "<": ">", ">=": "<=", "<=": ">="}[rel["op"]], **({"pct": -rel["pct"]} if rel.get("pct") else {})}
+        before = SM.describe(f)
+        for part in ("outcome", "then"):
+            if (f.get(part) or {}).get("key") == "rel":
+                f[part] = {**f[part], "rel": mirror(f[part]["rel"])}
+        f["conditions"] = [({**c, "rel": mirror(c["rel"])} if c.get("key") == "rel" else c) for c in f.get("conditions") or []]
+        if SM.describe(f) != before:
+            changed_slot = changed_slot or "outcome"
+            for x in ms:
+                if x.kind in ("outcome", "anchor"):
+                    x.used = True
+    for x in [x for x in ms if x.kind == "rel"]:
+        x.used = True
+        v = {"key": "rel", "rel": dict(x.value["rel"]), "text": x.text}
+        if v["rel"]["a"] == "state":
+            c_ = next((c for c in ms if c.kind == "clock"), None)
+            if c_ is None:
+                return {"action": "clarify", "text": f"At what time should \"{x.text}\" hold? For example \"at 10:00\".", "options": []}
+            c_.used = True
+            v["rel"]["a"] = "at:" + c_.value["et"]
+        if is_rel or f.get("kind") == "frequency" and re.search(r"\bonly\b|\bwhen\b|\bif\b|\bdays? (?:that|where|when)\b|\bwhere\b|\bfilter\b|\badd\b", low):
+            if re.search(r"\bonly\b|\bwhen\b|\bif\b|\bdays? (?:that|where|when)\b|\bwhere\b|\bfilter\b|\badd\b", low) or not is_rel:
+                f.setdefault("conditions", []).append(v)
+                changed_slot = changed_slot or f"condition#{len(f['conditions']) - 1}"
+            else:
+                f["outcome"] = v
+                changed_slot = changed_slot or "outcome"
+    # a size for a condition the question has, named by its noun: "gaps over 1% only", "only when the drop was at least 1.5%"
+    sz = re.search(r"\b(?P<w>gap\w*|open\w*|drop\w*|declin\w+|fall\w*|fell|sell-?off|down day|red day|up day|green day|rall\w+|ris\w+|move\w*|vix)\b[^.?%]{0,26}?(?P<c>over|above|bigger than|larger than|more than|greater than|at least|of|>=?|under|below|less than|smaller than|<=?|is|was|were|to|=)\s*(?:only |just |about |around |exactly |now )?(?P<n>\d+(?:\.\d+)?)\s*(?:%|percent|pct)?", low)
+    said_dir = bool(sz and re.search(r"\b(?:up|down|higher|lower|above|below|green|red)\b", low[:sz.start("c")][-30:] + " " + low[sz.end():sz.end() + 24]))
+    if sz and not said_dir:  # the direction is the question's own: only the size is new
+        w, val = sz.group("w"), float(sz.group("n"))
+        key = "gap" if re.match(r"gap|open", w) else "vix" if w == "vix" else "prev_return"
+        conds = f.setdefault("conditions", [])
+        tgt = next((c for c in conds if c.get("key") == key), None)
+        if tgt is None and key == "gap":
+            ro = next((c for c in conds if c.get("key") == "rel" and c["rel"].get("a") == "open" and c["rel"].get("b") == "prev_close"), None)
+            if ro is not None:  # "opens below the previous close" given a size is a gap of that size
+                down = ro["rel"]["op"] in ("<", "<=")
+                tgt = {"key": "gap", "op": "<=" if down else ">=", "value": -val if down else val, "text": sz.group(0)}
+                conds[conds.index(ro)] = tgt
+                changed_slot = changed_slot or "condition"
+                tgt = "done"
+        if isinstance(tgt, dict):
+            if key == "vix":
+                tgt.update(value=val, op=">" if sz.group("c") in ("over", "above", "more than", "greater than", "at least", ">", ">=") else "<", text=sz.group(0))
+            else:
+                down = tgt.get("op") in ("<", "<=")
+                tgt.update(value=-val if down else val, op="<=" if down else ">=", text=sz.group(0))
+                tgt.pop("values", None)
+                tgt.pop("size", None)
+            changed_slot = changed_slot or f"condition#{conds.index(tgt)}"
+        if tgt is not None:
+            for x in ms:
+                if x.kind in ("event", "outcome") and n.span(x.a, x.b)[0] < sz.end() and n.span(x.a, x.b)[1] > sz.start():
+                    x.used = True
+            ms = [x for x in ms if not (x.kind == "event" and n.span(x.a, x.b)[0] < sz.end() and n.span(x.a, x.b)[1] > sz.start())]
     # the period
     for x in ms:
         if x.kind == "period":
@@ -269,7 +346,8 @@ def edit_question(text: str, frame: dict, known: list[str], last_slot: str | Non
             changed_slot = changed_slot or "scope"
 
     # conditions: added, replaced (same kind), corrected (the one just edited), or removed
-    removing = bool(re.search(r"\b(?:remove|drop|without|no longer|ignore|forget)\b", low))
+    # "drop the gap filter" removes; "what if the drop is 2%" names yesterday's fall (a noun: "the drop", "drop of", "drop is")
+    removing = bool(re.search(r"\b(?:remove|without|no longer|ignore|forget)\b|(?<!\bthe )(?<!\ba )(?<!\bthat )(?<!\bthis )(?<!\bbigger )(?<!\bsmaller )\bdrop\b(?!\s+(?:is|was|were|of|by|to be|being)\b)", low))
     events = [x for x in ms if x.kind == "event" and x.value.get("key") not in ("unsupported_event",)]
     correction = bool(re.match(r"^\s*(?:no+|nah|nope|sorry|actually|oops|i meant|i mean|not quite|rather|wait)\b", low))
     for x in events:
@@ -282,7 +360,10 @@ def edit_question(text: str, frame: dict, known: list[str], last_slot: str | Non
             continue
         if v.get("key") == "move":
             # "down at least 1%" after "what about when yesterday was red": the condition being corrected keeps its kind
-            target = next((c for c in reversed(f.get("conditions") or []) if c.get("key") in ("prev_return", "gap", "from_open")), None)
+            # the noun says which one when the question has several: "the drop" is yesterday's fall, "the gap" the open
+            named = "gap" if re.search(r"\bgap|\bopen", x.text.lower()) else "prev_return" if re.search(r"\bdrop|\bfall|\bfell|\bdeclin|\bsell-?off|\bdown day|\bred day|\bup day|\bgreen day|\brall", x.text.lower()) else None
+            cands = [c for c in reversed(f.get("conditions") or []) if c.get("key") in ("prev_return", "gap", "from_open")]
+            target = next((c for c in cands if c.get("key") == named), None) or next(iter(cands), None)
             v["key"] = (target or {}).get("key") or "prev_return"
         v["text"] = x.text
         conds = f.setdefault("conditions", [])
@@ -299,8 +380,22 @@ def edit_question(text: str, frame: dict, known: list[str], last_slot: str | Non
                 # "what if it gapped down but yesterday was green" after "gaps down more than 1%": the condition is restated, not
                 # resized: it keeps its size (until V9 it became "any gap down", said, but not what was meant)
                 continue
+            if not v.get("value") and old.get("value") and v.get("size") in (None, "unstated") and not correction and not v.get("values") \
+                    and re.search(r"\bsame\b|\bthe other way\b|\binstead\b|\bflip\b|\breverse\b|^\s*(?:and|now|what about|how about)\b", low):
+                # V10: "same for gap ups" after "a 2% gap down": the other direction, the same size (said in the change line)
+                up_ = v.get("op") in (">", ">=")
+                v = {**{k_: x_ for k_, x_ in v.items() if k_ != "size"}, "value": abs(float(old["value"])) * (1 if up_ else -1), "op": ">=" if up_ else "<="}
+                v["text"] = SM.describe_condition(v)
             conds[same[-1]] = v
             changed_slot = changed_slot or f"condition#{same[-1]}"
+        elif (vague := next((i for i, c in enumerate(conds) if c.get("values") and c.get("size") == "vague"), None)) is not None and v.get("key") in ("gap", "prev_return", "from_open", "first_candle", "change") \
+                and (v.get("value") or v.get("minutes") or v.get("direction")):
+            # the question had a word with no size ("a bad open") and three sizes were tried for it; this message says what
+            # was meant ("a gap down of at least half a percent"): it takes that word's place
+            if conds[vague].get("key") == "from_open" and v.get("key") in ("gap", "prev_return") and f.get("start") == "signal":
+                f["start"] = "open"  # known at the open: measured from there, not from a moment during the day
+            conds[vague] = v
+            changed_slot = changed_slot or f"condition#{vague}"
         else:
             conds.append(v)
             changed_slot = changed_slot or f"condition#{len(conds) - 1}"
@@ -332,6 +427,25 @@ def edit_question(text: str, frame: dict, known: list[str], last_slot: str | Non
                 return {"action": "noop", "text": f"{x.text.strip()} is 09:30 New York time, the opening bell, which is where the candle in this question starts. Nothing changed."}
             return {"action": "clarify", "text": f"{x.text.strip()} is {x.value['et']} New York time. This question is about the first candle of the session, which starts at 09:30; a candle starting later is not available yet.",
                     "options": []}
+        if x.kind == "clock" and is_rel and not x.used:
+            # V10: "narrow it to days where the break happens before 10:30": the time belongs to the price that is counted
+            pre_ = n.norm[max(0, x.a - 16):x.a]
+            rel_ = dict(f["outcome"]["rel"])
+            base_ = str(rel_["a"]).split(":")[0]
+            et_ = "16:00" if x.value["et"] == "close" else "09:30" if x.value["et"] == "open" else x.value["et"]
+            if base_.split("_")[0] in ("high", "low"):
+                side_ = base_.split("_")[0]
+                if re.search(r"\b(?:before|by|until|till|til|through|prior to|within)\s*$", pre_):
+                    rel_["a"] = f"{side_}_by:{et_}"
+                elif re.search(r"\b(?:after|from|past|since)\s*$", pre_):
+                    rel_["a"] = f"{side_}_from:{et_}"
+            elif base_ == "at" and re.search(r"\b(?:at|by|as of)\s*$", pre_):
+                rel_["a"] = "at:" + et_
+            if rel_ != f["outcome"]["rel"]:
+                x.used = True
+                f["outcome"] = {**f["outcome"], "rel": rel_}
+                changed_slot = changed_slot or "outcome"
+            continue
         if x.kind == "clock" and f.get("kind") in ("frequency", "movement"):
             x.used = True
             pre = n.norm[max(0, x.a - 14):x.a]
@@ -345,6 +459,10 @@ def edit_question(text: str, frame: dict, known: list[str], last_slot: str | Non
     if not changed_slot:
         unread = [u["text"] for u in SM.unread_words(n, ms)]
         return {"action": "none", "unread": unread}
+    if not summary(frame, f) and SM.describe(frame) == SM.describe(f):
+        # V10: something in the frame moved but the question that would be answered is the same one: that is not a change,
+        # and running it again would look like an answer to the follow-up
+        return {"action": "none", "unread": [u["text"] for u in SM.unread_words(n, [m_ for m_ in ms if m_.used])] or [text.strip()]}
     return {"action": "edit", "frame": f, "changes": summary(frame, f), "slot": changed_slot, "correction": correction}
 
 
@@ -382,6 +500,13 @@ def answer_clarification(text: str, pending: dict) -> dict | None:
         lab = o["label"].lower()
         if low == lab or low == str(i + 1) or (len(low) >= 3 and (low in lab or lab.startswith(low))):
             return {"index": i, "option": o}
+    # "the first one", "option 2", "second": a choice named by its place
+    om = re.fullmatch(r"(?:the |option |choice |number |#)?(first|1st|second|2nd|third|3rd|fourth|4th|last|\d)(?: one| option| choice)?", low)
+    if om and opts:
+        w = om.group(1)
+        i = len(opts) - 1 if w == "last" else {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3}.get(w, int(w) - 1 if w.isdigit() else -1)
+        if 0 <= i < len(opts):
+            return {"index": i, "option": opts[i]}
     # "the gap": a word of one option's label and of no other
     words = [w for w in re.findall(r"[a-z]+", low) if w not in SM.FILLER]
     hits = [i for i, o in enumerate(opts) if words and all(re.search(rf"\b{re.escape(w)}", o["label"].lower()) for w in words)]

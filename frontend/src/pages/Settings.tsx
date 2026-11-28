@@ -145,6 +145,12 @@ export default function Settings() {
                   <Field label="New research starts in" hint="Quick research runs straight away and lists every assumption. Review first waits for you to confirm the interpretation.">
                     <Select value={draft["ai.exec_mode"] || "quick"} onChange={(v) => set("ai.exec_mode", v)} options={[{ value: "quick", label: "Quick research" }, { value: "review", label: "Review before running" }]} />
                   </Field>
+                  <Field label="When a message could not be read" hint="The model may then suggest one rewrite of it, shown as a choice under the reply and never run by itself. The rewrite is only offered if it holds the same numbers and times as your message and the built-in reader can read it. Off by default: with the local models tested here, more of the suggestions that passed those checks were wrong than right (docs/V10_REPORT.md).">
+                    <Select value={draft["llm.proposer"] || "off"} onChange={(v) => set("llm.proposer", v)} options={[{ value: "off", label: "Say what was not understood; no suggestion" }, { value: "schema", label: "Also show the model's one suggested rewrite" }, { value: "focused", label: "The same, with the model answering in free text" }]} />
+                  </Field>
+                  <Field label="A request with several parts" hint="Two conditions, a second step, several exits: the reading is shown and waits for your go-ahead before anything runs. A simple question is always answered at once, and a reading with something missing or unclear always waits.">
+                    <Select value={draft["ai.confirm_complex"] === false ? "run" : "confirm"} onChange={(v) => set("ai.confirm_complex", v === "confirm")} options={[{ value: "confirm", label: "Show how it was read and wait for my go-ahead" }, { value: "run", label: "Run it straight away (the reading is still shown)" }]} />
+                  </Field>
                   <Field label="Request timeout (seconds)"><Input sz="sm" className="num" inputMode="numeric" value={draft["llm.timeout_seconds"] ?? 90} onChange={(e) => set("llm.timeout_seconds", Math.max(5, Math.min(600, Number(e.target.value) || 90)))} /></Field>
                   <Field label="Retries on a transient error" hint="Rate limits and server errors are retried with a growing delay. Authentication and request errors are not."><Input sz="sm" className="num" inputMode="numeric" value={draft["llm.max_retries"] ?? 2} onChange={(e) => set("llm.max_retries", Math.max(0, Math.min(6, Number(e.target.value) || 0)))} /></Field>
                 </div>
@@ -220,7 +226,10 @@ export default function Settings() {
           </Panel>
           <Panel title="Preferences">
             <div className="grid grid-cols-2 gap-2.5 p-3">
-              <Field label="Clock times without a timezone are" hint="“Buy at 10:15” is read in this timezone and converted to New York time. The interpretation panel always shows the converted time."><Select value={draft["ui.timezone"] || "America/Los_Angeles"} onChange={(v) => set("ui.timezone", v)} options={ZONES} /></Field>
+              <Field label="Clock times without a timezone are" hint="Until you choose a zone, “buy at 10:15” is read as New York time and said so; a time that cannot be New York time is read in the one zone that fits, and asked about when more than one does. Choose your zone and every such time is read in it. The reading always shows the New York time as well.">
+                <Select value={draft["ui.timezone_confirmed"] ? (draft["ui.timezone"] || "America/Los_Angeles") : "__ny"}
+                  onChange={(v) => { if (v === "__ny") set("ui.timezone_confirmed", false); else { set("ui.timezone", v); set("ui.timezone_confirmed", true); } }}
+                  options={[{ value: "__ny", label: "New York time, unless the message says otherwise" }, ...ZONES]} /></Field>
               <Field label="Default symbol"><Input className="num uppercase" value={draft["data.default_symbol"] || ""} onChange={(e) => set("data.default_symbol", e.target.value.toUpperCase())} /></Field>
             </div>
           </Panel>

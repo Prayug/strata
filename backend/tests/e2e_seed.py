@@ -26,6 +26,11 @@ def seed(root: Path) -> None:
     from tests.test_v3_agent import trade_store
     st = trade_store(root)
     set_setting("data.default_symbol", "TST")
+    # The browser tests written before V10 are those of a user whose time zone is known and who has switched off the
+    # go-ahead before a request with several parts (both are settings since V10). e2e/zz_v10.spec.ts switches the go-ahead
+    # back on for the tests of it.
+    set_setting("ui.timezone_confirmed", True)
+    set_setting("ai.confirm_complex", False)
     # V4 fixtures: LNG has 1,500 daily sessions in which a fall of 2% or more is followed by a session that closes
     # about 1.2% above its open (so a hypothesis plan has something real to find), plus a second symbol and a
     # volatility index; and a small vendor-format archive for the bulk importer.

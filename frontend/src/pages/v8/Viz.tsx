@@ -189,27 +189,38 @@ export function TimingViz({ v, onOpen }: { v: any; onOpen: Open }) {
 export function BreakdownViz({ v, onOpen }: { v: any; onOpen: Open }) {
   const [ref, w] = useWidth<HTMLDivElement>();
   const g: any[] = v.groups || [];
-  const lo = Math.min(0, ...g.map((x) => x.ci95?.[0] ?? x.mean_pct)), hi = Math.max(0, ...g.map((x) => x.ci95?.[1] ?? x.mean_pct));
+  // V10: a share of days per group ("how often Mondays close red") is drawn against the share on all days; an average
+  // move is drawn against zero, as before
+  const share = !!v.share;
+  const val = (x: any) => (share ? x.share : x.mean_pct);
+  const ci = (x: any) => (share ? x.share_ci95 : x.ci95);
+  const base = share ? (v.overall_share ?? 50) : 0;
+  const lo = Math.min(base, ...g.map((x) => ci(x)?.[0] ?? val(x))), hi = Math.max(base, ...g.map((x) => ci(x)?.[1] ?? val(x)));
   const h = 220, padB = 26;
   const Y = (y: number) => 8 + (1 - (y - lo) / (hi - lo || 1)) * (h - 16);
   const bw = w / Math.max(1, g.length);
   return (
     <div ref={ref} data-testid="viz-breakdown">
       <svg width={w} height={h + padB}>
-        <line x1={0} x2={w} y1={Y(0)} y2={Y(0)} stroke={C.rule2} />
+        <line x1={0} x2={w} y1={Y(base)} y2={Y(base)} stroke={C.rule2} strokeDasharray={share ? "3 4" : undefined} />
+        {share && <text x={w - 4} y={Y(base) - 5} fontSize={11} fill={C.mute} textAnchor="end">all days: {base.toFixed(1)}%</text>}
         {g.map((x, i) => {
           const cx = i * bw + bw / 2;
-          const y0 = Y(0), y1 = Y(x.mean_pct);
+          const y0 = Y(base), y1 = Y(val(x));
+          const c = ci(x);
           return (
             <g key={x.group} onClick={() => onOpen({ kind: "group", filter: x.group })} style={{ cursor: "pointer" }}>
-              <rect x={cx - Math.min(28, bw * 0.3)} y={Math.min(y0, y1)} width={Math.min(56, bw * 0.6)} height={Math.abs(y1 - y0)} fill={x.mean_pct >= 0 ? C.up : C.down} opacity={0.75}><title>{`${x.group}: ${x.mean_pct.toFixed(3)}% average over ${x.sessions} days`}</title></rect>
-              {x.ci95 && <g stroke={C.paper2}><line x1={cx} x2={cx} y1={Y(x.ci95[0])} y2={Y(x.ci95[1])} /><line x1={cx - 5} x2={cx + 5} y1={Y(x.ci95[0])} y2={Y(x.ci95[0])} /><line x1={cx - 5} x2={cx + 5} y1={Y(x.ci95[1])} y2={Y(x.ci95[1])} /></g>}
+              <rect x={cx - Math.min(28, bw * 0.3)} y={Math.min(y0, y1)} width={Math.min(56, bw * 0.6)} height={Math.max(1, Math.abs(y1 - y0))} fill={share ? C.amber : x.mean_pct >= 0 ? C.up : C.down} opacity={0.75}>
+                <title>{share ? `${x.group}: ${x.share.toFixed(1)}% of ${x.sessions} days` : `${x.group}: ${x.mean_pct.toFixed(3)}% average over ${x.sessions} days`}</title></rect>
+              {c && <g stroke={C.paper2}><line x1={cx} x2={cx} y1={Y(c[0])} y2={Y(c[1])} /><line x1={cx - 5} x2={cx + 5} y1={Y(c[0])} y2={Y(c[0])} /><line x1={cx - 5} x2={cx + 5} y1={Y(c[1])} y2={Y(c[1])} /></g>}
+              {share && <text x={cx} y={Math.min(Y(c?.[1] ?? val(x)), y1) - 5} fontSize={11} fill={C.paper2} textAnchor="middle">{x.share.toFixed(1)}%</text>}
               <text x={cx} y={h + 16} fontSize={11} fill={C.mute} textAnchor="middle">{String(x.group).slice(0, bw < 50 ? 3 : 9)}</text>
             </g>
           );
         })}
       </svg>
-      <div className="tiny faint">Average move per group; the whisker is the range the average is likely in. Overlapping whiskers mean the difference is within chance.</div>
+      <div className="tiny faint">{share ? `Share of days ${v.label || ""} per group, drawn against the share on all days; the whisker is the range the share is likely in. Overlapping whiskers mean the difference is within chance.`
+        : "Average move per group; the whisker is the range the average is likely in. Overlapping whiskers mean the difference is within chance."}</div>
     </div>
   );
 }

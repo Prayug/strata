@@ -14,6 +14,19 @@ import { BeforeAfter, CandleOverlay, PayoffViz, Viz } from "./Viz";
 
 type Open = (spec: any) => void;
 
+/* How far the answer was verified by a second, separately written calculation (V10): fully, partly (what was not is said),
+   or not at all. A disagreement is shown above the answer instead (AnswerView). */
+function CheckLine({ check }: { check: any }) {
+  const st = check.status;
+  const label = st === "same" ? "Fully verified" : st === "partly" ? "Partly verified" : "Not independently verified";
+  const color = st === "same" ? "var(--up)" : st === "partly" ? "var(--amber)" : "var(--faint)";
+  return (
+    <p className="tiny mt-3 mute" data-testid="check" data-status={st} title={check.method}>
+      <span className="kicker mr-2" style={{ color }}>{st === "same" ? "✓ " : ""}{label}</span>{String(check.text || "").replace(/^Partly verified:\s*/, "")}
+    </p>
+  );
+}
+
 function Figure({ n, onOpen }: { n: any; onOpen: Open }) {
   const body = (<><span className="v">{n.value}</span><span className="l">{n.label}{n.detail ? <span className="faint"> · {n.detail}</span> : null}</span></>);
   return n.explore ? <button className="figure" onClick={() => onOpen(n.explore)} data-testid="figure">{body}</button> : <div className="figure">{body}</div>;
@@ -111,6 +124,14 @@ export function AnswerView({ m, sid, onOpen, onAsk, onTrade, prev }: { m: AiMess
       <div className="seg mb-6" role="tablist" aria-label="Detail">{levels.map(([k, l]) => <button key={k} aria-pressed={level === k} onClick={() => setLevel(k)} data-testid={`level-${k}`}>{l}</button>)}</div>
       {level === "answer" && (
         <div data-testid="content-answer">
+          {/* a second calculation that does not agree is said before the answer itself, not under it */}
+          {a.check?.status === "differs" && (
+            <div className="mb-5 p-3" style={{ border: "1px solid var(--down)" }} data-testid="check-disagrees" role="alert">
+              <div className="kicker mb-1" style={{ color: "var(--down)" }}>The independent check disagrees with this answer</div>
+              <p className="small soft">{a.check.text}</p>
+              <p className="tiny mute mt-1.5">Two separate calculations from the same stored files should agree. Until this is traced, treat the numbers below as unconfirmed{(a.check.dates || []).length ? "; the sessions listed are where to look first" : ""}. The method of the check is under Technical details.</p>
+            </div>
+          )}
           <h2 className="headline" data-testid="headline">{a.headline}</h2>
           {(a.happened || []).length > 0 && <div className="mt-4 flex flex-col gap-2.5">{a.happened.map((h: string, i: number) => <p key={i} className="lede">{h}</p>)}</div>}
           {a.matters && <p className="lede mt-4"><span className="kicker mr-2" style={{ color: "var(--paper-2)" }}>Why it matters</span>{a.matters}</p>}
@@ -119,11 +140,7 @@ export function AnswerView({ m, sid, onOpen, onAsk, onTrade, prev }: { m: AiMess
               {a.numbers.slice(0, 5).map((n: any, i: number) => <Figure key={i} n={n} onOpen={onOpen} />)}
             </div>
           )}
-          {a.check && a.check.status !== "not_covered" && (
-            <p className="tiny mt-3" style={{ color: a.check.status === "same" ? "var(--mute)" : "var(--down)" }} data-testid="check" title={a.check.method}>
-              {a.check.status === "same" ? "✓ " : "⚠ "}{a.check.text}
-            </p>
-          )}
+          {a.check && a.check.status !== "differs" && <CheckLine check={a.check} />}
           {a.viz && <div className="mt-8"><Viz a={a} onOpen={onOpen} onTrade={(id) => onTrade(runId, id)} /></div>}
           {a.overlay && <CandleOverlay o={a.overlay} />}
           {prev && <BeforeAfter before={prev} after={a} />}

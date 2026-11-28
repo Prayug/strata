@@ -38,7 +38,8 @@ class DraftCondition(BaseModel):
 
 
 class DraftStrike(BaseModel):
-    method: Literal["atm", "delta", "pct_otm"] = "atm"
+    # strikes_otm (V10): that many listed strikes out of the money ("the call two strikes OTM"), counted from the at-the-money one
+    method: Literal["atm", "delta", "pct_otm", "strikes_otm"] = "atm"
     value: float = 0.0
 
 
@@ -139,6 +140,9 @@ class Draft(BaseModel):
     exit_conditions: list[DraftCondition] = Field(default_factory=list)  # close the position when any of these holds
     unsupported: list[str] = Field(default_factory=list)  # parts of the request that could not be represented (never silently dropped)
     questions: list[dict] = Field(default_factory=list)  # open clarifying questions: {id, text, options: [{label, patch}], default}
+    # V10: why this reading waits for a go-ahead, in plain words (intent.check): something said that it does not hold, a
+    # number held as another kind of thing than it was said as, a size the message does not contain
+    review: list[str] = Field(default_factory=list)
     costs: Optional[DraftCosts] = None
     provider: Optional[str] = None  # a specific stored option dataset / provider, if the user named one
     carried: dict[str, str] = Field(default_factory=dict)  # field -> why it was carried over or kept without being stated in this message
@@ -194,7 +198,14 @@ def _leg(id, side, right, dte, method, value, ref=None, qty=1, group=None, kind=
 
 
 def build_legs(structure: str, dte: int, strike: DraftStrike, width: float, qty: int) -> list[dict]:
-    m, v = {"atm": ("atm_offset", 0.0), "delta": ("delta", strike.value), "pct_otm": ("pct_otm", strike.value)}[strike.method]
+    if strike.method == "strikes_otm" and structure not in ("iron_butterfly", "long_straddle", "short_straddle", "covered_call"):
+        legs = build_legs(structure, dte, DraftStrike(method="atm"), width, qty)
+        for l in legs:
+            st = l["strike"]
+            if st["method"] == "atm_offset":  # calls sit above the at-the-money strike when out of the money, puts below
+                st.update(value=(1 if l["right"] == "C" else -1) * abs(float(strike.value)), unit="strikes")
+        return legs
+    m, v = {"atm": ("atm_offset", 0.0), "delta": ("delta", strike.value), "pct_otm": ("pct_otm", strike.value), "strikes_otm": ("atm_offset", 0.0)}[strike.method]
     L = lambda *a, **k: _leg(*a, **{"qty": qty, **k})
     if structure == "long_call":
         return [L("lc", "buy", "C", dte, m, v)]
@@ -387,7 +398,8 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
                 assume("strike", "ATM" if strike.method == "atm" else f"{strike.value:g} delta", "at-the-money is the neutral default for a long option" if strike.method == "atm" else "a typical short-premium distance")
                 add("Strike", "At the money" if strike.method == "atm" else f"{strike.value:g} delta short strike", "assumed", "strike")
         else:
-            add("Strike", {"atm": "At the money", "delta": f"{strike.value:g} delta", "pct_otm": f"{strike.value:g}% out of the money"}[strike.method], field="strike")
+            add("Strike", {"atm": "At the money", "delta": f"{strike.value:g} delta", "pct_otm": f"{strike.value:g}% out of the money",
+                           "strikes_otm": f"{strike.value:g} strike{'s' if strike.value != 1 else ''} out of the money"}[strike.method], field="strike")
         width = d.width
         if d.structure and ("spread" in d.structure or d.structure in ("iron_condor", "iron_butterfly")):
             if width is None:
@@ -523,6 +535,12 @@ def compile_draft(d: Draft, store: MarketStore | None = None, spot: float | None
         else:
             add("Costs", "$0.65 commission per contract; quotes fill at the bid/ask; trade prints fill at the print with no extra slippage", "assumed", "costs")
     effective = {"entry_time": entry_time, "dte": dte, "execution": execution} if d.kind == "options" else {"entry_time": study_entry}
+    if d.kind == "options":
+        # V10: the values the run will actually use where the request left them open, so that the reading shown to the user
+        # states them (until V10 the sentence said "0 days to expiration" for a trade compiled with 14)
+        _strike, _width = locals().get("strike"), locals().get("width")
+        effective.update(strike={"method": _strike.method, "value": _strike.value} if _strike is not None else None, width=_width,
+                         exit_time=((locals().get("exits") or {}).get("time_exit") or {}).get("time") if (locals().get("exits") or {}).get("time_exit", {}).get("enabled") else None)
     return {"strategy": strategy, "study": study if not any(e.startswith("study") for e in errors) else None, "items": items, "assumptions": assumptions, "effective": effective,
             "missing": sorted(set(missing), key=missing.index), "errors": errors}
 
@@ -777,7 +795,7 @@ def _show(k: str, v):
     if k == "conditions":
         return "; ".join(c["text"] or c["expr"] for c in v) or "none"
     if k == "strike":
-        return {"atm": "ATM", "delta": f"{v['value']:g} delta", "pct_otm": f"{v['value']:g}% OTM"}[v["method"]]
+        return {"atm": "ATM", "delta": f"{v['value']:g} delta", "pct_otm": f"{v['value']:g}% OTM", "strikes_otm": f"{v['value']:g} strikes OTM"}[v["method"]]
     if k in ("study.target", "study.stop"):
         return f"{v['value']:+g}%" if v["kind"] == "pct" else f"{v['value']:+g} $" if v["kind"] == "abs" else v["expr"]
     if k == "structure":
@@ -797,7 +815,7 @@ def diff_drafts(a: Draft | None, b: Draft) -> list[dict]:
     def flat(d: Draft) -> dict:
         x = d.model_dump(mode="json")
         st = x.pop("study", None) or {}
-        for k in ("title", "notes", "entry_time_stated", "exit_time_stated", "symbol_stated", "tz_assumed", "questions", "carried", "unsupported"):
+        for k in ("title", "notes", "entry_time_stated", "exit_time_stated", "symbol_stated", "tz_assumed", "questions", "carried", "unsupported", "review"):  # review: why a reading waits, not a part of it
             x.pop(k, None)
         if d.kind == "study":
             x.update({f"study.{k}": v for k, v in st.items()})

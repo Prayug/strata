@@ -20,6 +20,7 @@ it contains a number the engine did not compute.
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import date
 from typing import Literal, Optional
@@ -587,6 +588,10 @@ def is_complex(text: str) -> bool:
     return bool(re.search(r"\bthen\b|\bunless\b|\bonly if\b|\bafter (?:the|a) (?:first|second)\b|\bfurther\b|\badd (?:another|more)\b|\bwait (?:until|for)\b|\bfails?\b|\breclaims?\b|\bhasn'?t\b|\bwhile\b|\bprovided\b", text.lower()))
 
 
+def _and(xs: list[str]) -> str:
+    return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " and " + xs[-1]
+
+
 # ----------------------------------------------------------------------------- the agent
 
 def _measured_note(budget: dict | None = None) -> str:
@@ -693,6 +698,287 @@ class Agent(ResearchV8, ResearchV5):
 
     # ---- interpretation
     def interpret(self, sid: str, text: str, current: Draft | None, version: dict | None, last_field: str | None) -> tuple[dict, str, str | None]:
+        """One message, read and established (V10).
+
+        understand   the readers (`_read`) produce one reading: a question frame, a strategy or study draft, an action
+        resolve      a time with no zone takes the zone the message names or gives away, the conversation's, or the user's;
+                     otherwise it is asked about
+        validate     intent.check: everything the message says must be held by the reading as the same kind of thing
+        A reading that fails is repaired where the words leave one way to do it, and otherwise shown or asked about. It
+        never runs as if it had been understood."""
+        from strata.ai import intent as I
+        from strata.api.settings import get_setting
+        text = I.tidy(text)
+        text, aside = I.without_commentary(text)  # V10: "I've always figured ..." is not part of the question; it is said back as left aside
+        _, st0 = self._v8_state()
+        zone, how = I.message_zone(text), "named"
+        if zone is None:
+            zone, how = I.zone_revealed(text), "revealed"
+        if zone is None and st0.get("zone") is not None:
+            zone, how = int(st0["zone"]), "conversation"
+        if zone is None and get_setting("ui.timezone_confirmed"):
+            zone, how = NL.default_tz_offset(), "setting"
+        zone_note = None
+        if zone is not None and how != "named":
+            text2, added = I.with_zone(text, zone)
+            if added:
+                why = {"revealed": "you called a time the open or the close", "conversation": "as earlier in this conversation", "setting": "your time zone in Settings"}[how]
+                zone_note = f"{', '.join(added)} read as {I.ZONE_NAME[zone]} time ({why})."
+                text = text2
+        if zone is None:
+            # a zone the times themselves settle ("0635" can only be Pacific) is the conversation's from here on
+            only = {tuple(x["zones"]) for x in I.said(text, None) if x["type"] == "clock" and x.get("assumed_tz") and len(x.get("zones") or []) == 1}
+            if len(only) == 1:
+                zone, how = {v: k for k, v in I.ZONE_NAME.items()}[next(iter(only))[0]], "settled"
+        self._tl.zone = zone if how in ("named", "revealed", "conversation", "settled") else None
+        r, interp, note = self._read(sid, text, current, version, last_field)
+        fr = r.get("frame")
+        if isinstance(fr, dict) and fr.get("kind") != "strategy" and zone is not None:
+            # the zone the question was asked in stays on its reading, so that a time is said back in the user's own terms too
+            if zone:
+                fr["zone"] = zone
+            elif how == "named":
+                fr.pop("zone", None)
+        r = self._establish(text, r, current, zone_known=zone is not None and how != "settled")
+        if zone_note and r.get("action") in ("new", "modify", "derive", "investigate", "profile"):
+            r["assumptions"] = list(r.get("assumptions") or []) + [zone_note]
+        if aside and r.get("action") in ("new", "modify", "derive", "investigate", "profile", "graph"):
+            r["assumptions"] = list(r.get("assumptions") or []) + ["Read as your own comment, not as part of the request: " + " ".join(f"\"{a}\"" for a in aside)]
+        elif aside and r.get("action") == "clarify" and isinstance(r.get("pending"), dict) and r["pending"].get("kind") == "confirm_frame":
+            r["pending"]["assumptions"] = list(r["pending"].get("assumptions") or []) + ["Read as your own comment, not as part of the request: " + " ".join(f"\"{a}\"" for a in aside)]
+        return r, interp, note
+
+    def _establish(self, text: str, r: dict, current: Draft | None, zone_known: bool = False) -> dict:
+        """A reading that is about to run, held against what the message says (intent.check). Returns the route to take: the
+        same one, a repaired one, one that waits for a go-ahead with the reasons listed, or a question."""
+        from strata.ai import intent as I
+        act = r.get("action")
+        if act not in ("new", "modify", "derive", "investigate", "profile", "graph", "hypothesis") or r.get("answered") or r.get("confirmed"):
+            return r
+        known = sorted(self.store.stored_symbols())
+        d_ = r.get("draft")
+        if act == "new" and d_ is not None and getattr(d_, "kind", None) == "study" and not r.get("frame") and not r.get("edit"):
+            # Found by the V10 held-out run: a study from an OLDER reader (no question frame, so no reading sentence) ran on a
+            # restatement the question reader could not read: an unconditioned open-to-close study, answered as "the outcome
+            # happened on 0 of N days". A study that holds nothing of the message is not a reading of it: it is not run.
+            st_ = getattr(d_, "study", None)
+            empty = not d_.conditions and not d_.sequence and not d_.weekdays and (st_ is None or st_.target is None)
+            if empty:
+                return {"action": "unknown"}
+            d0 = r["draft"].model_copy(deep=True)
+            d0.review = []  # why the earlier reading waited; this message is checked on its own below
+            r = {**r, "draft": d0}
+        if r.get("draft") is not None and any(q.get("answered") is None for q in (r["draft"].questions or [])):
+            try:
+                r = I.repair(r, text, known, {"draft": current} if (act in ("modify", "derive") and current is not None) else None)  # the words may answer the reader's question
+            except Exception:  # noqa: BLE001
+                pass
+            if any(q.get("answered") is None for q in (r["draft"].questions or [])):
+                return r  # the reader is already asking about what it could not decide: one question at a time
+        known = sorted(self.store.stored_symbols())
+        _, st = self._v8_state()
+        cur = None
+        if act in ("modify", "derive") and current is not None:
+            cur = {"draft": current}
+        elif r.get("edit") and (r.get("base") or st.get("frame")):
+            fr0 = r.get("base") or st["frame"]  # `base`: the reading that was waiting for a go-ahead when this change came
+            cur = {"frame": fr0} if fr0.get("kind") != "strategy" else ({"draft": current} if current is not None else None)
+        try:
+            r = I.repair(r, text, known, cur)
+            chk = I.check(r, text, known, cur, zone_known=zone_known)
+        except Exception:  # noqa: BLE001  (a check that fails is not a reason to block: the reading is shown as it always was)
+            return r
+        from strata.api.settings import get_setting
+        asks = [i for i in chk["issues"] if i["level"] == "ask"]
+        conf = [i for i in chk["issues"] if i["level"] == "confirm"]
+        if os.environ.get("STRATA_GATE_LOG") and (asks or conf):  # development aid: which readings the gate stopped, and why
+            with open(os.environ["STRATA_GATE_LOG"], "a") as fh:
+                fh.write(json.dumps({"text": text, "action": act, "issues": [{"kind": i["kind"], "level": i["level"], "text": i["text"]} for i in chk["issues"]]}) + "\n")
+        dd = r.get("draft")
+        if dd is not None and getattr(dd, "kind", None) == "options" and act == "new" and not r.get("frame") and not getattr(dd, "symbol_stated", True) and current is None \
+                and not I.named_ticker(text, known) and not st.get("frame") and get_setting("ai.confirm_complex"):
+            # V10: "first 5 min candle is green -> buy a 0dte atm call ...": on which ticker? (Until V10 the default one, said in small print.)
+            stored_ = [k for k in known if k.isupper() and k != "VIX" and not k.startswith("DEMO")][:4]
+            return {"action": "clarify", "text": "Which ticker should this trade? The message does not name one. Nothing was run.",
+                    "options": [{"label": k, "ask": f"{text.rstrip(' .')} (on {k})"} for k in stored_]}
+        if dd is not None and getattr(dd, "kind", None) == "options" and act in ("new", "modify", "derive") and I.LEANS_DAYS.search(text) \
+                and not dd.conditions and not dd.weekdays and not dd.sequence and (current is None or not (current.conditions or current.weekdays or current.sequence)):
+            # Found by the V10 held-out run: "buy a put at 10:30 on those mornings" after a question that had never been
+            # answered ran on every session. Days that the conversation does not hold are asked for, never assumed away.
+            lm = I.LEANS_DAYS.search(text)
+            return {"action": "clarify", "text": (f"\"{text[lm.start():lm.end()]}\" points at the days of an earlier question, but no question in this conversation has been answered whose days could be used, "
+                                                  "so nothing was run. Say the days in this message, for example \"on days it opens 0.5% below the previous close\".")}
+        if dd is not None and getattr(dd, "kind", None) == "options" and act in ("new", "modify", "derive"):
+            bh = re.search(r"\b(?:against|versus|vs\.?|compared? (?:to|with)|better than|beats?|beating|instead of)\s+(?:just\s+|simply\s+)?(?:buy(?:ing)?[- ]and[- ]hold\w*|buy ?& ?hold|hold\w* (?:the |my )?(?:shares|stock|etf|it|spy|qqq|iwm)\b|sitting (?:in|on) (?:the |my )?(?:shares|stock)|own\w* (?:the |my )?(?:shares|stock)|(?:the |my )?(?:shares|stock) alone|doing nothing)", text.lower())
+            if bh and not any("holding the shares" in x for x in (dd.review or [])):
+                conf = conf + [{"kind": "outcome", "level": "confirm", "text": f"\"{text[bh.start():bh.end()]}\": the comparison with simply holding the shares is not calculated. This would test the option trade on its own."}]
+            try:
+                many = I.entry_time_list(text, known)
+            except Exception:  # noqa: BLE001
+                many = None
+            if many:
+                # V10: several fixed entries a day are one plan to the person and not something one trade here can hold.
+                # Said plainly, with the nearest thing that can be run, instead of "10:30 is not used in this reading".
+                names = [I._clock12(float(x["value"])) for x in many]
+                listed = ", ".join(names[:-1]) + " and " + names[-1]
+                first = text[:many[0]["end"]] + text[many[-1]["end"]:]
+                return {"action": "clarify", "declined": True,
+                        "text": (f"This asks for entries at {listed} New York time on the same day. A trade here gets in at one time a day, so several fixed entries that share one account and one daily "
+                                 f"loss limit cannot be tested as one plan, and nothing was run. What can be run: the plan with one of the times, and then \"compare entry times {', '.join(names)}\" to see each time on its own."),
+                        "options": [{"label": f"Run it with the {names[0]} entry only", "ask": first}]}
+        if dd is not None and getattr(dd, "kind", None) == "options" and (getattr(dd, "mode", None) or "") != "modeled" and act in ("new", "modify", "derive"):
+            rng = self._option_range(dd.symbol)
+            if rng is not None and dd.end is not None and dd.end < rng[0]:
+                return {"action": "clarify", "declined": True, "options": [],
+                        "text": (f"Option prices for {dd.symbol} are stored from {rng[0].isoformat()} to {rng[1].isoformat()}. The period asked for ends {dd.end.isoformat()}, before any option price is stored, "
+                                 "so this cannot be backtested. Nothing was run. The underlying's own history goes back further: questions about its price can be asked for that period.")}
+            if rng is not None and (dd.start is None or dd.start < rng[0]):
+                # V10: a test of an options trade runs where option prices exist. Until V10 a trade with no period asked for
+                # the underlying's whole history, found most of it without option prices, and came back minutes later with a
+                # choice of ways to proceed instead of a result.
+                note_ = (f"Option prices are stored from {rng[0].isoformat()}, so the test starts there, not on {dd.start.isoformat()}." if dd.start is not None else
+                         f"Tested on the stored option history, {rng[0].isoformat()} to {rng[1].isoformat()} (no period was asked for; there are no option prices before it).")
+                r = {**r, "assumptions": list(r.get("assumptions") or []) + [note_]}
+        if asks:
+            return self._ask_about(text, r, asks[0])
+        if conf:
+            return self._wait_with(text, r, [i["text"] for i in conf])
+        # V10 brief, section 5: a simple question is answered at once; a reading with several parts is shown and waits for a
+        # go-ahead. A change to what is on screen is not held up again: the user is already working on that reading.
+        if act in ("new", "investigate", "profile") and not r.get("edit") and get_setting("ai.confirm_complex") and I.is_complex(r):
+            return self._wait_with(text, r, [], complex_=True)
+        if act == "graph" and not r.get("edit") and get_setting("ai.confirm_complex"):
+            return self._wait_with(text, r, [], complex_=True)
+        if act in ("modify", "derive") and dd is not None and getattr(dd, "kind", None) == "options" and get_setting("ai.confirm_complex") and self._current_waits():
+            # a correction to a trade that has not run yet: the corrected trade is shown and waits too (see agent_v8, 1b)
+            d2 = dd.model_copy(deep=True)
+            d2.review = ["Changed as you said. This trade has not run yet: check each part, then run it."]
+            return {**r, "draft": d2}
+        return r
+
+    def _current_waits(self) -> bool:
+        """Is the trade on screen one that was shown for a go-ahead and has never run?"""
+        try:
+            sid = getattr(self._tl, "sid", None)
+            if not sid:
+                return False
+            _s, version, _cur = self._state(sid)
+            if version is None or version.get("runs"):
+                return False
+            plan = self._plan_message(sid, version["id"])
+            return ((plan or {}).get("content") or {}).get("state") == "awaiting_confirmation"
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _with_proposal(self, sid: str, text: str, r: dict, cur, st: dict) -> dict:
+        """V10: when the built-in reader stopped on the message and a model is set up as a proposer (Settings: llm.proposer),
+        its one checked rewrite is added as a choice under the reply (strata.ai.proposer). It is never run by itself: choosing
+        it sends it as the user's own message, through the same gate as anything typed."""
+        from strata.api.settings import get_setting
+        variant = str(get_setting("llm.proposer") or "off")
+        act = r.get("action")
+        if variant == "off" or act not in ("unknown", None, "clarify"):
+            return r
+        if act == "clarify" and (r.get("declined") or (r.get("waiting") or {}).get("complex") or any(o.get("ask") for o in r.get("options") or [])):
+            return r  # declined for a reason, waiting only for a go-ahead, or already a focused question with its own answers
+        try:
+            llm, _err = self.llm()
+            if llm is None:
+                return r
+            from strata.ai import intent as I
+            from strata.ai import proposer as P
+            from strata.ai import semantics as SM
+            fr = (st or {}).get("frame")
+            current = SM.describe(fr) if fr and fr.get("kind") != "strategy" else (" ".join(I.describe_draft(cur)["lines"]) if cur is not None and cur.kind == "options" else None)
+            res = P.propose(self, llm, sid, text, current, variant if variant in P.VARIANTS else "focused")
+        except Exception:  # noqa: BLE001  (a proposal that cannot be made is simply not offered)
+            return r
+        if not res.get("offer"):
+            return r
+        opt = {"label": "A model's suggestion: " + res["offer"], "ask": res["offer"]}
+        tail = " A language model suggests one way to say it, below. It is a suggestion, checked only to contain the same numbers and times; nothing runs unless you choose it."
+        if act == "clarify":
+            return {**r, "text": str(r.get("text") or "") + tail, "options": list(r.get("options") or []) + [opt], "proposed": res["offer"]}
+        return {"action": "clarify", "text": self._not_read(text, cur, st) + tail, "options": [opt], "proposed": res["offer"]}
+
+    def _not_read(self, text: str, cur, st: dict) -> str:
+        """The reply when nothing could be read: what it was not read as, what in it WAS recognised, and two or three things
+        that can be said in the situation the user is in. (Until V10 this was a fixed list of long example prompts.)"""
+        from strata.ai import intent as I
+        has_s = cur is not None and cur.kind == "options"
+        has_q = bool((st or {}).get("frame")) and (st["frame"] or {}).get("kind") != "strategy"
+        lead = ("I could not read that as a question about a ticker's price history or as an options trade to backtest"
+                + (", or as a change to the " + ("trade" if has_s else "question") + " on screen" if (has_s or has_q) else "") + ", so nothing was run" + (" or changed" if (has_s or has_q) else "") + ".")
+        try:
+            seen = [f"\"{x['text']}\" ({I.describe_said(x)})" for x in I.said(I.tidy(text), sorted(self.store.stored_symbols()), trade=has_s or None) if x["type"] not in ("ticker", "number")][:4]
+        except Exception:  # noqa: BLE001
+            seen = []
+        got = (" What I did recognise in it: " + ", ".join(seen) + ", but not what to do with " + ("it" if len(seen) == 1 else "them") + ".") if seen else ""
+        if has_s:
+            ex = "\"exit at 11:30 ET\", \"add a 30% stop\", \"use QQQ instead\", \"only in 2025\", \"show the losing trades\", \"could this be luck?\""
+        elif has_q:
+            ex = "\"use QQQ instead\", \"only since 2020\", \"only when yesterday was down 1% or more\", \"show those days\", \"what if I bought calls instead?\""
+        else:
+            ex = "\"How often does SPY close above its open after a 1% down day?\", \"When does QQQ usually make its low?\", \"Buy SPY 0DTE calls at 9:45 ET, take profit at 30%, stop at 20%\""
+        return lead + got + " Things that can be said here: " + ex + "."
+
+    def _option_range(self, sym: str):
+        """(first, last) session with stored option trade prices for `sym`, or None when there are none."""
+        cache = self.__dict__.setdefault("_opt_range", {})
+        if sym not in cache:
+            try:
+                days = self.store.option_days(sym, "trade")
+            except Exception:  # noqa: BLE001
+                days = []
+            cache[sym] = (days[0], days[-1]) if days else None
+        return cache[sym]
+
+    def _ask_about(self, text: str, r: dict, issue: dict) -> dict:
+        """One focused question about one thing the message leaves open, each answer a complete message to send."""
+        from strata.ai import intent as I
+        it = issue.get("item") or {}
+        if issue["kind"] == "zone":
+            opts = []
+            for a in issue["alternatives"]:
+                off = {v: k for k, v in I.ZONE_NAME.items()}[a["zone"]]
+                opts.append({"label": f"{a['zone']} time ({I._clock12(a['et'])} in New York)" if off else "New York time", "ask": I.with_zone(text, off)[0]})
+            return {"action": "clarify", "text": f"Which time zone is \"{it.get('text')}\" in? It has none, and it falls inside the session in more than one. Nothing was run.", "options": opts}
+        if issue["kind"] == "subject" and it:
+            a, b = it["pos"], it["end"]
+            sym = (getattr(r.get("draft"), "symbol", None) or "the underlying")
+            return {"action": "clarify", "text": f"Is \"{it['text']}\" a percentage of the option's price, or of {sym}'s price? The message does not say. Nothing was run.",
+                    "options": [{"label": f"{it['value']:g}% of the option's price", "ask": text[:b] + " of the option's price" + text[b:]},
+                                {"label": f"{it['value']:g}% of {sym}'s price", "ask": text[:b] + f" of {sym}'s price" + text[b:]}]}
+        if issue.get("options"):
+            return {"action": "clarify", "text": issue["text"] + " Nothing was run.", "options": issue["options"]}
+        return {"action": "clarify", "text": issue["text"] + " Say it another way and I will read it again. Nothing was run."}
+
+    def _wait_with(self, text: str, r: dict, reasons: list[str], complex_: bool = False) -> dict:
+        """The reading is shown and waits: nothing runs until the user says so. Either something in it is wrong or missing
+        (`reasons`), or it has several parts and is checked before it runs (`complex_`)."""
+        d = r.get("draft")
+        why = ["This has several parts, so check that each one is what you meant."] if complex_ and not reasons else []
+        if d is not None and r.get("action") in ("new", "modify", "derive") and not r.get("frame"):
+            d2 = d.model_copy(deep=True)
+            d2.review = list(dict.fromkeys(list(d2.review) + reasons + why))
+            return {**r, "draft": d2}
+        fr = r.get("frame")
+        if fr:
+            from strata.ai import semantics as SM
+            opts = [{"label": "Run it as read", "patch": {}}]
+            return {"action": "clarify", "text": f"Here is how I read it: {SM.describe(fr)} " + " ".join(reasons + why) + " Nothing was run.", "options": opts,
+                    "waiting": {"reasons": reasons, "complex": bool(complex_ and not reasons)},
+                    "pending": {"kind": "confirm_frame", "options": opts, "frame": fr, "edit": bool(r.get("edit")), "notes": list(reasons),
+                                **({"assumptions": r["assumptions"]} if r.get("assumptions") else {})}}
+        if r.get("action") == "graph" and r.get("graph"):
+            # V10: a research plan is shown as its sentence and waits; it is the one reading whose contents cannot be typed
+            # slot by slot, so it never starts on its own when the go-ahead setting is on, or when something is not in it
+            return {**r, "review": {"reasons": list(reasons), "complex": bool(complex_ and not reasons)}}
+        if complex_ and not reasons:
+            return r
+        return {"action": "clarify", "text": " ".join(reasons) + " Nothing was run. Say that part another way, or leave it out if it does not matter."}
+
+    def _read(self, sid: str, text: str, current: Draft | None, version: dict | None, last_field: str | None) -> tuple[dict, str, str | None]:
         known = sorted(self.store.stored_symbols())
         from strata.api.settings import get_setting
         default_symbol = str(get_setting("data.default_symbol") or "SPY")
@@ -744,18 +1030,61 @@ class Agent(ResearchV8, ResearchV5):
             stored_ = [k for k in known if k not in ("VIX",) and not k.startswith("DEMO")]
             sub = default_symbol if default_symbol in known else (stored_[0] if stored_ else default_symbol)
             alt = re.sub(rf"\b{re.escape(unknown)}\b", sub, text, flags=re.I)
-            return {"action": "clarify", "declined": True, "text": f"No price history for {unknown.upper()} is stored, so nothing about it can be measured or backtested. Stored: {', '.join(k for k in known if k not in ('VIX',))}. Nothing was run.",
+            return {"action": "clarify", "declined": True, "text": f"No price history for {unknown.upper()} is stored, so nothing about it can be measured or backtested. Stored: {', '.join(k for k in known if k not in ('VIX',) and not k.startswith('DEMO'))}. Nothing was run.",
                     "options": [{"label": alt, "ask": alt}]}
+        from strata.ai import intent as I
+        # V10: what the stored data cannot answer is declined before any reader tries to make something else of it
+        oos = I.out_of_scope(text, known, trade_context=current is not None and current.kind == "options", default_symbol=default_symbol)
+        if oos is not None:
+            return oos
         # V8: one question frame per notebook, read and edited before any of the older readers is asked (agent_v8.py)
         v8 = self._v8_route(text, current, known, default_symbol)
         if v8 is not None:
             return v8
+        from strata.ai import intent as I
+        if current is not None and current.kind == "study" and I.new_trade(text, known):
+            current = None  # V10: "Buy calls at the open after a 3% down day, exit at 15:55" typed after a question is a trade of its own
         fixed = NL.correction(text) if current is not None else None
         if fixed:
             rc = NL.bare_correction(fixed, current, list(dict.fromkeys(NL.TICKERS + [s for s in known if s.isupper()])))
             if rc is not None:
                 return rc
+        partial = getattr(self._tl, "v8_partial", None)
         r = self._v8_check_reading(text, self._with_sizing(text, self._readers(text, current, known, last_field, default_symbol), current), known)
+        # V10: the question reader had read part of this as a question. If what the older readers made of it is not a clean
+        # reading (nothing, a question back, a draft with parts it could not represent, a study that is not the kind of
+        # question asked), their reading is not shown: the question reader's own is, with the words it did not use.
+        if partial is not None and partial.frame.get("kind") in ("frequency", "movement", "timing", "breakdown", "agreement") and not partial.flag:
+            dd = r.get("draft")
+            blocked = r.get("action") in ("unknown", "clarify", None) or (dd is not None and (dd.unsupported or dd.kind == "options" and not I.is_trade(text))) \
+                or (r.get("action") == "new" and dd is not None and dd.kind == "study" and I.kind_mismatch(r, text, known))
+            # (a research plan that could not place a part either keeps its own card: it says which part, in the user's words,
+            # and offers to run without it. The notebook shows that card's sentence and its choices.)
+            runnable = partial.clarify is None or partial.clarify.get("slot") == "unclaimed"
+            fr = partial.frame
+            has_core = bool(fr.get("outcome")) or fr.get("kind") in ("timing", "breakdown", "agreement", "movement")
+            if r.get("action") == "graph" and r.get("graph") and not blocked:
+                # ... unless the plan LOST a condition the question reader had read ("red 2 days in a row" became "fell in
+                # the previous session"): then the question reader's reading is the better one to show
+                from strata.ai import semantics as SM_
+                serial_ = I._operative(r)  # what the plan does, without the user's own words that it quotes
+                blocked = any(c.get("key") in ("up_streak", "down_streak", "weekday", "vix", "first_candle") and not SM_.holds(serial_, c.get("key")) for c in fr.get("conditions") or [])
+                # ... or could not place words the question reader DID read ("'later' in '... higher 5 sessions later'"). A part
+                # neither of them understood ("the moon is full") leaves the plan's card, which names it and offers to run without.
+                left_ = {w for x in [u["text"] for u in partial.unread] + [m.text for m in partial.unclaimed] for w in re.findall(r"[a-z0-9]+", x.lower())}
+                for u_ in r["graph"].get("unsupported") or []:
+                    q_ = re.match(r"\s*'([^']+)' in ", str(u_))
+                    words_ = [w for w in re.findall(r"[a-z0-9]+", (q_.group(1) if q_ else str(u_)).lower()) if w not in SM_.FILLER and len(w) > 2]
+                    if words_ and not any(w in left_ for w in words_):
+                        blocked = True
+            if blocked and runnable and has_core:
+                from strata.ai import semantics as SM
+                left = I.unread_phrases(text, partial.unread) + [m.text for m in partial.unclaimed]
+                opts = [{"label": "Run it as read", "patch": {}}]
+                used_not = "I did not use " + ", ".join(f"\"{w}\"" for w in left[:6])
+                return {"action": "clarify", "text": f"Here is how I read it: {SM.describe(fr)} {used_not}, so nothing was run. Run it as read, or say that part another way.",
+                        "options": opts, "waiting": {"reasons": [used_not + "."], "complex": False},
+                        "pending": {"kind": "confirm_frame", "options": opts, "frame": fr, "notes": ["Not used: " + ", ".join(f"\"{w}\"" for w in left[:6]) + "."]}, "unread": left}
         if fixed and r.get("action") == "unknown":
             r2 = self._readers(fixed, current, known, last_field, default_symbol)
             if r2.get("action") != "unknown":
@@ -803,6 +1132,13 @@ class Agent(ResearchV8, ResearchV5):
             ex = NX.read(text, current if (current is not None and current.kind == "options") else None, tick, default_symbol)
         except Exception:  # noqa: BLE001  (a reader that fails on a sentence has not read it: the other readers still get it)
             ex = None
+        if ex is not None:
+            try:  # V10: a "list" that cuts through a clock time or another typed quantity is not a list
+                from strata.ai import intent as I
+                if not I.experiment_fits(text, ex, tick):
+                    ex = None
+            except Exception:  # noqa: BLE001
+                pass
         if ex is not None:
             light = len(ex["dims"]) == 1 and ex.get("base_from") == "current" and ex["dims"][0]["field"] in ("dte", "entry_time", "premium_target", "premium_stop") and not ex["dims"][0]["assumed"]
             if not light:
@@ -892,6 +1228,16 @@ class Agent(ResearchV8, ResearchV5):
     # ---- launching
     def _launch(self, d: Draft, compiled: dict, mode: str | None, label: str, interp: str = "", approvals: dict | None = None) -> dict:
         spec = build_spec(d, compiled, mode, approvals, label, interp)
+        if spec.get("kind") == "options" and spec.get("mode") != "modeled" and isinstance(spec.get("requested"), dict):
+            # V10: an options test runs where option prices are stored. With no period asked for (or one that starts before
+            # the first stored option session) the window starts at that session, and the reply says so (_establish).
+            rng = self._option_range(d.symbol)
+            rq = spec["requested"]
+            if rng is not None and (not rq.get("start") or str(rq["start"]) < rng[0].isoformat()) and (not rq.get("end") or str(rq["end"]) >= rng[0].isoformat()):
+                rq["start"] = rng[0].isoformat()
+                rq["stated"] = bool(d.start and d.start >= rng[0]) or bool(d.end)
+                if isinstance(spec.get("backtest"), dict) and spec["backtest"].get("start"):
+                    spec["backtest"]["start"] = max(str(spec["backtest"]["start"]), rng[0].isoformat())
         out = launch_research(self.jobs, spec, label)
         sid = getattr(self._tl, "sid", None)
         if sid:
@@ -916,6 +1262,15 @@ class Agent(ResearchV8, ResearchV5):
             return "awaiting_answer", [open_q[0]["text"] if len(open_q) == 1 else f"{len(open_q)} details need a quick answer before this can run."]
         if d.unsupported:
             return "awaiting_confirmation", ["Part of the request could not be represented: " + "; ".join(f"\"{u}\"" for u in d.unsupported) + ". Nothing was substituted for it. You can run the rest as shown, or rephrase that part."]
+        if d.review:
+            return "awaiting_confirmation", ["Check this reading before it runs. " + " ".join(d.review)]
+        # V10: a trade that leaves most of itself open ("buy calls when it dips", "backtest SPY iron condors") is not run on
+        # defaults nobody chose: the defaults are shown, and it waits. One open part is filled in and said, as before.
+        from strata.api.settings import get_setting
+        open_ = [m for m in (compiled.get("missing") or []) if m in ("structure", "expiration", "entry time", "strike", "spread width", "exit rule")]
+        if d.kind == "options" and len(open_) >= 4 and get_setting("ai.confirm_complex"):
+            names = {"entry time": "when to get in", "exit rule": "when to get out", "strike": "which strike", "expiration": "which expiration", "spread width": "how wide the spread is", "structure": "what to trade"}
+            return "awaiting_confirmation", ["Your message leaves " + _and([names[m] for m in open_]) + " open, and the result depends on them. The defaults are filled in below: change them, or run it as shown."]
         if exec_mode == "review":
             n = len(compiled["assumptions"])
             return "awaiting_confirmation", [f"Review mode: check the interpretation" + (f" and the {n} assumption{'s' if n != 1 else ''} I made" if n else "") + ", then run it."]
@@ -962,7 +1317,9 @@ class Agent(ResearchV8, ResearchV5):
             lines.append(note)
         head = ("Updated the strategy" if d.kind == "options" else "Updated the study") if parent else ("Here is how I read that strategy" if d.kind == "options" else "Here is how I read that question")
         # data first: before any plan is described, which of the sessions this strategy trades can be priced on what is stored
-        check = self._data_check(d, compiled, mode) if d.kind == "options" and not compiled["errors"] else None
+        # (V10: not while the reading is still waiting for an answer or a go-ahead. The check takes seconds, and until V10 the
+        # user looked at an empty page for that long before seeing how the request had been read. It runs with the run.)
+        check = self._data_check(d, compiled, mode) if d.kind == "options" and not compiled["errors"] and state in ("running", "ready") else None
         if check is not None:
             lines.insert(0, check["text"])
         content = self._plan_content(d, compiled, v, parent, interp, diff, changed, runs, compare_with, state, head + ". " + " ".join(lines), mode)
@@ -984,7 +1341,11 @@ class Agent(ResearchV8, ResearchV5):
             if tab is None or tab.is_empty():
                 return None
             req = spec.get("requested") or {}
-            cfg = {**spec["backtest"], "start": req.get("start") or str(tab["date"][0]), "end": req.get("end") or str(tab["date"][-1])}
+            rng = self._option_range(d.symbol)  # V10: checked where option prices exist, as the run is (_launch)
+            first = str(tab["date"][0])
+            if rng is not None and (not req.get("start") or str(req["start"]) < rng[0].isoformat()):
+                first = max(first, rng[0].isoformat())
+            cfg = {**spec["backtest"], "start": max(str(req.get("start") or first), first), "end": req.get("end") or str(tab["date"][-1])}
             pc = precheck(cfg, self.store, max_rows=120)
         except Exception:  # noqa: BLE001
             return None
@@ -996,7 +1357,15 @@ class Agent(ResearchV8, ResearchV5):
         return pc
 
     def _plan_content(self, d: Draft, compiled: dict, v: dict, parent: dict | None, interp: str, diff: list, changed: list | None, runs: list, compare_with: list, state: str, text: str, mode: str | None) -> dict:
+        sentence = None
+        if d.kind == "options":
+            try:  # V10: the trade in plain sentences, every part of it (what the interface shows as its reading)
+                from strata.ai import intent as I
+                sentence = I.describe_draft(d, compiled.get("effective"))
+            except Exception:  # noqa: BLE001
+                sentence = None
         return {"text": text.strip(), "version_id": v["id"], "parent_id": parent["id"] if parent else None, "interpreter": interp, "kind": d.kind, "title": d.title, "state": state,
+                **({"sentence": sentence, "effective": {k: x for k, x in (compiled.get("effective") or {}).items() if k in ("dte", "strike", "width", "entry_time", "exit_time")}} if sentence else {}),
                 "draft": d.model_dump(mode="json"), "items": compiled["items"], "missing": compiled["missing"], "errors": compiled["errors"],
                 # what the question reader assumed (V8 frames carry them as notes) is listed with what the compiler assumed
                 "assumptions": list(compiled["assumptions"]) + [{"field": "reading", "value": n, "reason": "assumed when reading the request"} for n in (d.notes or [])
@@ -1449,7 +1818,53 @@ class Agent(ResearchV8, ResearchV5):
             return None, None, [self._say(sid, "There is no finished run for the current request yet. Run it first, then ask again.")]
         return r, res, None
 
+    def _profile_reliability(self, sid: str, c: dict) -> list[dict]:
+        """"Could that just be random?" about an answer counted straight from the stored bars (a share of sessions, a comparison
+        of weekdays): what the count itself can and cannot support. No run is involved, so there is no backtest to test."""
+        import math
+        res, fr = c.get("result") or {}, c.get("frame") or {}
+        lines: list[str] = []
+
+        def wilson(k: int, n: int) -> tuple[float, float]:
+            if not n:
+                return 0.0, 0.0
+            z, ph = 1.96, k / n
+            d = 1 + z * z / n
+            mid, half = (ph + z * z / (2 * n)) / d, z * math.sqrt(ph * (1 - ph) / n + z * z / (4 * n * n)) / d
+            return max(0.0, mid - half) * 100, min(1.0, mid + half) * 100
+
+        if res.get("kind") == "breakdown":
+            p_ = res.get("p_value_groups_differ")
+            worst, best = res.get("worst"), res.get("best")
+            g = {x["group"]: x for x in res.get("groups") or []}
+            if p_ is not None and p_ >= 0.05:
+                head = f"It could well be chance. Shuffling the {'weekday' if res.get('by') == 'weekday' else 'month'} labels 400 times gave differences at least this large in {p_ * 100:.0f}% of the shuffles."
+            else:
+                head = f"It is unlikely to be chance alone: shuffling the labels 400 times gave differences this large in only {(p_ or 0) * 100:.0f}% of the shuffles. That says the groups differed in this history, not that they will keep differing."
+            lines.append(head)
+            for name in dict.fromkeys([worst, best]):
+                if name in g:
+                    x = g[name]
+                    lines.append(f"{name}: {x['mean_pct']:+.2f}% on average over {x['sessions']:,} sessions, plausibly between {x['ci95'][0]:+.2f}% and {x['ci95'][1]:+.2f}%.")
+        elif res.get("k") is not None and res.get("n"):
+            k, n = int(res["k"]), int(res["n"])
+            lo, hi = wilson(k, n)
+            lines.append(f"{k:,} of {n:,} sessions is {k / n * 100:.1f}%. With that many sessions the long-run share is plausibly between {lo:.1f}% and {hi:.1f}% (a 95% interval).")
+            t = res.get("then")
+            if t and t.get("n"):
+                lo2, hi2 = wilson(int(t["k"]), int(t["n"]))
+                lines.append(f"The second part, {int(t['k']):,} of {int(t['n']):,} ({t['k'] / t['n'] * 100:.1f}%), is plausibly between {lo2:.1f}% and {hi2:.1f}%.")
+            small = min(n, (t or {}).get("n") or n)
+            lines.append(f"{small:,} sessions is a small sample: treat it as a description of what happened, not as a rate you can rely on." if small < 100 else
+                         "The interval is about sampling only: it assumes the future resembles this history, which no count can show.")
+        else:
+            lines.append("This answer describes the stored sessions; nothing in it was tested against chance, so it cannot say whether the pattern is more than noise.")
+        return [db.add_message(sid, "assistant", "text", {"text": " ".join(lines), "view": "reliability", "explanation_source": "deterministic"})]
+
     def _robustness(self, sid: str, version: dict) -> list[dict]:
+        last = self._latest_result(sid)
+        if last is not None and (last.get("content") or last).get("view") == "profile":
+            return self._profile_reliability(sid, last.get("content") or last)
         r, res, err = self._need_result(sid, version)
         if err:
             return err
@@ -1703,7 +2118,38 @@ class Agent(ResearchV8, ResearchV5):
         s, version, cur = self._state(sid)
         prev_state = dict(s["state"])
         out = [db.add_message(sid, "user", "text", {"text": text})]
+        from strata.ai import intent as I
+        rest = self._rejected_reading(sid, text, s, version)
+        if rest is not None:  # V10: "No, same trade as before, plus ..." after a reading that took the message for a new trade
+            text = rest
+            s, version, cur = self._state(sid)
+            prev_state = dict(s["state"])
+        pend_ = s["state"].get("pending") if isinstance(s["state"].get("pending"), dict) else None
+        if pend_ and pend_.get("kind") == "say":
+            from strata.ai import converse as CV
+            pick = CV.answer_clarification(text, pend_)
+            if pick is not None:  # a choice named by its label or its place: the message that choice stands for
+                text = pick["option"]["ask"]
+                db.update_session(sid, state={**s["state"], "pending": None})
+                s, version, cur = self._state(sid)
+                prev_state = dict(s["state"])
+        if pend_ and pend_.get("kind") == "part_value":
+            # the answer to "what should the stop be?": a bare level ("40%", "25% of the premium", "2 pm") is that part's level
+            low_ = text.lower()
+            if re.search(r"\d|\bhalf\b|\bnoon\b", low_) and len(low_.split()) <= 9 and not re.search(r"\bstops?\b|\btargets?\b|\bprofits?\b|\btp\b|\bsl\b|\bout\b|\bexit\w*\b|\bclose\b|\bsell\b|\bbuy\b", low_):
+                text = f"{pend_['prefix']} {text.strip()}"
+            db.update_session(sid, state={**s["state"], "pending": None})
+            s, version, cur = self._state(sid)
+            prev_state = dict(s["state"])
+        go = I.go_ahead(text)
+        if go:  # V10: a reply that only agrees or only refuses is about what is waiting, in whatever words
+            res = self._go_ahead(sid, go, text, s, version)
+            if isinstance(res, str):
+                text = res  # the waiting reading's own go-ahead, as if its button had been clicked
+            elif res is not None:
+                return out + res
         r, interp, note = self.interpret(sid, text, cur, version, s["state"].get("last_field"))
+        r = self._with_proposal(sid, text, r, cur, prev_state)
         act = r["action"]
         needs_cur = act in ("sweep", "show_trades", "oos", "robustness", "breakdown", "timing", "skipped", "export", "derive", "fills", "untested", "cost")
         if act == "failed":
@@ -1739,7 +2185,7 @@ class Agent(ResearchV8, ResearchV5):
         elif act == "hypothesis":
             out += self._hypothesis(sid, r["plan"], interp, note)
         elif act == "graph":
-            out += self._graph(sid, r["graph"], interp, note)
+            out += self._graph(sid, r["graph"], interp, note, review=r.get("review"))
         elif act == "graph_edit":
             out += self._graph_edit(sid, r, interp, text)
         elif act == "registry":
@@ -1774,6 +2220,8 @@ class Agent(ResearchV8, ResearchV5):
             out += self._investigate(sid, r["plan"], interp, note)
         elif act == "discover":
             out += self._discover(sid, r["spec"], interp, note)
+        elif act == "robustness" and ((self._latest_result(sid) or {}).get("content") or {}).get("view") == "profile":
+            out += self._robustness(sid, version)  # an answer counted from the bars has no run: its own count is what can be judged
         elif needs_cur and cur is None:
             out.append(self._say(sid, "There is no strategy or study in this conversation yet. Describe one first."))
         elif act in ("modify", "derive"):
@@ -1814,14 +2262,89 @@ class Agent(ResearchV8, ResearchV5):
             # to count): composed from the request and the current reading, never a result
             out.append(self._say(sid, r["text"], interpreter=interp, **({"declined": True} if r.get("declined") else {}), **({"unread": r["unread"]} if r.get("unread") else {})))
         else:
-            out.append(self._say(sid, HELP + (f"\n\n{note}" if note else "")))
+            out.append(self._say(sid, self._not_read(text, cur, prev_state) + (f"\n\n{note}" if note else "")))
         self._v8_after(sid, r, out, prev_state, text)
+        if getattr(self._tl, "zone", None) is not None:
+            try:  # V10: a zone named, given away or settled by a message is the conversation's zone for times without one
+                s_now = db.get_session(sid)
+                st_now = s_now.get("state") if isinstance(s_now.get("state"), dict) else {}
+                if st_now.get("zone") != self._tl.zone:
+                    db.update_session(sid, state={**st_now, "zone": self._tl.zone})
+            except Exception:  # noqa: BLE001
+                pass
         first = next((m for m in out if m.get("role") == "assistant"), None)
         if first is not None and isinstance(first.get("content"), dict):
             first["content"]["route"] = act  # which path this message took (shown in the details view; read by the evaluation)
             db.update_message(first["id"], first["content"])
         self._attach_intent(out, r, text, cur)
         return out
+
+    def _rejected_reading(self, sid: str, text: str, s: dict, version) -> str | None:
+        """A reply that starts by refusing the reading that waits ("No, same trade as before with ...", "not what I meant: ...")
+        when that reading is a NEW trade which replaced the one the conversation was about and has not run. The refused
+        reading is set aside, the trade before it is current again, and the rest of the message is returned to be read
+        against that trade. None in every other case (a change to the waiting reading is read as before)."""
+        m = re.match(r"\s*(?:no+|nope|nah|not quite|wrong|that'?s (?:not (?:it|right|what i (?:meant|said|asked(?: for)?))|wrong)|(?:that'?s |that is )?not what i (?:meant|said|asked(?: for)?))\b[\s,.:;!-]+(?=\S)", text, re.I)
+        if not m or version is None or version.get("runs") or version.get("parent_id"):
+            return None
+        rest = text[m.end():].strip()
+        if len(rest.split()) < 2:
+            return None
+        plan = self._plan_message(sid, version["id"])
+        pc = (plan or {}).get("content") or {}
+        if pc.get("state") not in ("awaiting_confirmation", "awaiting_answer"):
+            return None
+        earlier = [v for v in db.list_versions(sid) if v["id"] < version["id"] and v.get("runs")]
+        if not earlier:
+            return None
+        st = dict(s["state"])
+        log = list(st.get("frame_log") or [])
+        frame = st.get("frame")
+        if log and (log[-1].get("version") == earlier[-1]["id"] or (log[-1].get("frame") or {}).get("kind") == "strategy"):
+            frame = log.pop().get("frame")
+        elif (st.get("frames") or {}).get(str(earlier[-1]["id"])):
+            frame = st["frames"][str(earlier[-1]["id"])]
+        db.update_session(sid, state={**st, "current": earlier[-1]["id"], "frame": frame, "frame_log": log, "pending": None})
+        db.update_message(plan["id"], {**pc, "state": "set_aside", "finalized": True, "text": (pc.get("text") or "") + " Set aside: you said this was not what you meant."})
+        return rest
+
+    def _go_ahead(self, sid: str, go: str, text: str, s: dict, version) -> str | list[dict] | None:
+        """What "yes" or "no" (in any wording, and nothing else) does: it answers whatever is waiting. A reading that waits is
+        run on "yes" (the label of its button is returned and read as a click) and dropped on "no"; a trade that waits for
+        confirmation is confirmed or left; with nothing waiting, that is said. None: the message goes to the reader as usual
+        (it names one of the choices of an open question, or something else is waiting that a bare yes cannot answer)."""
+        from strata.ai import converse as CV
+        st = s["state"] if isinstance(s.get("state"), dict) else {}
+        pending = st.get("pending") or {}
+        if pending and CV.answer_clarification(text, pending) is not None:
+            return None
+        if pending.get("kind") == "confirm_frame" and pending.get("options"):
+            if go == "yes":
+                return pending["options"][0]["label"]
+            db.update_session(sid, state={**st, "pending": None})
+            return [self._say(sid, "Not run. Say the question another way, or name the part that should change.")]
+        if pending.get("kind") == "say" and len(pending.get("options") or []) == 1:
+            # one thing was offered in place of what could not be done ("the same question on SPY"): yes takes it
+            db.update_session(sid, state={**st, "pending": None})
+            if go == "yes":
+                return pending["options"][0]["ask"]
+            return [self._say(sid, "Nothing was run.")]
+        plan = self._plan_message(sid, version["id"]) if version else None
+        pc = (plan or {}).get("content") or {}
+        if pc.get("state") == "awaiting_confirmation":
+            if go == "yes":
+                return self.confirm(sid, version["id"])
+            return [self._say(sid, "Not run. Change any part of the trade above, or describe it another way.")]
+        last = next((m for m in reversed(db.list_messages(sid)[:-1]) if m["role"] == "assistant"), None)
+        lc = (last or {}).get("content") if isinstance((last or {}).get("content"), dict) else {}
+        if last is not None and last.get("kind") == "graph" and lc.get("state") == "awaiting" and any(x.get("id") == "run" for x in lc.get("choices") or []):
+            return self.decide_graph(sid, last["id"], "run" if go == "yes" else "cancel")  # the plan's own two buttons
+        if pending or pc.get("state") == "awaiting_answer" or (last or {}).get("kind") == "decision" or lc.get("choices") or lc.get("options"):
+            return None
+        if last is None:
+            return None
+        return [self._say(sid, "Nothing is waiting to be run. Ask a question, or name the part of the last one that should change."
+                          if go == "yes" else "Nothing was waiting to be run, so nothing has changed.")]
 
     def set_mode(self, sid: str, exec_mode: str) -> dict:
         if exec_mode not in ("quick", "review"):
@@ -1865,6 +2388,7 @@ class Agent(ResearchV8, ResearchV5):
         if cur is not None and not diff_drafts(cur, d):
             return [self._say(sid, "No fields changed.")]
         d.questions = [q for q in d.questions if q.get("answered") is None and not _settled(q, cur, d)]
+        d.review = []  # the parts were set by hand: this is the reading the user wants
         return self._propose(sid, d, version, False, "manual edit", None, run=run)
 
     def apply(self, sid: str, field: str, value) -> list[dict]:

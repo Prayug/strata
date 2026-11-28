@@ -353,6 +353,110 @@ class Reference:
         best = max(out.items(), key=lambda kv: kv[1]["mean"]) if out else (None, {})
         return {"by": out, "weekday": best[0], "mean": best[1].get("mean")}
 
+    # ------------------------------------------------------------------------------- V10: the profile answers, recalculated
+    def _where(self, sym: str, conditions: list[dict] | None, period, joins: dict) -> list[str]:
+        where = []
+        if period and period[0]:
+            where.append(f"s.date >= DATE '{str(period[0])[:10]}'")
+        if period and len(period) > 1 and period[1]:
+            where.append(f"s.date <= DATE '{str(period[1])[:10]}'")
+        for c in conditions or []:
+            if c.get("key") == "rel":
+                continue
+            w = self._cond_sql(c, sym, "open", joins)
+            if w is None:
+                raise ValueError(f"condition {c.get('key')!r} is not covered by the reference")
+            where.append(w)
+        return where
+
+    def relation(self, sym: str, outcome: dict, conditions: list[dict] | None = None, period=(None, None), then: dict | None = None) -> dict:
+        """How often one price of the session stood above or below a level (profile.relation_frequency), counted in SQL.
+        A price at a time is the close of the last minute bar that ended by then; the previous session's high and low are
+        the daily record's."""
+        sym = sym.upper()
+        self.load(sym)
+        conds = list(conditions or [])
+        timed: dict = {}
+        cj: dict = {}
+
+        def feat(f: str) -> str:
+            if ":" not in f:
+                return {"open": "s.open", "close": "s.close", "high": "s.d_high", "low": "s.d_low", "prev_close": "s.prev_close", "prev_high": "p.ph", "prev_low": "p.pl"}[f]
+            kind, t = f.split(":", 1)
+            mm = MIN(t)
+            alias = "f_" + re.sub(r"\W", "", f)
+            timed[alias] = {"at": (f"select date, arg_max(c, m) v from b_{sym} where m < {mm} group by date" if mm > 570 else f"select date, arg_min(o, m) v from b_{sym} group by date"),
+                            "high_by": f"select date, max(h) v from b_{sym} where m < {mm} group by date", "low_by": f"select date, min(l) v from b_{sym} where m < {mm} group by date",
+                            "high_from": f"select date, max(h) v from b_{sym} where m >= {mm} group by date", "low_from": f"select date, min(l) v from b_{sym} where m >= {mm} group by date"}[kind]
+            return f"{alias}.v"
+
+        def pred(r: dict) -> str:
+            a, b = feat(r["a"]), feat(r["b"])
+            if r.get("pct"):
+                b = f"({b} * {1 + float(r['pct']) / 100})"
+            return f"{a} {r['op']} {b}"
+
+        where = ["s.prev_close is not null", "p.ph is not null", "p.pl is not null"] + self._where(sym, conds, period, cj)
+        where += [pred(c["rel"]) for c in conds if c.get("key") == "rel"]
+        hit = pred(outcome)
+        hit2 = pred(then) if then else "false"
+        js = " ".join(f"join ({q}) {a} using (date)" for a, q in timed.items()) + " " + " ".join(f"left join {t} {a} using (date)" for a, t in cj.items())
+        rows = self.q(f"""select s.date, ({hit}) hit, ({hit2}) hit2 from s_{sym} s
+                          join (select date, lag(d_high) over (order by date) ph, lag(d_low) over (order by date) pl from s_{sym}) p using (date) {js}
+                          where {' and '.join(where)} order by s.date""")
+        hits = [str(d) for d, h, _ in rows if h]
+        return {"n": len(rows), "k": len(hits), "dates": [str(d) for d, _, _ in rows], "hits": hits, "then_k": sum(1 for _, h, h2 in rows if h and h2) if then else None}
+
+    def bucket_stats(self, sym: str, measure: str = "abs_move", bucket: int = 30, conditions: list[dict] | None = None, period=(None, None)) -> dict:
+        """Per part of the session: where the day's high or low was first made (share of sessions), or the average size of
+        the move / of the high-to-low range in that part (profile.timing)."""
+        sym = sym.upper()
+        self.load(sym)
+        joins: dict = {}
+        where = ["s.has_minute"] + self._where(sym, conditions, period, joins)
+        js = " ".join(f"left join {t} {a} using (date)" for a, t in joins.items())
+        if measure in ("high_time", "low_time"):
+            agg, col = ("max(h)", "h") if measure == "high_time" else ("min(l)", "l")
+            rows = self.q(f"""with e as (select b.date, {agg} x from b_{sym} b group by b.date),
+                                  t as (select b.date, min(b.m) m from b_{sym} b join e using (date) where b.{col} = e.x group by b.date)
+                              select ((t.m - 570) // {bucket}) k, count(*), null from t join s_{sym} s using (date) {js} where {' and '.join(where)} group by 1 order by 1""")
+            tot = sum(n for _, n, _ in rows)
+            return {"sessions": tot, "by": {_hhmm(570 + int(k) * bucket): {"n": n, "share": 100.0 * n / tot} for k, n, _ in rows}}
+        expr = "(x.hi - x.lo) / x.o * 100" if measure == "range" else "abs(x.c / x.o - 1) * 100"
+        rows = self.q(f"""with x as (select b.date, ((b.m - 570) // {bucket}) k, arg_min(b.o, b.m) o, arg_max(b.c, b.m) c, max(b.h) hi, min(b.l) lo from b_{sym} b group by 1, 2)
+                          select x.k, count(*), avg({expr}) from x join s_{sym} s using (date) {js} where {' and '.join(where)} group by 1 order by 1""")
+        n_days = self.q(f"select count(*) from s_{sym} s {js} where {' and '.join(where)}")[0][0]
+        return {"sessions": int(n_days), "by": {_hhmm(570 + int(k) * bucket): {"n": n, "mean": float(m)} for k, n, m in rows}}
+
+    def group_stats(self, sym: str, by: str = "weekday", conditions: list[dict] | None = None, period=(None, None)) -> dict:
+        """Per weekday or month: sessions, the average open-to-close and close-to-close move, and the share of sessions that
+        closed above / below the open and the previous close (profile.breakdown)."""
+        sym = sym.upper()
+        self.load(sym)
+        joins: dict = {}
+        where = ["s.prev_close is not null"] + self._where(sym, conditions, period, joins)
+        js = " ".join(f"left join {t} {a} using (date)" for a, t in joins.items())
+        key = "s.dow" if by == "weekday" else "month(s.date)"
+        rows = self.q(f"""select {key} g, count(*), avg(s.otc), avg(s.ret), avg((s.otc > 0)::int) * 100, avg((s.otc < 0)::int) * 100, avg((s.ret > 0)::int) * 100, avg((s.ret < 0)::int) * 100
+                          from s_{sym} s {js} where {' and '.join(where)} group by 1 order by 1""")
+        names = ({1: "Monday", 2: "Tuesday", 3: "Wednesday", 4: "Thursday", 5: "Friday"} if by == "weekday" else
+                 {i + 1: n for i, n in enumerate(["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"])})
+        return {"by": {names[g]: {"n": n, "oc_mean": a, "cc_mean": b, "oc_up": c, "oc_down": d_, "cc_up": e, "cc_down": f} for g, n, a, b, c, d_, e, f in rows if g in names}}
+
+    def event(self, sym: str, event: dict, conditions: list[dict] | None = None, period=(None, None)) -> dict:
+        """How often a gap or a day's move of a given size happened (profile.event_frequency)."""
+        sym = sym.upper()
+        self.load(sym)
+        joins: dict = {}
+        col = {"gap": "s.gap", "day_return": "s.ret", "prev_return": "s.ret"}.get(event.get("key"))
+        if col is None:
+            raise ValueError("event not covered")
+        op = {"<=": "<=", ">=": ">=", "<": "<", ">": ">"}[event.get("op")]
+        where = ["s.prev_close is not null"] + self._where(sym, conditions, period, joins)
+        js = " ".join(f"left join {t} {a} using (date)" for a, t in joins.items())
+        n, k = self.q(f"select count(*), count(*) filter (where {col} {op} {float(event.get('value') or 0)}) from s_{sym} s {js} where {' and '.join(where)}")[0]
+        return {"n": int(n), "k": int(k)}
+
     # ------------------------------------------------------------------------------------------ check one answer
     def check_frame(self, frame: dict) -> dict | None:
         """Recompute a V8 question frame's headline number independently. None when this reference does not cover the

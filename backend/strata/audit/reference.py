@@ -258,7 +258,13 @@ def simulate_session(s: Session, spec: Spec) -> dict:
             tradable = all(t < int(datetime(x["expiration"].year, x["expiration"].month, x["expiration"].day, 16, 0, tzinfo=NY).timestamp()) if x["expiration"] != s.day else t < s.close_t for x in pos["legs"])
             if tradable and fresh:
                 return {"trade": _close(pos, s, spec, t, reason, obs), "signal": True, "skipped": None}
-            pending_exit = reason  # no fresh price to close at: carried to the next one (or to settlement)
+            if tradable:
+                pending_exit = reason  # no fresh price to close at: carried to the next one (or to settlement)
+            # V10: a rule that first fires on the last tick of the legs' life places no order. Nothing can be traded then, so
+            # the position expires and is recorded as an expiration, not as an exit that waited for a price. (Until V10 this
+            # simulator recorded the rule's name with "settled after a deferred exit" there and the engine "expiration": the
+            # same time, cash and P&L under two names. Hypothesis found the case on 2026-11-27: a 0 DTE call whose underlying
+            # stop was first met at 16:00.)
     if pos is None:
         return {"trade": None, "signal": True, "skipped": "no_quote"}
     # ---- still open at the close

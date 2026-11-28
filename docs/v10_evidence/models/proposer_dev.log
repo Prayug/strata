@@ -1,0 +1,512 @@
+qwen3:4b plain brief/bd-04.1 [ask] 2.24s no: the built-in reader could not read the rewrite either
+qwen3:4b focused brief/bd-04.1 [ask] 2.39s no: the rewrite changed the content (dropped: QQQ)
+qwen3:4b schema brief/bd-04.1 [ask] 3.01s no: the rewrite changed the content (added: 1)
+qwen3:4b plain brief/bd-06.1 [answer] 0.75s no: the built-in reader could not read the rewrite either
+qwen3:4b focused brief/bd-06.1 [answer] 1.29s no: the built-in reader could not read the rewrite either
+qwen3:4b schema brief/bd-06.1 [answer] 2.56s OFFER: On SPY, at what time of day does it make its high?
+qwen3:4b plain brief/bd-09.1 [ask] 0.58s no: the built-in reader could not read the rewrite either
+qwen3:4b focused brief/bd-09.1 [ask] 2.43s no: the rewrite changed the content (dropped: SPY)
+qwen3:4b schema brief/bd-09.1 [ask] 2.52s OFFER: On SPY, how often does it trade back to the previous close?
+qwen3:4b plain casey/cd-04.1 [answer] 3.6s no: the built-in reader could not read the rewrite either
+qwen3:4b focused casey/cd-04.1 [answer] 2.64s no: the built-in reader could not read the rewrite either
+qwen3:4b schema casey/cd-04.1 [answer] 3.88s no: the rewrite changed the content (added: 1)
+qwen3:4b plain casey/cd-05.1 [answer] 1.81s no: the built-in reader could not read the rewrite either
+qwen3:4b focused casey/cd-05.1 [answer] 1.7s no: the rewrite changed the content (dropped: 840)
+qwen3:4b schema casey/cd-05.1 [answer] 3.14s no: the built-in reader could not read the rewrite either
+qwen3:4b plain casey/cd-08.1 [ask] 2.26s no: the built-in reader could not read the rewrite either
+qwen3:4b focused casey/cd-08.1 [ask] 2.79s no: the built-in reader could not read the rewrite either
+qwen3:4b schema casey/cd-08.1 [ask] 3.84s no: the rewrite changed the content (added: SPY)
+qwen3:4b plain casey/cd-09.1 [answer] 2.01s no: the built-in reader could not read the rewrite either
+qwen3:4b focused casey/cd-09.1 [answer] 2.54s no: the built-in reader could not read the rewrite either
+qwen3:4b schema casey/cd-09.1 [answer] 3.64s no: the rewrite changed the content (added: 1)
+qwen3:4b plain casey/cd-10.1 [answer] 3.06s no: the built-in reader could not read the rewrite either
+qwen3:4b focused casey/cd-10.1 [answer] 3.78s no: the rewrite changed the content (dropped: 25; added: 2.5)
+qwen3:4b schema casey/cd-10.1 [answer] 3.37s no: the rewrite changed the content (dropped: 15; dropped: 300)
+qwen3:4b plain casey/cd-14.2 [ask] 0.87s no: the built-in reader could not read the rewrite either
+qwen3:4b focused casey/cd-14.2 [ask] 1.45s no: the built-in reader could not read the rewrite either
+qwen3:4b schema casey/cd-14.2 [ask] 2.05s no: the built-in reader could not read the rewrite either
+qwen3:4b plain jordan/jd-01.1 [answer] 2.36s no: the built-in reader could not read the rewrite either
+qwen3:4b focused jordan/jd-01.1 [answer] 3.13s no: the built-in reader could not read the rewrite either
+qwen3:4b schema jordan/jd-01.1 [answer] 2.65s no: the rewrite changed the content (dropped: 30)
+qwen3:4b plain jordan/jd-02.1 [answer] 3.37s no: the built-in reader could not read the rewrite either
+qwen3:4b focused jordan/jd-02.1 [answer] 3.94s no: the built-in reader could not read the rewrite either
+qwen3:4b schema jordan/jd-02.1 [answer] 3.88s no: the rewrite changed the content (added: 5)
+qwen3:4b plain jordan/jd-03.1 [ask] 1.16s no: the built-in reader could not read the rewrite either
+qwen3:4b focused jordan/jd-03.1 [ask] 1.53s no: the built-in reader could not read the rewrite either
+qwen3:4b schema jordan/jd-03.1 [ask] 2.9s no: the model found something missing
+qwen3:4b plain jordan/jd-08.1 [answer] 3.08s no: the built-in reader could not read the rewrite either
+qwen3:4b focused jordan/jd-08.1 [answer] 3.72s no: the built-in reader could not read the rewrite either
+qwen3:4b schema jordan/jd-08.1 [answer] 3.81s no: the rewrite changed the content (dropped: 720; added: SPY)
+qwen3:4b plain jordan/jd-12.1 [answer] 4.03s no: the built-in reader could not read the rewrite either
+qwen3:4b focused jordan/jd-12.1 [answer] 3.34s no: the rewrite changed the content (added: 3)
+qwen3:4b schema jordan/jd-12.1 [answer] 4.23s no: the rewrite changed the content (dropped: 2024; added: 840; added: 2.024)
+qwen3:4b plain jordan/jd-13.3 [answer] 0.74s no: the built-in reader could not read the rewrite either
+qwen3:4b focused jordan/jd-13.3 [answer] 1.01s no: the built-in reader could not read the rewrite either
+qwen3:4b schema jordan/jd-13.3 [answer] 2.67s no: the built-in reader could not read the rewrite either
+qwen3:4b plain jordan/jd-13.5 [answer] 0.65s no: the built-in reader could not read the rewrite either
+qwen3:4b focused jordan/jd-13.5 [answer] 1.06s no: the built-in reader could not read the rewrite either
+qwen3:4b schema jordan/jd-13.5 [answer] 3.15s no: the rewrite changed the content (added: SPY)
+qwen3:4b plain jordan/jd-14.3 [ask] 1.18s no: the built-in reader could not read the rewrite either
+qwen3:4b focused jordan/jd-14.3 [ask] 2.43s no: the built-in reader could not read the rewrite either
+qwen3:4b schema jordan/jd-14.3 [ask] 2.28s no: the built-in reader could not read the rewrite either
+qwen3:4b plain jordan/jd-14.5 [answer] 1.11s no: the built-in reader could not read the rewrite either
+qwen3:4b focused jordan/jd-14.5 [answer] 1.48s no: the built-in reader could not read the rewrite either
+qwen3:4b schema jordan/jd-14.5 [answer] 4.93s no: the rewrite changed the content (added: IWM; added: 0; added: 720)
+qwen3:4b plain jordan/jd-14.6 [answer] 1.83s OFFER: Okay, let's tackle this step by step. The user has a current trade setup and a message asking to "run that on the Qs and put it next to the SPY numbers".
+qwen3:4b focused jordan/jd-14.6 [answer] 1.95s no: the built-in reader could not read the rewrite either
+qwen3:4b schema jordan/jd-14.6 [answer] 2.16s no: the built-in reader could not read the rewrite either
+qwen3:4b plain morgan/md-05.1 [ask] 2.23s no: the built-in reader could not read the rewrite either
+qwen3:4b focused morgan/md-05.1 [ask] 2.21s no: the rewrite changed the content (dropped: 25; added: 2.5)
+qwen3:4b schema morgan/md-05.1 [ask] 4.49s no: the rewrite changed the content (added: SPY)
+qwen3:4b plain morgan/md-10.1 [answer] 2.51s no: the built-in reader could not read the rewrite either
+qwen3:4b focused morgan/md-10.1 [answer] 3.04s no: the built-in reader could not read the rewrite either
+qwen3:4b schema morgan/md-10.1 [answer] 3.84s OFFER: On QQQ, on days when it opens 0.5% or more below the previous close and is below VWAP at 0700, how often does it close below the previous close since 2020?
+qwen3:4b plain morgan/md-11.1 [answer] 4.56s no: the built-in reader could not read the rewrite either
+qwen3:4b focused morgan/md-11.1 [answer] 4.89s no: the rewrite changed the content (dropped: 600; dropped: 660; added: 70)
+qwen3:4b schema morgan/md-11.1 [answer] 5.61s no: the rewrite changed the content (dropped: 660; added: 80; added: 900)
+qwen3:4b plain morgan/md-12.1 [ask] 2.01s no: the built-in reader could not read the rewrite either
+qwen3:4b focused morgan/md-12.1 [ask] 1.89s no: the built-in reader could not read the rewrite either
+qwen3:4b schema morgan/md-12.1 [ask] 2.95s OFFER: Buy 10 SPY 0DTE at-the-money calls at the open. Sell at the close.
+qwen3:4b plain morgan/md-13.3 [ask] 2.59s no: the built-in reader could not read the rewrite either
+qwen3:4b focused morgan/md-13.3 [ask] 2.96s no: the rewrite changed the content (added: 0; added: SPY; added: 12)
+qwen3:4b schema morgan/md-13.3 [ask] 2.19s no: the built-in reader could not read the rewrite either
+qwen3:4b plain morgan/md-14.4 [answer] 0.69s no: the built-in reader could not read the rewrite either
+qwen3:4b focused morgan/md-14.4 [answer] 0.82s no: the built-in reader could not read the rewrite either
+qwen3:4b schema morgan/md-14.4 [answer] 2.52s no: the rewrite changed the content (added: 0.4)
+qwen3:4b plain morgan/md-14.5 [answer] 2.83s no: the built-in reader could not read the rewrite either
+qwen3:4b focused morgan/md-14.5 [answer] 1.81s no: the built-in reader could not read the rewrite either
+qwen3:4b schema morgan/md-14.5 [answer] 5.26s no: the rewrite changed the content (added: SPY; added: 420; added: 30)
+qwen3:4b plain morgan/md-14.6 [decline] 0.72s no: the built-in reader could not read the rewrite either
+qwen3:4b focused morgan/md-14.6 [decline] 1.29s no: the built-in reader could not read the rewrite either
+qwen3:4b schema morgan/md-14.6 [decline] 2.22s OFFER: Only since 2022.
+qwen3:4b plain riley/rd-03.1 [answer] 3.95s no: the built-in reader could not read the rewrite either
+qwen3:4b focused riley/rd-03.1 [answer] 4.41s no: the built-in reader could not read the rewrite either
+qwen3:4b schema riley/rd-03.1 [answer] 4.8s no: the built-in reader could not read the rewrite either
+qwen3:4b plain riley/rd-04.1 [answer] 4.15s no: the built-in reader could not read the rewrite either
+qwen3:4b focused riley/rd-04.1 [answer] 4.16s no: the built-in reader could not read the rewrite either
+qwen3:4b schema riley/rd-04.1 [answer] 5.66s no: the built-in reader could not read the rewrite either
+qwen3:4b plain riley/rd-05.1 [answer] 3.93s no: the built-in reader could not read the rewrite either
+qwen3:4b focused riley/rd-05.1 [answer] 4.33s no: the built-in reader could not read the rewrite either
+qwen3:4b schema riley/rd-05.1 [answer] 6.7s OFFER: On IWM, on days when the first 30-minute candle is green and up 0.4% or more from the open at 9:30 eastern, what is the average return from 10:00 to the close since 2016? And on days when the first 30-minute candle is red and down 0.4% or more from 
+qwen3:4b plain riley/rd-06.1 [answer] 1.73s no: the rewrite changed the content (dropped: 600; dropped: 15; dropped: 5)
+qwen3:4b focused riley/rd-06.1 [answer] 5.11s no: the rewrite is the message itself
+qwen3:4b schema riley/rd-06.1 [answer] 4.24s OFFER: Sell 1 SPY 0-DTE iron condors at 10:00 AM Eastern. Short strikes at 15-delta on each side. Long strikes $5 further out. Take profit at 50% of the premium. Stop at 0.7% of SPY from entry. Exit at the open on the next trading day.
+qwen3:4b plain riley/rd-09.1 [ask] 2.05s no: the built-in reader could not read the rewrite either
+qwen3:4b focused riley/rd-09.1 [ask] 2.53s no: the built-in reader could not read the rewrite either
+qwen3:4b schema riley/rd-09.1 [ask] 3.39s no: the rewrite changed the content (dropped: 2025)
+qwen3:4b plain riley/rd-10.1 [ask] 2.78s no: the built-in reader could not read the rewrite either
+qwen3:4b focused riley/rd-10.1 [ask] 2.76s no: the rewrite changed the content (dropped: 20; added: 2)
+qwen3:4b schema riley/rd-10.1 [ask] 5.22s no: the rewrite changed the content (added: 50; added: 30; added: 50000)
+qwen3:4b plain riley/rd-13.4 [ask] 0.65s no: the built-in reader could not read the rewrite either
+qwen3:4b focused riley/rd-13.4 [ask] 0.96s no: the built-in reader could not read the rewrite either
+qwen3:4b schema riley/rd-13.4 [ask] 2.15s no: the built-in reader could not read the rewrite either
+qwen3:4b plain riley/rd-14.2 [answer] 0.53s no: the built-in reader could not read the rewrite either
+qwen3:4b focused riley/rd-14.2 [answer] 1.63s no: the built-in reader could not read the rewrite either
+qwen3:4b schema riley/rd-14.2 [answer] 2.8s no: the built-in reader could not read the rewrite either
+qwen3:4b plain riley/rd-14.3 [answer] 0.53s no: the built-in reader could not read the rewrite either
+qwen3:4b focused riley/rd-14.3 [answer] 2.86s no: the built-in reader could not read the rewrite either
+qwen3:4b schema riley/rd-14.3 [answer] 2.62s no: the rewrite changed the content (added: SPY)
+qwen3:4b plain sam/sd-03.1 [answer] 2.01s no: the built-in reader could not read the rewrite either
+qwen3:4b focused sam/sd-03.1 [answer] 2.56s no: the built-in reader could not read the rewrite either
+qwen3:4b schema sam/sd-03.1 [answer] 3.48s no: the rewrite changed the content (dropped: 30)
+qwen3:4b plain sam/sd-07.1 [ask] 1.09s no: the built-in reader could not read the rewrite either
+qwen3:4b focused sam/sd-07.1 [ask] 1.51s no: the built-in reader could not read the rewrite either
+qwen3:4b schema sam/sd-07.1 [ask] 3.23s no: the built-in reader could not read the rewrite either
+qwen3:4b plain sam/sd-08.1 [ask] 2.7s no: the rewrite changed the content (dropped: 0; dropped: 10; dropped: 585)
+qwen3:4b focused sam/sd-08.1 [ask] 2.65s no: the rewrite changed the content (dropped: 20; added: 2)
+qwen3:4b schema sam/sd-08.1 [ask] 3.28s no: the built-in reader could not read the rewrite either
+qwen3:4b plain sam/sd-09.1 [ask] 1.33s no: the built-in reader could not read the rewrite either
+qwen3:4b focused sam/sd-09.1 [ask] 1.79s no: the built-in reader could not read the rewrite either
+qwen3:4b schema sam/sd-09.1 [ask] 3.14s OFFER: On SPY, on days when it gaps up, how often does it trade above the previous day's high by 7:00?
+qwen3:4b plain sam/sd-14.3 [ask] 0.63s no: the built-in reader could not read the rewrite either
+qwen3:4b focused sam/sd-14.3 [ask] 2.05s no: the built-in reader could not read the rewrite either
+qwen3:4b schema sam/sd-14.3 [ask] 2.95s no: the rewrite changed the content (added: 0.3; added: 1)
+== qwen3:4b: 366s
+gemma3:4b plain brief/bd-04.1 [ask] 6.06s OFFER: On QQQ, how far does it move? from <time> to the close
+gemma3:4b focused brief/bd-04.1 [ask] 2.75s no: the rewrite changed the content (added: 1)
+gemma3:4b schema brief/bd-04.1 [ask] 2.9s no: the rewrite changed the content (added: 1)
+gemma3:4b plain brief/bd-06.1 [answer] 2.31s OFFER: On SPY, at what time of day does it make its low?
+gemma3:4b focused brief/bd-06.1 [answer] 1.47s OFFER: On SPY, at what time of day does it make its low?
+gemma3:4b schema brief/bd-06.1 [answer] 2.38s OFFER: On SPY, at what time of day does it make its low?
+gemma3:4b plain brief/bd-09.1 [ask] 2.09s OFFER: On SPY, how far does it move?
+gemma3:4b focused brief/bd-09.1 [ask] 1.76s no: the built-in reader could not read the rewrite either
+gemma3:4b schema brief/bd-09.1 [ask] 2.44s OFFER: On SPY, how often does it trade above the previous close?
+gemma3:4b plain casey/cd-04.1 [answer] 3.25s no: the rewrite changed the content (dropped: 2; added: 2)
+gemma3:4b focused casey/cd-04.1 [answer] 2.52s no: the built-in reader could not read the rewrite either
+gemma3:4b schema casey/cd-04.1 [answer] 3.34s no: the built-in reader could not read the rewrite either
+gemma3:4b plain casey/cd-05.1 [answer] 2.56s no: the rewrite changed the content (dropped: 705; dropped: 840; added: 845)
+gemma3:4b focused casey/cd-05.1 [answer] 2.55s no: the rewrite changed the content (dropped: 705; dropped: 840; added: 525)
+gemma3:4b schema casey/cd-05.1 [answer] 3.02s no: the rewrite changed the content (dropped: 705; dropped: 840; added: 525)
+gemma3:4b plain casey/cd-08.1 [ask] 3.12s no: the rewrite changed the content (dropped: 5; added: SPY)
+gemma3:4b focused casey/cd-08.1 [ask] 3.29s no: the rewrite changed the content (added: SPY; added: 1)
+gemma3:4b schema casey/cd-08.1 [ask] 3.97s no: the rewrite changed the content (added: SPY; added: 1)
+gemma3:4b plain casey/cd-09.1 [answer] 2.4s no: the built-in reader could not read the rewrite either
+gemma3:4b focused casey/cd-09.1 [answer] 2.18s no: the rewrite changed the content (dropped: 10; dropped: 660)
+gemma3:4b schema casey/cd-09.1 [answer] 3.24s no: the rewrite changed the content (dropped: 10; dropped: 660; added: 600)
+gemma3:4b plain casey/cd-10.1 [answer] 3.7s no: the rewrite changed the content (dropped: 15; added: 900)
+gemma3:4b focused casey/cd-10.1 [answer] 3.23s no: the rewrite changed the content (dropped: 15; added: 8)
+gemma3:4b schema casey/cd-10.1 [answer] 4.02s no: the rewrite changed the content (dropped: 15)
+gemma3:4b plain casey/cd-14.2 [ask] 2.53s no: the rewrite changed the content (added: SPY; added: 0.3; added: 0)
+gemma3:4b focused casey/cd-14.2 [ask] 2.17s no: the rewrite changed the content (added: 20)
+gemma3:4b schema casey/cd-14.2 [ask] 2.16s no: the built-in reader could not read the rewrite either
+gemma3:4b plain jordan/jd-01.1 [answer] 1.67s no: the rewrite changed the content (dropped: 30)
+gemma3:4b focused jordan/jd-01.1 [answer] 1.8s no: the rewrite changed the content (dropped: 30)
+gemma3:4b schema jordan/jd-01.1 [answer] 2.54s no: the rewrite changed the content (dropped: 30)
+gemma3:4b plain jordan/jd-02.1 [answer] 3.38s no: the built-in reader could not read the rewrite either
+gemma3:4b focused jordan/jd-02.1 [answer] 2.74s OFFER: On IWM, on days when it opens 0.75% or more below the previous close and the first five minute bar is green, how often does it close above its open? since 2018?
+gemma3:4b schema jordan/jd-02.1 [answer] 3.55s OFFER: On IWM, on days when it opens down 0.75% or more and the first five minute bar is green, how often does it finish above its open since 2018?
+gemma3:4b plain jordan/jd-03.1 [ask] 1.85s no: the rewrite changed the content (added: QQQ)
+gemma3:4b focused jordan/jd-03.1 [ask] 2.25s no: the rewrite changed the content (added: QQQ)
+gemma3:4b schema jordan/jd-03.1 [ask] 2.91s no: the rewrite changed the content (added: QQQ)
+gemma3:4b plain jordan/jd-08.1 [answer] 4.42s no: the rewrite changed the content (added: SPY)
+gemma3:4b focused jordan/jd-08.1 [answer] 2.16s no: the rewrite changed the content (dropped: 1; dropped: VIX; dropped: 25)
+gemma3:4b schema jordan/jd-08.1 [answer] 4.47s no: the rewrite changed the content (dropped: VIX; dropped: 25; added: SPY)
+gemma3:4b plain jordan/jd-12.1 [answer] 3.18s no: the rewrite changed the content (dropped: 100; dropped: 2024)
+gemma3:4b focused jordan/jd-12.1 [answer] 4.78s no: the built-in reader could not read the rewrite either
+gemma3:4b schema jordan/jd-12.1 [answer] 4.39s no: the built-in reader could not read the rewrite either
+gemma3:4b plain jordan/jd-13.3 [answer] 4.81s no: the rewrite changed the content (added: SPY)
+gemma3:4b focused jordan/jd-13.3 [answer] 3.71s no: the rewrite changed the content (added: SPY)
+gemma3:4b schema jordan/jd-13.3 [answer] 3.93s no: the rewrite changed the content (added: SPY)
+gemma3:4b plain jordan/jd-13.5 [answer] 2.74s no: the rewrite changed the content (added: SPY)
+gemma3:4b focused jordan/jd-13.5 [answer] 3.29s no: the rewrite changed the content (added: SPY)
+gemma3:4b schema jordan/jd-13.5 [answer] 2.58s OFFER: Add the condition: it opens below the previous close. Show the losing trades. Show the winning trades.
+gemma3:4b plain jordan/jd-14.3 [ask] 1.31s no: the model said it cannot be done
+gemma3:4b focused jordan/jd-14.3 [ask] 1.04s no: the built-in reader could not read the rewrite either
+gemma3:4b schema jordan/jd-14.3 [ask] 1.86s no: the built-in reader could not read the rewrite either
+gemma3:4b plain jordan/jd-14.5 [answer] 4.45s no: the rewrite changed the content (added: 3; added: SPY; added: 0)
+gemma3:4b focused jordan/jd-14.5 [answer] 2.06s no: the built-in reader could not read the rewrite either
+gemma3:4b schema jordan/jd-14.5 [answer] 4.5s no: the built-in reader could not read the rewrite either
+gemma3:4b plain jordan/jd-14.6 [answer] 3.17s OFFER: Run that on the Qs and put it next to the SPY numbers.
+gemma3:4b focused jordan/jd-14.6 [answer] 1.67s OFFER: Run that on <TICKER>, and put it next to the <TICKER> numbers.
+gemma3:4b schema jordan/jd-14.6 [answer] 2.44s no: the rewrite changed the content (added: QQQ; added: IWM)
+gemma3:4b plain morgan/md-05.1 [ask] 5.13s no: the rewrite changed the content (added: 1)
+gemma3:4b focused morgan/md-05.1 [ask] 3.15s no: the rewrite changed the content (added: SPY)
+gemma3:4b schema morgan/md-05.1 [ask] 3.99s no: the built-in reader could not read the rewrite either
+gemma3:4b plain morgan/md-10.1 [answer] 4.19s no: the rewrite changed the content (dropped: 0.5)
+gemma3:4b focused morgan/md-10.1 [answer] 2.71s no: the rewrite changed the content (dropped: 0.5)
+gemma3:4b schema morgan/md-10.1 [answer] 4.02s no: the rewrite changed the content (dropped: 2020)
+gemma3:4b plain morgan/md-11.1 [answer] 6.9s no: the rewrite changed the content (dropped: 600; dropped: 660; dropped: 720)
+gemma3:4b focused morgan/md-11.1 [answer] 5.58s no: the built-in reader could not read the rewrite either
+gemma3:4b schema morgan/md-11.1 [answer] 5.49s no: the rewrite changed the content (dropped: 600; dropped: 660; dropped: 720)
+gemma3:4b plain morgan/md-12.1 [ask] 3.57s no: the built-in reader could not read the rewrite either
+gemma3:4b focused morgan/md-12.1 [ask] 2.95s no: the built-in reader could not read the rewrite either
+gemma3:4b schema morgan/md-12.1 [ask] 2.79s OFFER: Buy 10 SPY 0DTE at-the-money calls at the open. Sell at the close.
+gemma3:4b plain morgan/md-13.3 [ask] 2.32s no: the rewrite changed the content (added: 10)
+gemma3:4b focused morgan/md-13.3 [ask] 1.18s no: the rewrite changed the content (added: 7)
+gemma3:4b schema morgan/md-13.3 [ask] 1.94s no: the rewrite changed the content (added: 7)
+gemma3:4b plain morgan/md-14.4 [answer] 1.79s no: the rewrite changed the content (added: 0.4)
+gemma3:4b focused morgan/md-14.4 [answer] 2.44s no: the rewrite changed the content (added: 0.4; added: 600)
+gemma3:4b schema morgan/md-14.4 [answer] 1.84s no: the built-in reader could not read the rewrite either
+gemma3:4b plain morgan/md-14.5 [answer] 4.94s no: the rewrite changed the content (added: SPY; added: 0.4; added: 945)
+gemma3:4b focused morgan/md-14.5 [answer] 4.68s no: the rewrite changed the content (added: 420; added: 765; added: 1000)
+gemma3:4b schema morgan/md-14.5 [answer] 4.14s no: the rewrite changed the content (added: 5000)
+gemma3:4b plain morgan/md-14.6 [decline] 3.23s no: the rewrite changed the content (added: SPY; added: 0.4; added: 600)
+gemma3:4b focused morgan/md-14.6 [decline] 3.93s no: the rewrite changed the content (added: SPY; added: 0.4; added: 600)
+gemma3:4b schema morgan/md-14.6 [decline] 2.26s OFFER: Only since 2022.
+gemma3:4b plain riley/rd-03.1 [answer] 3.99s OFFER: On SPY, on days when it opens 0.75% or more below the previous close and the VIX is above 25, how do the weekdays compare? from 2016 to the present, for the days where it does get there, what is the median time of day it happens?
+gemma3:4b focused riley/rd-03.1 [answer] 2.4s no: the rewrite changed the content (dropped: 2016)
+gemma3:4b schema riley/rd-03.1 [answer] 4.77s no: the built-in reader could not read the rewrite either
+gemma3:4b plain riley/rd-04.1 [answer] 4.95s no: the built-in reader could not read the rewrite either
+gemma3:4b focused riley/rd-04.1 [answer] 3.1s no: the rewrite changed the content (dropped: 3; dropped: 5; dropped: 1993)
+gemma3:4b schema riley/rd-04.1 [answer] 4.59s no: the built-in reader could not read the rewrite either
+gemma3:4b plain riley/rd-05.1 [answer] 6.03s no: the built-in reader could not read the rewrite either
+gemma3:4b focused riley/rd-05.1 [answer] 3.7s no: the rewrite changed the content (dropped: 30)
+gemma3:4b schema riley/rd-05.1 [answer] 4.74s no: the built-in reader could not read the rewrite either
+gemma3:4b plain riley/rd-06.1 [answer] 5.31s no: the built-in reader could not read the rewrite either
+gemma3:4b focused riley/rd-06.1 [answer] 5.73s OFFER: Backtest selling 1 SPY same-day-expiry iron condor at 10:00 AM Eastern on every trading day since the option data begins: short strikes at roughly 15 delta on each side, long strikes $5 further out, one contract. Take profit if it can be bought b
+gemma3:4b schema riley/rd-06.1 [answer] 6.02s no: the built-in reader could not read the rewrite either
+gemma3:4b plain riley/rd-09.1 [ask] 2.64s no: the built-in reader could not read the rewrite either
+gemma3:4b focused riley/rd-09.1 [ask] 2.65s no: the built-in reader could not read the rewrite either
+gemma3:4b schema riley/rd-09.1 [ask] 3.18s no: the rewrite changed the content (dropped: 2005; dropped: 2025)
+gemma3:4b plain riley/rd-10.1 [ask] 2.9s no: the rewrite changed the content (dropped: 5; dropped: 0; dropped: 20)
+gemma3:4b focused riley/rd-10.1 [ask] 2.89s no: the built-in reader could not read the rewrite either
+gemma3:4b schema riley/rd-10.1 [ask] 3.94s no: the built-in reader could not read the rewrite either
+gemma3:4b plain riley/rd-13.4 [ask] 3.3s OFFER: Add the condition: it trades above the previous day's high [by <time>]
+gemma3:4b focused riley/rd-13.4 [ask] 4.22s no: the rewrite changed the content (added: SPY; added: 2016)
+gemma3:4b schema riley/rd-13.4 [ask] 2.1s no: the rewrite changed the content (added: VIX; added: 20)
+gemma3:4b plain riley/rd-14.2 [answer] 4.83s no: the rewrite changed the content (added: 0; added: 575)
+gemma3:4b focused riley/rd-14.2 [answer] 2.4s no: the built-in reader could not read the rewrite either
+gemma3:4b schema riley/rd-14.2 [answer] 2.65s no: the built-in reader could not read the rewrite either
+gemma3:4b plain riley/rd-14.3 [answer] 1.8s no: the rewrite changed the content (added: SPY)
+gemma3:4b focused riley/rd-14.3 [answer] 2.43s no: the built-in reader could not read the rewrite either
+gemma3:4b schema riley/rd-14.3 [answer] 2.76s no: the built-in reader could not read the rewrite either
+gemma3:4b plain sam/sd-03.1 [answer] 3.21s no: the built-in reader could not read the rewrite either
+gemma3:4b focused sam/sd-03.1 [answer] 3.0s no: the built-in reader could not read the rewrite either
+gemma3:4b schema sam/sd-03.1 [answer] 3.12s no: the rewrite changed the content (dropped: 30)
+gemma3:4b plain sam/sd-07.1 [ask] 2.98s no: the built-in reader could not read the rewrite either
+gemma3:4b focused sam/sd-07.1 [ask] 1.47s no: the built-in reader could not read the rewrite either
+gemma3:4b schema sam/sd-07.1 [ask] 2.64s no: the built-in reader could not read the rewrite either
+gemma3:4b plain sam/sd-08.1 [ask] 3.17s no: the rewrite changed the content (dropped: 10)
+gemma3:4b focused sam/sd-08.1 [ask] 3.73s no: the built-in reader could not read the rewrite either
+gemma3:4b schema sam/sd-08.1 [ask] 3.15s no: the built-in reader could not read the rewrite either
+gemma3:4b plain sam/sd-09.1 [ask] 3.87s no: the rewrite changed the content (dropped: 600)
+gemma3:4b focused sam/sd-09.1 [ask] 2.27s no: the built-in reader could not read the rewrite either
+gemma3:4b schema sam/sd-09.1 [ask] 2.93s no: the built-in reader could not read the rewrite either
+gemma3:4b plain sam/sd-14.3 [ask] 2.34s no: the rewrite changed the content (added: 0.3)
+gemma3:4b focused sam/sd-14.3 [ask] 3.2s no: the rewrite changed the content (added: 575)
+gemma3:4b schema sam/sd-14.3 [ask] 2.7s no: the built-in reader could not read the rewrite either
+== gemma3:4b: 425s
+qwen3:8b plain brief/bd-04.1 [ask] 9.75s no: the rewrite changed the content (added: 1)
+qwen3:8b focused brief/bd-04.1 [ask] 2.56s no: the built-in reader could not read the rewrite either
+qwen3:8b schema brief/bd-04.1 [ask] 5.19s no: the rewrite changed the content (added: 1)
+qwen3:8b plain brief/bd-06.1 [answer] 1.25s no: the built-in reader could not read the rewrite either
+qwen3:8b focused brief/bd-06.1 [answer] 3.49s no: the rewrite changed the content (added: 1; added: 660)
+qwen3:8b schema brief/bd-06.1 [answer] 5.48s no: the rewrite changed the content (added: 1; added: 660)
+qwen3:8b plain brief/bd-09.1 [ask] 2.3s no: the model found something missing
+qwen3:8b focused brief/bd-09.1 [ask] 3.01s no: the model found something missing
+qwen3:8b schema brief/bd-09.1 [ask] 3.6s no: the model found something missing
+qwen3:8b plain casey/cd-04.1 [answer] 6.33s no: the rewrite changed the content (added: 1)
+qwen3:8b focused casey/cd-04.1 [answer] 4.79s no: the rewrite changed the content (added: 1)
+qwen3:8b schema casey/cd-04.1 [answer] 6.23s no: the rewrite changed the content (added: 1)
+qwen3:8b plain casey/cd-05.1 [answer] 2.31s no: the built-in reader could not read the rewrite either
+qwen3:8b focused casey/cd-05.1 [answer] 3.92s no: the built-in reader could not read the rewrite either
+qwen3:8b schema casey/cd-05.1 [answer] 4.85s no: the built-in reader could not read the rewrite either
+qwen3:8b plain casey/cd-08.1 [ask] 4.15s no: the rewrite changed the content (added: SPY)
+qwen3:8b focused casey/cd-08.1 [ask] 4.52s no: the built-in reader could not read the rewrite either
+qwen3:8b schema casey/cd-08.1 [ask] 5.94s no: the rewrite changed the content (added: SPY)
+qwen3:8b plain casey/cd-09.1 [answer] 2.99s no: the built-in reader could not read the rewrite either
+qwen3:8b focused casey/cd-09.1 [answer] 4.68s no: the rewrite changed the content (dropped: 10; dropped: 660; added: 600)
+qwen3:8b schema casey/cd-09.1 [answer] 5.62s no: the rewrite changed the content (dropped: 10; dropped: 660; added: 600)
+qwen3:8b plain casey/cd-10.1 [answer] 4.69s no: the rewrite changed the content (dropped: 15; added: 900)
+qwen3:8b focused casey/cd-10.1 [answer] 5.85s no: the rewrite changed the content (dropped: 15)
+qwen3:8b schema casey/cd-10.1 [answer] 7.24s no: the rewrite changed the content (dropped: 15)
+qwen3:8b plain casey/cd-14.2 [ask] 1.37s no: the rewrite changed the content (added: 20)
+qwen3:8b focused casey/cd-14.2 [ask] 3.35s no: the rewrite changed the content (added: 20)
+qwen3:8b schema casey/cd-14.2 [ask] 3.41s no: the built-in reader could not read the rewrite either
+qwen3:8b plain jordan/jd-01.1 [answer] 1.49s no: the rewrite changed the content (dropped: 30)
+qwen3:8b focused jordan/jd-01.1 [answer] 2.65s no: the rewrite changed the content (dropped: 30)
+qwen3:8b schema jordan/jd-01.1 [answer] 4.51s no: the rewrite changed the content (dropped: 30)
+qwen3:8b plain jordan/jd-02.1 [answer] 3.89s no: the built-in reader could not read the rewrite either
+qwen3:8b focused jordan/jd-02.1 [answer] 4.92s no: the built-in reader could not read the rewrite either
+qwen3:8b schema jordan/jd-02.1 [answer] 7.18s no: the rewrite changed the content (added: 5)
+qwen3:8b plain jordan/jd-03.1 [ask] 2.9s no: the rewrite changed the content (added: QQQ)
+qwen3:8b focused jordan/jd-03.1 [ask] 3.23s no: the rewrite changed the content (added: QQQ)
+qwen3:8b schema jordan/jd-03.1 [ask] 5.2s no: the rewrite changed the content (added: QQQ)
+qwen3:8b plain jordan/jd-08.1 [answer] 4.37s no: the rewrite changed the content (added: SPY)
+qwen3:8b focused jordan/jd-08.1 [answer] 5.52s no: the rewrite changed the content (added: SPY)
+qwen3:8b schema jordan/jd-08.1 [answer] 7.18s no: the rewrite changed the content (added: SPY)
+qwen3:8b plain jordan/jd-12.1 [answer] 4.09s no: the rewrite changed the content (added: 585)
+qwen3:8b focused jordan/jd-12.1 [answer] 5.86s no: the rewrite changed the content (added: 780)
+qwen3:8b schema jordan/jd-12.1 [answer] 6.72s no: the rewrite changed the content (dropped: 100; added: 780)
+qwen3:8b plain jordan/jd-13.3 [answer] 1.87s no: the rewrite changed the content (added: SPY)
+qwen3:8b focused jordan/jd-13.3 [answer] 3.13s no: the rewrite changed the content (added: SPY)
+qwen3:8b schema jordan/jd-13.3 [answer] 4.48s no: the rewrite changed the content (added: SPY)
+qwen3:8b plain jordan/jd-13.5 [answer] 4.16s no: the rewrite changed the content (added: SPY)
+qwen3:8b focused jordan/jd-13.5 [answer] 4.83s no: the rewrite changed the content (added: SPY)
+qwen3:8b schema jordan/jd-13.5 [answer] 5.42s no: the rewrite changed the content (added: SPY)
+qwen3:8b plain jordan/jd-14.3 [ask] 1.69s no: the rewrite changed the content (added: 585)
+qwen3:8b focused jordan/jd-14.3 [ask] 2.04s no: the rewrite changed the content (added: 20)
+qwen3:8b schema jordan/jd-14.3 [ask] 3.85s no: the rewrite changed the content (added: 20)
+qwen3:8b plain jordan/jd-14.5 [answer] 7.67s no: the rewrite changed the content (added: SPY; added: 0; added: 585)
+qwen3:8b focused jordan/jd-14.5 [answer] 4.28s no: the rewrite changed the content (added: SPY; added: 720)
+qwen3:8b schema jordan/jd-14.5 [answer] 10.63s no: the rewrite changed the content (added: SPY; added: 720; added: 0)
+qwen3:8b plain jordan/jd-14.6 [answer] 1.98s no: the rewrite changed the content (added: QQQ)
+qwen3:8b focused jordan/jd-14.6 [answer] 2.74s no: the rewrite changed the content (added: QQQ; added: 1)
+qwen3:8b schema jordan/jd-14.6 [answer] 3.96s no: the rewrite changed the content (added: QQQ)
+qwen3:8b plain morgan/md-05.1 [ask] 7.08s no: the rewrite changed the content (added: SPY; added: 1)
+qwen3:8b focused morgan/md-05.1 [ask] 13.82s no: the rewrite is the message itself
+qwen3:8b schema morgan/md-05.1 [ask] 5.83s no: the built-in reader could not read the rewrite either
+qwen3:8b plain morgan/md-10.1 [answer] 4.34s OFFER: On QQQ, on days when it opens 0.5% or more below the previous close and is below VWAP at 0700, how often does it close below the open from 0700 to the close? Since 2020.
+qwen3:8b focused morgan/md-10.1 [answer] 5.06s OFFER: On QQQ, on days when it gaps down 0.5% or more and is below VWAP at 07:00, how often does it close below the previous close from there to the close since 2020?
+qwen3:8b schema morgan/md-10.1 [answer] 7.09s OFFER: On QQQ, on days when it gaps down 0.5% or more and is below VWAP at 07:00, how often does it close below the previous close from there to the close since 2020? What is the average move?
+qwen3:8b plain morgan/md-11.1 [answer] 8.04s no: the built-in reader could not read the rewrite either
+qwen3:8b focused morgan/md-11.1 [answer] 7.55s no: the built-in reader could not read the rewrite either
+qwen3:8b schema morgan/md-11.1 [answer] 8.89s no: the built-in reader could not read the rewrite either
+qwen3:8b plain morgan/md-12.1 [ask] 2.25s no: the built-in reader could not read the rewrite either
+qwen3:8b focused morgan/md-12.1 [ask] 2.4s no: the built-in reader could not read the rewrite either
+qwen3:8b schema morgan/md-12.1 [ask] 5.23s no: the built-in reader could not read the rewrite either
+qwen3:8b plain morgan/md-13.3 [ask] 1.03s no: the built-in reader could not read the rewrite either
+qwen3:8b focused morgan/md-13.3 [ask] 1.32s no: the rewrite changed the content (added: 5)
+qwen3:8b schema morgan/md-13.3 [ask] 3.4s no: the rewrite changed the content (added: 5)
+qwen3:8b plain morgan/md-14.4 [answer] 2.94s no: the rewrite changed the content (added: SPY; added: 600)
+qwen3:8b focused morgan/md-14.4 [answer] 2.34s no: the rewrite changed the content (added: 0.4)
+qwen3:8b schema morgan/md-14.4 [answer] 4.09s no: the rewrite changed the content (added: 0.4)
+qwen3:8b plain morgan/md-14.5 [answer] 4.74s no: the rewrite changed the content (added: SPY; added: 945; added: 1000)
+qwen3:8b focused morgan/md-14.5 [answer] 6.05s no: the rewrite changed the content (added: SPY)
+qwen3:8b schema morgan/md-14.5 [answer] 7.34s no: the rewrite changed the content (added: SPY)
+qwen3:8b plain morgan/md-14.6 [decline] 0.99s OFFER: Only since 2022.
+qwen3:8b focused morgan/md-14.6 [decline] 6.02s no: the rewrite changed the content (added: SPY; added: 0.4; added: 600)
+qwen3:8b schema morgan/md-14.6 [decline] 3.6s OFFER: Add the condition: since 2022.
+qwen3:8b plain riley/rd-03.1 [answer] 6.2s no: the built-in reader could not read the rewrite either
+qwen3:8b focused riley/rd-03.1 [answer] 7.43s no: the built-in reader could not read the rewrite either
+qwen3:8b schema riley/rd-03.1 [answer] 9.04s no: the built-in reader could not read the rewrite either
+qwen3:8b plain riley/rd-04.1 [answer] 5.2s no: the built-in reader could not read the rewrite either
+qwen3:8b focused riley/rd-04.1 [answer] 5.56s no: the built-in reader could not read the rewrite either
+qwen3:8b schema riley/rd-04.1 [answer] 8.06s no: the built-in reader could not read the rewrite either
+qwen3:8b plain riley/rd-05.1 [answer] 6.38s no: the rewrite changed the content (dropped: 30; added: 2023)
+qwen3:8b focused riley/rd-05.1 [answer] 7.14s no: the rewrite changed the content (added: 2023)
+qwen3:8b schema riley/rd-05.1 [answer] 8.39s OFFER: On IWM, since 2016, on days when the first 30-minute candle is green and up 0.4% or more, what are the average and median return from 10:00 to the close? And how do these compare with days when the first 30-minute candle is red and down 0.4% or mor
+qwen3:8b plain riley/rd-06.1 [answer] 5.56s OFFER: Sell 1 SPY 0DTE iron condors at 10:00 AM ET on every trading day since the option data begins. Short strikes at roughly 15 delta on each side, long strikes $5 further out. Take profit at 50% of the premium. Stop at 0.7% move of SPY from entry.
+qwen3:8b focused riley/rd-06.1 [answer] 7.72s no: the built-in reader could not read the rewrite either
+qwen3:8b schema riley/rd-06.1 [answer] 6.81s OFFER: Sell 1 SPY same-day-expiry iron condors at 10:00 AM ET on every trading day. Short strikes at roughly 15 delta on each side. Long strikes $5 further out. Take profit at 50% of the premium. Stop at 0.7% move of SPY from entry. Exit at expiration.
+qwen3:8b plain riley/rd-09.1 [ask] 3.02s no: the rewrite changed the content (dropped: 2025)
+qwen3:8b focused riley/rd-09.1 [ask] 3.98s no: the rewrite changed the content (dropped: 2025)
+qwen3:8b schema riley/rd-09.1 [ask] 5.75s no: the rewrite changed the content (dropped: 2025)
+qwen3:8b plain riley/rd-10.1 [ask] 5.15s no: the rewrite changed the content (dropped: 20)
+qwen3:8b focused riley/rd-10.1 [ask] 4.39s no: the built-in reader could not read the rewrite either
+qwen3:8b schema riley/rd-10.1 [ask] 6.97s no: the rewrite changed the content (added: 50000)
+qwen3:8b plain riley/rd-13.4 [ask] 1.16s no: the rewrite changed the content (added: VIX; added: 20)
+qwen3:8b focused riley/rd-13.4 [ask] 7.34s no: the rewrite changed the content (added: SPY; added: 2016)
+qwen3:8b schema riley/rd-13.4 [ask] 6.82s no: the rewrite changed the content (added: SPY; added: 2016; added: VIX)
+qwen3:8b plain riley/rd-14.2 [answer] 2.36s no: the rewrite changed the content (added: 959)
+qwen3:8b focused riley/rd-14.2 [answer] 2.55s no: the built-in reader could not read the rewrite either
+qwen3:8b schema riley/rd-14.2 [answer] 4.82s no: the built-in reader could not read the rewrite either
+qwen3:8b plain riley/rd-14.3 [answer] 1.68s no: the rewrite changed the content (added: SPY)
+qwen3:8b focused riley/rd-14.3 [answer] 3.01s no: the rewrite changed the content (added: SPY)
+qwen3:8b schema riley/rd-14.3 [answer] 4.14s no: the rewrite changed the content (added: SPY)
+qwen3:8b plain sam/sd-03.1 [answer] 3.36s no: the rewrite changed the content (dropped: 30)
+qwen3:8b focused sam/sd-03.1 [answer] 4.73s no: the rewrite changed the content (dropped: 30)
+qwen3:8b schema sam/sd-03.1 [answer] 6.14s no: the built-in reader could not read the rewrite either
+qwen3:8b plain sam/sd-07.1 [ask] 2.41s no: the built-in reader could not read the rewrite either
+qwen3:8b focused sam/sd-07.1 [ask] 2.92s no: the built-in reader could not read the rewrite either
+qwen3:8b schema sam/sd-07.1 [ask] 5.39s no: the built-in reader could not read the rewrite either
+qwen3:8b plain sam/sd-08.1 [ask] 2.77s OFFER: Sell 1 QQQ 0DTE 10-delta puts at 0945 ET. Take profit at 20% of the premium.
+qwen3:8b focused sam/sd-08.1 [ask] 3.48s OFFER: Sell 1 QQQ 0DTE 10-delta puts at 09:45 ET. Take profit at 20% of the premium.
+qwen3:8b schema sam/sd-08.1 [ask] 5.54s no: the built-in reader could not read the rewrite either
+qwen3:8b plain sam/sd-09.1 [ask] 2.48s no: the built-in reader could not read the rewrite either
+qwen3:8b focused sam/sd-09.1 [ask] 3.48s no: the rewrite changed the content (dropped: 600; added: 1)
+qwen3:8b schema sam/sd-09.1 [ask] 5.4s no: the built-in reader could not read the rewrite either
+qwen3:8b plain sam/sd-14.3 [ask] 1.7s no: the rewrite changed the content (added: 30)
+qwen3:8b focused sam/sd-14.3 [ask] 2.75s OFFER: Change the stop to 0.3.
+qwen3:8b schema sam/sd-14.3 [ask] 4.52s no: the rewrite changed the content (added: 1)
+== qwen3:8b: 603s
+granite3.3:8b plain brief/bd-04.1 [ask] 9.63s no: the rewrite changed the content (added: 1)
+granite3.3:8b focused brief/bd-04.1 [ask] 2.96s no: the rewrite changed the content (added: 1)
+granite3.3:8b schema brief/bd-04.1 [ask] 5.27s no: the rewrite changed the content (added: 1)
+granite3.3:8b plain brief/bd-06.1 [answer] 4.95s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused brief/bd-06.1 [answer] 2.35s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema brief/bd-06.1 [answer] 4.77s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain brief/bd-09.1 [ask] 5.76s no: the model found something missing
+granite3.3:8b focused brief/bd-09.1 [ask] 2.89s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema brief/bd-09.1 [ask] 4.29s no: the model said it cannot be done
+granite3.3:8b plain casey/cd-04.1 [answer] 6.35s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused casey/cd-04.1 [answer] 4.7s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema casey/cd-04.1 [answer] 6.5s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain casey/cd-05.1 [answer] 2.6s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused casey/cd-05.1 [answer] 4.07s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema casey/cd-05.1 [answer] 5.17s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain casey/cd-08.1 [ask] 3.32s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused casey/cd-08.1 [ask] 4.44s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema casey/cd-08.1 [ask] 4.69s no: the model said it cannot be done
+granite3.3:8b plain casey/cd-09.1 [answer] 2.85s no: the rewrite changed the content (dropped: 10; dropped: 660; added: 600)
+granite3.3:8b focused casey/cd-09.1 [answer] 4.28s no: the rewrite changed the content (dropped: 10; dropped: 660; added: 600)
+granite3.3:8b schema casey/cd-09.1 [answer] 6.29s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain casey/cd-10.1 [answer] 5.55s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused casey/cd-10.1 [answer] 6.46s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema casey/cd-10.1 [answer] 7.83s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain casey/cd-14.2 [ask] 0.86s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused casey/cd-14.2 [ask] 5.53s no: the rewrite changed the content (added: 0)
+granite3.3:8b schema casey/cd-14.2 [ask] 3.59s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain jordan/jd-01.1 [answer] 1.46s no: the rewrite changed the content (dropped: 30)
+granite3.3:8b focused jordan/jd-01.1 [answer] 2.88s no: the rewrite changed the content (dropped: 30)
+granite3.3:8b schema jordan/jd-01.1 [answer] 4.54s no: the rewrite changed the content (dropped: 30)
+granite3.3:8b plain jordan/jd-02.1 [answer] 4.54s no: the rewrite changed the content (added: 5)
+granite3.3:8b focused jordan/jd-02.1 [answer] 5.51s no: the rewrite changed the content (added: 5)
+granite3.3:8b schema jordan/jd-02.1 [answer] 7.38s no: the rewrite changed the content (added: 5)
+granite3.3:8b plain jordan/jd-03.1 [ask] 1.97s no: the rewrite changed the content (added: QQQ)
+granite3.3:8b focused jordan/jd-03.1 [ask] 3.56s no: the rewrite changed the content (added: QQQ)
+granite3.3:8b schema jordan/jd-03.1 [ask] 5.71s no: the rewrite changed the content (added: QQQ)
+granite3.3:8b plain jordan/jd-08.1 [answer] 4.29s no: the rewrite changed the content (dropped: 720; added: SPY)
+granite3.3:8b focused jordan/jd-08.1 [answer] 5.37s no: the rewrite changed the content (dropped: 720; added: SPY)
+granite3.3:8b schema jordan/jd-08.1 [answer] 6.97s no: the rewrite changed the content (dropped: 720; added: SPY; added: 2018)
+granite3.3:8b plain jordan/jd-12.1 [answer] 3.78s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused jordan/jd-12.1 [answer] 5.47s no: the rewrite changed the content (dropped: 2024)
+granite3.3:8b schema jordan/jd-12.1 [answer] 4.8s no: the model said it cannot be done
+granite3.3:8b plain jordan/jd-13.3 [answer] 3.51s no: the rewrite changed the content (added: SPY)
+granite3.3:8b focused jordan/jd-13.3 [answer] 2.42s no: the model said it cannot be done
+granite3.3:8b schema jordan/jd-13.3 [answer] 5.4s no: the rewrite changed the content (added: SPY)
+granite3.3:8b plain jordan/jd-13.5 [answer] 4.8s no: the rewrite changed the content (added: SPY)
+granite3.3:8b focused jordan/jd-13.5 [answer] 6.11s no: the rewrite changed the content (added: SPY)
+granite3.3:8b schema jordan/jd-13.5 [answer] 5.43s no: the rewrite changed the content (added: SPY)
+granite3.3:8b plain jordan/jd-14.3 [ask] 1.27s no: the rewrite changed the content (added: 20)
+granite3.3:8b focused jordan/jd-14.3 [ask] 1.91s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema jordan/jd-14.3 [ask] 4.07s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain jordan/jd-14.5 [answer] 2.82s no: the rewrite changed the content (added: SPY; added: 0; added: 585)
+granite3.3:8b focused jordan/jd-14.5 [answer] 7.18s no: the rewrite changed the content (added: IWM; added: 0.03)
+granite3.3:8b schema jordan/jd-14.5 [answer] 9.46s no: the rewrite changed the content (added: IWM)
+granite3.3:8b plain jordan/jd-14.6 [answer] 1.06s no: the rewrite changed the content (added: QQQ)
+granite3.3:8b focused jordan/jd-14.6 [answer] 3.28s no: the rewrite changed the content (added: QQQ)
+granite3.3:8b schema jordan/jd-14.6 [answer] 4.82s no: the rewrite changed the content (added: QQQ)
+granite3.3:8b plain morgan/md-05.1 [ask] 5.58s no: the rewrite changed the content (dropped: 25; added: SPY)
+granite3.3:8b focused morgan/md-05.1 [ask] 4.89s no: the model found something missing
+granite3.3:8b schema morgan/md-05.1 [ask] 8.39s no: the rewrite changed the content (added: SPY)
+granite3.3:8b plain morgan/md-10.1 [answer] 5.76s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused morgan/md-10.1 [answer] 7.76s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema morgan/md-10.1 [answer] 8.56s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain morgan/md-11.1 [answer] 8.68s no: the rewrite changed the content (dropped: 720; added: 900)
+granite3.3:8b focused morgan/md-11.1 [answer] 9.74s no: the rewrite changed the content (dropped: 600; dropped: 660; dropped: 720)
+granite3.3:8b schema morgan/md-11.1 [answer] 11.7s no: the rewrite changed the content (dropped: 600; dropped: 660; dropped: 720)
+granite3.3:8b plain morgan/md-12.1 [ask] 2.92s OFFER: Buy 10 SPY 0DTE at-the-money calls at the open. Sell at the close. Does this trade make money on average?
+granite3.3:8b focused morgan/md-12.1 [ask] 2.81s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema morgan/md-12.1 [ask] 5.8s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain morgan/md-13.3 [ask] 1.46s no: the model found something missing
+granite3.3:8b focused morgan/md-13.3 [ask] 1.92s no: the rewrite changed the content (added: 10)
+granite3.3:8b schema morgan/md-13.3 [ask] 4.19s no: the rewrite changed the content (added: 10)
+granite3.3:8b plain morgan/md-14.4 [answer] 1.91s no: the rewrite changed the content (added: 0.4)
+granite3.3:8b focused morgan/md-14.4 [answer] 1.79s OFFER: Remove the gap filter.
+granite3.3:8b schema morgan/md-14.4 [answer] 3.7s OFFER: Remove the gap filter.
+granite3.3:8b plain morgan/md-14.5 [answer] 7.92s no: the rewrite changed the content (added: SPY; added: 0.4; added: 945)
+granite3.3:8b focused morgan/md-14.5 [answer] 7.15s no: the rewrite changed the content (added: SPY; added: 420; added: 765)
+granite3.3:8b schema morgan/md-14.5 [answer] 11.32s no: the rewrite changed the content (added: SPY; added: 0.4; added: 20)
+granite3.3:8b plain morgan/md-14.6 [decline] 4.88s no: the rewrite changed the content (added: SPY; added: 0.4; added: 600)
+granite3.3:8b focused morgan/md-14.6 [decline] 6.83s no: the rewrite changed the content (added: SPY; added: 0.4; added: 600)
+granite3.3:8b schema morgan/md-14.6 [decline] 4.01s OFFER: Only for 2022.
+granite3.3:8b plain riley/rd-03.1 [answer] 6.53s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused riley/rd-03.1 [answer] 7.79s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema riley/rd-03.1 [answer] 9.58s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain riley/rd-04.1 [answer] 6.35s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused riley/rd-04.1 [answer] 6.7s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema riley/rd-04.1 [answer] 8.67s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain riley/rd-05.1 [answer] 6.74s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused riley/rd-05.1 [answer] 8.01s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema riley/rd-05.1 [answer] 9.85s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain riley/rd-06.1 [answer] 7.08s no: the rewrite changed the content (dropped: 0)
+granite3.3:8b focused riley/rd-06.1 [answer] 9.3s no: the rewrite changed the content (dropped: 0)
+granite3.3:8b schema riley/rd-06.1 [answer] 8.23s no: the rewrite changed the content (dropped: 0)
+granite3.3:8b plain riley/rd-09.1 [ask] 3.77s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused riley/rd-09.1 [ask] 4.91s OFFER: On SPY, from 2005 to 2025, on days when it opens more than 0.5% below the previous close, what percentage of those days close above the previous close?
+granite3.3:8b schema riley/rd-09.1 [ask] 6.56s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain riley/rd-10.1 [ask] 5.04s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused riley/rd-10.1 [ask] 1.55s no: the model said it cannot be done
+granite3.3:8b schema riley/rd-10.1 [ask] 4.88s no: the model said it cannot be done
+granite3.3:8b plain riley/rd-13.4 [ask] 4.45s no: the rewrite changed the content (added: SPY; added: 2016)
+granite3.3:8b focused riley/rd-13.4 [ask] 4.92s no: the rewrite changed the content (added: SPY; added: 2016)
+granite3.3:8b schema riley/rd-13.4 [ask] 7.62s no: the rewrite changed the content (added: SPY; added: 2016)
+granite3.3:8b plain riley/rd-14.2 [answer] 2.63s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused riley/rd-14.2 [answer] 3.33s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema riley/rd-14.2 [answer] 5.66s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain riley/rd-14.3 [answer] 2.47s OFFER: Add the condition: take it off as soon as the straddle is worth 40% more than the initial premium paid.
+granite3.3:8b focused riley/rd-14.3 [answer] 3.79s OFFER: Add an early exit condition: remove the straddle when its value increases by 40% from the purchase price.
+granite3.3:8b schema riley/rd-14.3 [answer] 4.69s OFFER: Add an early exit: remove the straddle when it increases in value by 40%.
+granite3.3:8b plain sam/sd-03.1 [answer] 3.59s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused sam/sd-03.1 [answer] 4.84s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema sam/sd-03.1 [answer] 6.33s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain sam/sd-07.1 [ask] 2.01s OFFER: On SPY, on days when it drops 2% or more, how often does it recover?
+granite3.3:8b focused sam/sd-07.1 [ask] 3.33s OFFER: On SPY, on days when it drops 2% or more from the open, how often does it close above the open?
+granite3.3:8b schema sam/sd-07.1 [ask] 5.04s OFFER: On SPY, how often does it drop 2% or more from the open and then recover?
+granite3.3:8b plain sam/sd-08.1 [ask] 6.08s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused sam/sd-08.1 [ask] 4.47s OFFER: Sell 1 QQQ 0DTE put 10-delta below the money at 0945 ET. Take profit at 20% of the premium.
+granite3.3:8b schema sam/sd-08.1 [ask] 6.71s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain sam/sd-09.1 [ask] 2.54s no: the built-in reader could not read the rewrite either
+granite3.3:8b focused sam/sd-09.1 [ask] 3.38s no: the built-in reader could not read the rewrite either
+granite3.3:8b schema sam/sd-09.1 [ask] 5.47s no: the built-in reader could not read the rewrite either
+granite3.3:8b plain sam/sd-14.3 [ask] 3.6s no: the rewrite changed the content (added: SPY; added: 0; added: 575)
+granite3.3:8b focused sam/sd-14.3 [ask] 5.63s no: the rewrite changed the content (added: SPY; added: 575; added: 0)
+granite3.3:8b schema sam/sd-14.3 [ask] 4.07s no: the built-in reader could not read the rewrite either
+== granite3.3:8b: 658s
+gemma3:12b plain brief/bd-04.1 [ask] 17.37s no: the model found something missing
+gemma3:12b focused brief/bd-04.1 [ask] 8.11s no: the model found something missing
+gemma3:12b schema brief/bd-04.1 [ask] 8.95s no: the built-in reader could not read the rewrite either
+gemma3:12b plain brief/bd-06.1 [answer] 7.84s OFFER: On SPY, at what time of day does it make its low?
+gemma3:12b focused brief/bd-06.1 [answer] 4.6s OFFER: On SPY, at what time of day does it make its low?
+gemma3:12b schema brief/bd-06.1 [answer] 7.57s OFFER: On SPY, at what time of day does it make its low?
+gemma3:12b plain brief/bd-09.1 [ask] 8.91s no: the model found something missing
+gemma3:12b focused brief/bd-09.1 [ask] 6.31s no: the model found something missing
+gemma3:12b schema brief/bd-09.1 [ask] 7.6s no: the model found something missing
+gemma3:12b plain casey/cd-04.1 [answer] 10.38s OFFER: On SPY, on days when it has closed down 2 days in a row and then opens below the previous close, how often does it close above its open since 2020?
+gemma3:12b focused casey/cd-04.1 [answer] 7.81s OFFER: On SPY, on days when it has closed down 2 days in a row and then opens below the previous close, how often does it close above the previous close since 2020?
+gemma3:12b schema casey/cd-04.1 [answer] 11.24s no: the built-in reader could not read the rewrite either
+gemma3:12b plain casey/cd-05.1 [answer] 13.04s no: the built-in reader could not read the rewrite either
+gemma3:12b focused casey/cd-05.1 [answer] 7.81s no: the built-in reader could not read the rewrite either
+gemma3:12b schema casey/cd-05.1 [answer] 9.05s no: the rewrite changed the content (dropped: 705; dropped: 840; added: 525)
+gemma3:12b plain casey/cd-08.1 [ask] 14.04s no: the rewrite changed the content (added: SPY)

@@ -1,0 +1,1437 @@
+{
+ "config": "rehearsal",
+ "shadow": {
+  "model": "granite3.3:8b",
+  "variant": "schema"
+ },
+ "started": "2026-11-27 18:56:04",
+ "source_dir": "/private/tmp/claude-501/-Users-prayugsigdel/933fc6e8-8ed8-4560-b611-d85a5d318c01/scratchpad/reh_src",
+ "source": {
+  "brief/bd-01": [
+   {
+    "text": "What usually happens after a red day?",
+    "intent": "No ticker named, so the default (SPY), said. On the session after a day that closed down, what the price typically did (the usual move and path of that next session).",
+    "expected": "answer",
+    "if_asked": "SPY. Red day means it closed lower than the day before.",
+    "also_fine": "Red day read as closing below its own open, if that is said.",
+    "complexity": "simple"
+   }
+  ],
+  "brief/bd-02": [
+   {
+    "text": "When does SPY normally make its high?",
+    "intent": "SPY: at what time of day the session's high is usually made (the distribution of the time of the day's high).",
+    "expected": "answer",
+    "if_asked": "The time of day of the day's high, over all the history you have.",
+    "also_fine": "",
+    "complexity": "simple"
+   }
+  ],
+  "brief/bd-03": [
+   {
+    "text": "Does the first hour tell you anything about the rest of the day?",
+    "intent": "No ticker named, so the default (SPY), said. Whether the direction of the first hour of the session (9:30 to 10:30 New York) goes with the direction of the rest of the session after it.",
+    "expected": "answer",
+    "if_asked": "SPY. First hour up or down against the rest of the day up or down.",
+    "also_fine": "",
+    "complexity": "simple"
+   }
+  ],
+  "brief/bd-04": [
+   {
+    "text": "How far does QQQ usually bounce after a bad open?",
+    "intent": "QQQ: on days that start badly, how far the price typically comes back up. 'A bad open' has no size and could be a gap down or a weak first stretch, so the reading has to be said or asked; no size may be invented.",
+    "expected": "ask",
+    "if_asked": "A gap down of at least half a percent at the open; the bounce is from the low of the first half hour to the day's high after it.",
+    "also_fine": "Answering with a stated reading that invents no number: for example days QQQ opened below the previous close (any size), and how far it rose from the open to the day's high.",
+    "complexity": "complex"
+   }
+  ],
+  "brief/bd-05": [
+   {
+    "text": "Are Fridays any different?",
+    "intent": "As a first message: no ticker named, so the default (SPY), said. Whether Fridays behave differently from the other weekdays (the day's move by weekday, Friday set against the rest).",
+    "expected": "answer",
+    "if_asked": "SPY, how Fridays compare with the other days of the week.",
+    "also_fine": "Asking 'different in what' is acceptable only if the comparison by weekday is offered as the default.",
+    "complexity": "simple"
+   }
+  ],
+  "brief/bd-06": [
+   {
+    "text": "Does SPY tend to reverse during lunch?",
+    "intent": "SPY: whether the direction of the morning tends to turn around over the lunch hours (roughly 11:30 to 13:30 New York).",
+    "expected": "answer",
+    "if_asked": "Whatever it did from the open until lunch, does it go the other way between about 11:30 and 1:30 New York time.",
+    "also_fine": "Asking which hours 'lunch' means, or what move is being reversed, is acceptable if it is one short question.",
+    "complexity": "simple"
+   }
+  ],
+  "brief/bd-07": [
+   {
+    "text": "What happens after three consecutive down days?",
+    "intent": "No ticker named, so the default (SPY), said. On the session after three or more sessions in a row that closed down, what the price typically did.",
+    "expected": "answer",
+    "if_asked": "SPY, the day after three down closes in a row.",
+    "also_fine": "Exactly three in a row instead of three or more, if said.",
+    "complexity": "simple"
+   }
+  ],
+  "brief/bd-08": [
+   {
+    "text": "How often does the market take out yesterday's high?",
+    "intent": "'The market' with no ticker: the default (SPY), said. How often the price trades above the previous session's high at some point during the session.",
+    "expected": "answer",
+    "if_asked": "SPY, trading above the previous day's high at any time in the day.",
+    "also_fine": "",
+    "complexity": "simple"
+   }
+  ],
+  "jordan/jd-14": [
+   {
+    "text": "Here's one I want to kick around. At 10:30, if SPY is above VWAP, sell a put spread that expires that day: short the 20 delta, long the strike 5 points under it. Two contracts, let it expire. How's that been?",
+    "intent": "Backtest on SPY options, 2024-01-18 to present: each trading day at 10:30 Eastern time, only if SPY is above its session VWAP, sell 2 same-day-expiration put credit spreads (short the put of about 20 delta, long the put $5 lower) and hold to expiration. Wanted: win rate, average and total profit.",
+    "expected": "answer",
+    "if_asked": "Eastern time. VWAP from the 9:30 open. One entry a day, two spreads, held to the close and settled there.",
+    "also_fine": "",
+    "complexity": "complex"
+   },
+   {
+    "text": "what if I don't sit in it all day. take it off once I've kept half the credit, otherwise same thing",
+    "intent": "Same trade (SPY, 10:30 Eastern time, only when above session VWAP, sell 2 same-day put credit spreads, short about 20 delta, long $5 lower), but close the spread when it can be bought back for 50% of the credit received; if that never happens, hold to expiration.",
+    "expected": "answer",
+    "if_asked": "Buy it back when the spread is worth half of what I sold it for. No stop yet.",
+    "also_fine": "",
+    "complexity": "complex"
+   },
+   {
+    "text": "ok and put a stop on it, the losers must be ugly",
+    "intent": "Same trade with the 50%-of-credit profit target, plus a stop-loss. The stop level, and what it is measured on, are not given. What I meant: also close the spread if SPY falls 0.4% (of SPY's price) below where it was at entry.",
+    "expected": "ask",
+    "if_asked": "Out if SPY drops 0.4% from where it was when I sold the spread.",
+    "also_fine": "",
+    "complexity": "complex"
+   },
+   {
+    "text": "let me see the ones that got stopped. the ugliest one in there, did it just go straight down after I got in or what",
+    "intent": "List the trades from the current version (SPY, 10:30 Eastern time, above VWAP, 2 same-day put credit spreads, short about 20 delta and long $5 lower, profit target at 50% of the credit, stop when SPY is 0.4% below its entry price) that were closed by the stop, with date, credit received, exit price and loss; and for the largest loss among them, describe what SPY did after the 10:30 entry that day.",
+    "expected": "answer",
+    "if_asked": "Just the stopped-out trades with the date and what each lost, and for the biggest loser what SPY did after 10:30 that day.",
+    "also_fine": "",
+    "complexity": "complex"
+   },
+   {
+    "text": "now make it a real plan. 30k account, take it at 10:30, noon and 1:30 whenever it's above VWAP at that time, risk 3% of the account on each one, and I'm done for the day once I've lost $1,500. No compounding, keep it off the 30k.",
+    "intent": "SPY same-day-expiration put credit spreads (short about 20 delta, long $5 lower) entered at 10:30, 12:00 and 13:30 Eastern time, each only if SPY is above its session VWAP at that time, 2024-01-18 to present. Each is closed at 50% of the credit received (profit) or when SPY is 0.4% below its price at that entry (stop), otherwise held to expiration. Starting account $30,000, each trade sized so its maximum loss is about 3% of $30,000 ($900) without reinvesting gains, and no new trades that day once the day's losses reach $1,500.",
+    "expected": "answer",
+    "if_asked": "Up to three entries a day. $900 at risk on each, fixed, based on the most the spread can lose. Stop trading for the day at $1,500 of losses. Same target and stop as before.",
+    "also_fine": "Sizing the $900 against the expected loss at the stop instead of the spread's full maximum loss, if stated.",
+    "complexity": "complex"
+   },
+   {
+    "text": "run that on the Qs and put it next to the SPY numbers",
+    "intent": "The same plan on QQQ instead of SPY, shown side by side with the SPY result: same-day put credit spreads (short about 20 delta, long $5 lower) at 10:30, 12:00 and 13:30 Eastern time when QQQ is above its session VWAP, closed at 50% of the credit or when QQQ is 0.4% below its entry price, otherwise held to expiration. $30,000 account, about $900 maximum loss per trade, no reinvesting, no new trades after $1,500 of losses in a day, 2024-01-18 to present.",
+    "expected": "answer",
+    "if_asked": "Everything the same, just QQQ, still 5 wide. Then both results together.",
+    "also_fine": "",
+    "complexity": "complex"
+   }
+  ]
+ },
+ "items": {
+  "brief/bd-01": {
+   "sid": "671643f92979",
+   "turn": 1,
+   "paused": false,
+   "done": true
+  },
+  "brief/bd-02": {
+   "sid": "ff49d93adb7c",
+   "turn": 1,
+   "paused": false,
+   "done": true
+  },
+  "brief/bd-03": {
+   "sid": "cff62b2810f5",
+   "turn": 1,
+   "paused": false,
+   "done": true
+  },
+  "brief/bd-04": {
+   "sid": "b624e4caa7db",
+   "turn": 1,
+   "paused": false,
+   "done": true
+  },
+  "brief/bd-05": {
+   "sid": "c2eeb0e2c097",
+   "turn": 1,
+   "paused": false,
+   "done": true
+  },
+  "brief/bd-06": {
+   "sid": "0c3117303d70",
+   "turn": 1,
+   "paused": false,
+   "done": true
+  },
+  "brief/bd-07": {
+   "sid": "8575db6638be",
+   "turn": 1,
+   "paused": false,
+   "done": true
+  },
+  "brief/bd-08": {
+   "sid": "c9dec9635b9e",
+   "turn": 1,
+   "paused": false,
+   "done": true
+  },
+  "jordan/jd-14": {
+   "sid": "e81bf65d068d",
+   "turn": 6,
+   "paused": false,
+   "done": true
+  }
+ },
+ "records": {
+  "brief/bd-01#1": {
+   "stages": [
+    {
+     "disposition": "answered",
+     "reading_shown": "On SPY, after the previous session closed down: how the price moved from the open to the close.",
+     "strategy_sentence_more": null,
+     "assumed_shown": [
+      "No ticker was named, so SPY is used."
+     ],
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": null,
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [
+      {
+       "headline": "After the previous session closed down, SPY moved +0.01% on average from the open to the close (median +0.06%), over 3,894 days.",
+       "what_happened": [
+        "It ended higher than it started on 52.5% of those days.",
+        "Half of the days ended between -0.48% and +0.53%; the furthest it typically ran in its favour was +0.47% and against it -0.52% (medians).",
+        "The average could be off: the range it is likely in runs from -0.02% to +0.05%, which includes zero."
+       ],
+       "why_it_matters": null,
+       "numbers": [
+        {
+         "label": "Days that matched",
+         "value": "3,894",
+         "detail": null
+        },
+        {
+         "label": "Average move",
+         "value": "+0.01%",
+         "detail": "from the open to the close"
+        },
+        {
+         "label": "Ended higher",
+         "value": "52.5%",
+         "detail": null
+        }
+       ],
+       "independent_check": {
+        "status": "same",
+        "text": "Recalculated independently from the stored bars: the same 3,894 sessions and the same average move (+0.015%)."
+       },
+       "what_this_cannot_tell_you": [
+        "Price of SPY itself, not an option position."
+       ],
+       "the_money_at_risk": null,
+       "view": "single",
+       "failed": false
+      }
+     ],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "ran",
+      "type": "movement",
+      "symbol": "SPY",
+      "conditions": [
+       "prev_return<0"
+      ],
+      "outcome": "end_return",
+      "start": "open",
+      "end": "close",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "seconds": 1.2,
+     "_choices": [],
+     "_confirm": null
+    }
+   ],
+   "replies": []
+  },
+  "brief/bd-02#1": {
+   "stages": [
+    {
+     "disposition": "answered",
+     "reading_shown": "On SPY: when the session's high was made, in 30-minute parts of the session.",
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": null,
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [
+      {
+       "headline": "SPY made its high of the day between 09:30 and 10:00 on 24.4% of sessions, more than any other half hour; the next most common was 15:30\u201316:00 (23.3%).",
+       "what_happened": [
+        "If the high could fall anywhere, each part of the day would hold about 7.7%.",
+        "Counted on 2,741 sessions from Jan 2016 to Nov 2026 (New York time)."
+       ],
+       "why_it_matters": "The open and the close are where the day's extremes cluster: a level set in the middle of the day is usually not the day's high or low.",
+       "numbers": [
+        {
+         "label": "09:30\u201310:00",
+         "value": "24.4%",
+         "detail": null
+        },
+        {
+         "label": "15:30\u201316:00",
+         "value": "23.3%",
+         "detail": null
+        },
+        {
+         "label": "Sessions",
+         "value": "2,741",
+         "detail": null
+        }
+       ],
+       "independent_check": {
+        "status": "same",
+        "text": "Recalculated independently from the one-minute bars: the same 2,741 sessions and the same figure in every part of the day."
+       },
+       "what_this_cannot_tell_you": [
+        "Only whole sessions of one-minute bars are used; a session the provider holds in part is left out."
+       ],
+       "the_money_at_risk": null,
+       "view": "profile",
+       "failed": false
+      }
+     ],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "ran",
+      "type": "timing",
+      "symbol": "SPY",
+      "measure": "high_time",
+      "bucket": 30,
+      "conditions": [],
+      "period": [
+       null,
+       null
+      ]
+     },
+     "seconds": 0.2,
+     "_choices": [],
+     "_confirm": null
+    }
+   ],
+   "replies": []
+  },
+  "brief/bd-03#1": {
+   "stages": [
+    {
+     "disposition": "answered",
+     "reading_shown": "On SPY: how often the direction of the first 60-minute candle matches the rest of the session after it.",
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": null,
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [
+      {
+       "headline": "The first 60-minute candle matched the direction of the rest of the session 51.8% of the time, about what two unrelated directions would give.",
+       "what_happened": [
+        "If the two directions were unrelated they would match about 50.3% of the time; the measured rate's likely range is 49.9% to 53.7%.",
+        "Simply guessing \"up\" every day would have matched the rest of the session 54.9% of the time, which is better than following the candle."
+       ],
+       "why_it_matters": null,
+       "numbers": [
+        {
+         "label": "Matched the rest of the day",
+         "value": "51.8%",
+         "detail": "2,730 days"
+        },
+        {
+         "label": "Days the candle was wrong",
+         "value": "1,316",
+         "detail": null
+        },
+        {
+         "label": "If unrelated",
+         "value": "50.3%",
+         "detail": null
+        }
+       ],
+       "independent_check": {
+        "status": "same",
+        "text": "Recalculated independently from the stored bars: every agreement count is the same."
+       },
+       "what_this_cannot_tell_you": [
+        "Only sessions with intraday bars can be measured: 2,730 of them, 2016-01-04 to 2026-11-27.",
+        "Direction only: a session that closes one cent above its open counts the same as one that closes 2% above it. Nothing here says how far the session went."
+       ],
+       "the_money_at_risk": null,
+       "view": "investigation",
+       "failed": false
+      }
+     ],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "ran",
+      "type": "agreement",
+      "symbol": "SPY",
+      "candle": [
+       60
+      ],
+      "scope": "rest",
+      "predictor": "first_candle",
+      "conditions": [],
+      "period": [
+       null,
+       null
+      ]
+     },
+     "seconds": 2.5,
+     "_choices": [],
+     "_confirm": null
+    }
+   ],
+   "replies": []
+  },
+  "brief/bd-04#1": {
+   "stages": [
+    {
+     "disposition": "waiting",
+     "reading_shown": "On QQQ, after it fell 0.5% or 1% or 1.5% from its open: how the price moved from the moment the condition is met to the close.",
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": "Here is how I read it: On QQQ, after it fell 0.5% or 1% or 1.5% from its open: how the price moved from the moment the condition is met to the close. I did not use \"far\", \"bounce\", so nothing was run. Run it as read, or say that part another way.",
+     "choices_shown": [],
+     "go_ahead_button_shown": true,
+     "why_it_waits": [
+      "I did not use \"far\", \"bounce\"."
+     ],
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "clarify",
+      "alternative": false
+     },
+     "seconds": 0.2,
+     "_choices": [],
+     "_confirm": {
+      "kind": "say",
+      "text": "Run it as read"
+     }
+    },
+    {
+     "disposition": "waiting",
+     "reading_shown": "On QQQ, after it fell 0.5% or 1% or 1.5% from its open and it opened 0.5% or more below the previous close and the first 30-minute candle: how the price moved from the moment the condition is met to the close.",
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": "Here is how I read it now: On QQQ, after it fell 0.5% or 1% or 1.5% from its open and it opened 0.5% or more below the previous close and the first 30-minute candle: how the price moved from the moment the condition is met to the close. Not used: \"far\", \"bounce\". Nothing was run.",
+     "choices_shown": [],
+     "go_ahead_button_shown": true,
+     "why_it_waits": [
+      "Not used: \"far\", \"bounce\"."
+     ],
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "clarify",
+      "alternative": false
+     },
+     "seconds": 0.1,
+     "_choices": [],
+     "_confirm": {
+      "kind": "say",
+      "text": "Run it as read"
+     }
+    },
+    {
+     "disposition": "asked",
+     "reading_shown": null,
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": "I could not read that as a question about a ticker's price history or as an options trade to backtest, so nothing was run. What I did recognise in it: \"30 minutes\" (30 minutes), but not what to do with it. Things that can be said here: \"How often does SPY close above its open after a 1% down day?\", \"When does QQQ usually make its low?\", \"Buy SPY 0DTE calls at 9:45 ET, take profit at 30%, stop at 20%\".",
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "flag"
+     },
+     "seconds": 0.3,
+     "_choices": [],
+     "_confirm": null
+    }
+   ],
+   "replies": [
+    "A gap down of at least half a percent at the open; the bounce is from the low of the first half hour to the day's high after it.",
+    "No, the bounce is how far it rises from the lowest price of the first 30 minutes to the highest price later that day, not the move to the close."
+   ],
+   "_shadow": {
+    "offer": null,
+    "why": "the rewrite changed the content (added: 1)",
+    "seconds": 7.66
+   }
+  },
+  "brief/bd-05#1": {
+   "stages": [
+    {
+     "disposition": "answered",
+     "reading_shown": "On SPY: the average move from open to close, by weekday.",
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": null,
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [
+      {
+       "headline": "Fridays on SPY averaged -0.015% from the open to the close, against +0.012% on the other days: slightly worse, but well within what chance produces, so Fridays are not reliably bad. (1,705 Fridays.)",
+       "what_happened": [
+        "On Mondays it closed higher than it opened on 53.8% of days; on Fridays, 51.8%.",
+        "Measured close to close (the overnight move included) instead: Monday +0.062%; Tuesday +0.070%; Wednesday +0.060%; Thursday +0.011%; Friday -0.003%.",
+        "From February 1, 1993 to November 27, 2026."
+       ],
+       "why_it_matters": null,
+       "numbers": [
+        {
+         "label": "Best: Monday",
+         "value": "+0.027%",
+         "detail": "1,601 days"
+        },
+        {
+         "label": "Worst: Friday",
+         "value": "-0.015%",
+         "detail": "1,705 days"
+        },
+        {
+         "label": "All days",
+         "value": "+0.006%",
+         "detail": null
+        }
+       ],
+       "independent_check": {
+        "status": "same",
+        "text": "Recalculated independently from the stored bars: the same sessions and the same figure for every weekday."
+       },
+       "what_this_cannot_tell_you": [
+        "Differences between groups are tested by shuffling the group labels 400 times: if the real spread of the group averages is ordinary among the shuffled ones, the groups do not differ by more than chance."
+       ],
+       "the_money_at_risk": null,
+       "view": "profile",
+       "failed": false
+      }
+     ],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "ran",
+      "type": "breakdown",
+      "symbol": "SPY",
+      "by": "weekday",
+      "measure": "open_to_close",
+      "conditions": [],
+      "period": [
+       null,
+       null
+      ],
+      "focus": "Fri"
+     },
+     "seconds": 0.3,
+     "_choices": [],
+     "_confirm": null
+    }
+   ],
+   "replies": []
+  },
+  "brief/bd-06#1": {
+   "stages": [
+    {
+     "disposition": "asked",
+     "reading_shown": null,
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": "\"Reverse\" after what? For example \"after a 1% down day\" or \"after it falls 1% from the open\".",
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "clarify",
+      "alternative": false
+     },
+     "seconds": 0.3,
+     "_choices": [],
+     "_confirm": null
+    },
+    {
+     "disposition": "asked",
+     "reading_shown": null,
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": "I could not read that as a question about a ticker's price history or as an options trade to backtest, so nothing was run. What I did recognise in it: \"11:30\" (a time of day, 11:30 AM New York time), \"1:30 New York time\" (a time of day, 1:30 PM New York time), but not what to do with them. Things that can be said here: \"How often does SPY close above its open after a 1% down day?\", \"When does QQQ usually make its low?\", \"Buy SPY 0DTE calls at 9:45 ET, take profit at 30%, stop at 20%\".",
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "flag"
+     },
+     "seconds": 0.3,
+     "_choices": [],
+     "_confirm": null
+    },
+    {
+     "disposition": "asked",
+     "reading_shown": null,
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": "\"Turn around\" after what? For example \"after a 1% down day\" or \"after it falls 1% from the open\".",
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "clarify",
+      "alternative": false
+     },
+     "seconds": 0.3,
+     "_choices": [],
+     "_confirm": null
+    }
+   ],
+   "replies": [
+    "Whatever it did from the open until lunch, does it go the other way between about 11:30 and 1:30 New York time.",
+    "Does the direction SPY takes in the morning tend to turn around over the lunch hours, roughly 11:30 to 13:30 New York time?"
+   ],
+   "_shadow": {
+    "offer": null,
+    "why": "the built-in reader could not read the rewrite either",
+    "seconds": 1.85
+   }
+  },
+  "brief/bd-07#1": {
+   "stages": [
+    {
+     "disposition": "answered",
+     "reading_shown": "On SPY, after 3 or more down sessions in a row: how the price moved from the open to the close.",
+     "strategy_sentence_more": null,
+     "assumed_shown": [
+      "No ticker was named, so SPY is used."
+     ],
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": null,
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [
+      {
+       "headline": "After 3 or more down sessions in a row, SPY moved +0.10% on average from the open to the close (median +0.11%), over 744 days.",
+       "what_happened": [
+        "It ended higher than it started on 54.3% of those days.",
+        "Half of the days ended between -0.47% and +0.66%; the furthest it typically ran in its favour was +0.60% and against it -0.57% (medians).",
+        "The average could be off: the range it is likely in runs from -0.00% to +0.20%, which includes zero."
+       ],
+       "why_it_matters": null,
+       "numbers": [
+        {
+         "label": "Days that matched",
+         "value": "744",
+         "detail": null
+        },
+        {
+         "label": "Average move",
+         "value": "+0.10%",
+         "detail": "from the open to the close"
+        },
+        {
+         "label": "Ended higher",
+         "value": "54.3%",
+         "detail": null
+        }
+       ],
+       "independent_check": {
+        "status": "same",
+        "text": "Recalculated independently from the stored bars: the same 744 sessions and the same average move (+0.100%)."
+       },
+       "what_this_cannot_tell_you": [
+        "Price of SPY itself, not an option position."
+       ],
+       "the_money_at_risk": null,
+       "view": "single",
+       "failed": false
+      }
+     ],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "ran",
+      "type": "movement",
+      "symbol": "SPY",
+      "conditions": [
+       "down_streak>=3"
+      ],
+      "outcome": "end_return",
+      "start": "open",
+      "end": "close",
+      "period": [
+       null,
+       null
+      ]
+     },
+     "seconds": 1.3,
+     "_choices": [],
+     "_confirm": null
+    }
+   ],
+   "replies": []
+  },
+  "brief/bd-08#1": {
+   "stages": [
+    {
+     "disposition": "answered",
+     "reading_shown": "On SPY: how often it trades above the previous session's high at some point.",
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": null,
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [
+      {
+       "headline": "SPY traded above the previous session's high at some point on 4,579 of 8,515 sessions (53.8%), from February 1, 1993 to November 27, 2026.",
+       "what_happened": [
+        "On the other 3,936 sessions it did not."
+       ],
+       "why_it_matters": null,
+       "numbers": [
+        {
+         "label": "Sessions it happened",
+         "value": "4,579",
+         "detail": null
+        },
+        {
+         "label": "Sessions it did not",
+         "value": "3,936",
+         "detail": null
+        },
+        {
+         "label": "Share",
+         "value": "53.8%",
+         "detail": null
+        }
+       ],
+       "independent_check": {
+        "status": "same",
+        "text": "Recalculated independently from the stored bars: the same 4,579 of 8,515 sessions."
+       },
+       "what_this_cannot_tell_you": [
+        "Measured on daily bars: each session's open, high, low and close against the previous session's."
+       ],
+       "the_money_at_risk": null,
+       "view": "profile",
+       "failed": false
+      }
+     ],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "ran",
+      "type": "frequency",
+      "symbol": "SPY",
+      "outcome": "touch:prev_high",
+      "start": "open",
+      "end": "close",
+      "conditions": [],
+      "period": [
+       null,
+       null
+      ]
+     },
+     "seconds": 0.2,
+     "_choices": [],
+     "_confirm": null
+    }
+   ],
+   "replies": []
+  },
+  "jordan/jd-14#1": {
+   "stages": [
+    {
+     "disposition": "waiting",
+     "reading_shown": "Sell 2 SPY put credit spreads (sell a put, buy a lower one), expiring the same day (0DTE), short strike near 20 delta, the other strike 5 points further out, at 10:30 AM New York time. Only enter when price above session VWAP. Ways out, whichever comes first: hold to expiration. Size: 2 contracts per trade.",
+     "strategy_sentence_more": [
+      "Strikes: short strike near 20 delta, the other strike 5 points further out.",
+      "Position: sell 2 SPY put credit spreads (sell a put, buy a lower one)."
+     ],
+     "assumed_shown": [
+      "Tested on the stored option history, 2024-01-18 to 2026-11-27 (no period was asked for; there are no option prices before it).",
+      "Read as your own comment, not as part of the request: \"Here's one I want to kick around.\""
+     ],
+     "defaults_filled_in": [
+      "stop loss"
+     ],
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": "Here is how I read that strategy. Check this reading before it runs. This has several parts, so check that each one is what you meant.",
+     "choices_shown": [],
+     "go_ahead_button_shown": true,
+     "why_it_waits": [
+      "This has several parts, so check that each one is what you meant."
+     ],
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "flag"
+     },
+     "seconds": 0.1,
+     "_choices": [],
+     "_confirm": {
+      "kind": "confirm",
+      "version_id": 4
+     }
+    },
+    {
+     "disposition": "answered",
+     "reading_shown": null,
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": null,
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [
+      {
+       "headline": "Over 383 trades from Jan 2024 to Nov 2026, this made +$11,266.19 after $995.80 in fees: +$29.42 per trade on average.",
+       "what_happened": [
+        "Given how much single trades vary, the average per trade is likely between +$0.01 and +$56.64. That range is above zero, but it is one historical sample.",
+        "357 of 383 trades made money (93.2%).",
+        "With every fill 2% worse than the recorded price, the result would have been +$9,728.31; it disappears at about 14.7% worse fills.",
+        "Without its three best trades the result is +$8,075.55.",
+        "Credit received per trade: median $64.00. The most such a trade can lose is far larger than the credit: median $936.00 (the distance between the strikes less the credit).",
+        "Realised losses: median $898.60, worst $2,632.31, on 26 losing trades."
+       ],
+       "why_it_matters": null,
+       "numbers": [
+        {
+         "label": "Total after fees",
+         "value": "+$11,266.19",
+         "detail": null
+        },
+        {
+         "label": "Average result per trade",
+         "value": "+$29.42",
+         "detail": "383 trades"
+        },
+        {
+         "label": "Trades that made money",
+         "value": "93.2%",
+         "detail": null
+        },
+        {
+         "label": "Biggest loss",
+         "value": "-$2,632.31",
+         "detail": "January 31, 2025"
+        },
+        {
+         "label": "Days that could not be tested",
+         "value": "5",
+         "detail": null
+        }
+       ],
+       "independent_check": {
+        "status": "partly",
+        "text": "Partly verified: all 766 option entry prices of the 383 trades were found again in the raw option files by a separate reader, and every trade's result and the +$11,266.19 total add up from the trades' own cash flows. Which sessions qualified, which strikes were chosen, and exits before expiration were not re-derived independently."
+       },
+       "what_this_cannot_tell_you": [
+        "Your rule occurred on 388 days, but the option prices needed exist for 383 of them; the others are not counted as wins or losses.",
+        "Prices are real option trades, not bid/ask quotes: the spread you would have paid is not in these results."
+       ],
+       "the_money_at_risk": [
+        "Credit received per trade: median $64.00. The most such a trade can lose is far larger than the credit: median $936.00 (the distance between the strikes less the credit).",
+        "Realised losses: median $898.60, worst $2,632.31, on 26 losing trades.",
+        "Two different percentages: between entry and exit SPY itself moved a median of +0.11% on the winning trades and -0.95% on the losing ones, while the position's result was a median of +96% and -923% of the credit. A target or a stop given as a percentage here is of the position's price, not of SPY's."
+       ],
+       "view": "single",
+       "failed": false
+      }
+     ],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "ran",
+      "type": "strategy",
+      "symbol": "SPY",
+      "structure": "bull_put_spread",
+      "dte": 0,
+      "strike": "delta:20",
+      "quantity": 2,
+      "entry": "10:30",
+      "exit": null,
+      "conditions": [
+       "above_vwap"
+      ],
+      "premium_target": null,
+      "premium_stop": null,
+      "underlying_target": null,
+      "underlying_stop": null,
+      "hold": "to_expiration",
+      "period": [
+       null,
+       null
+      ],
+      "entries": null
+     },
+     "seconds": 14.2,
+     "_choices": [],
+     "_confirm": null
+    }
+   ],
+   "replies": [
+    "(pressed the go-ahead button)"
+   ]
+  },
+  "jordan/jd-14#2": {
+   "stages": [
+    {
+     "disposition": "answered",
+     "reading_shown": "Sell 2 SPY put credit spreads (sell a put, buy a lower one), expiring the same day (0DTE), short strike near 20 delta, the other strike 5 points further out, at 10:30 AM New York time. Only enter when price above session VWAP. Ways out, whichever comes first: take profit when the position has gained 50% of the credit received; hold to expiration. Size: 2 contracts per trade.",
+     "strategy_sentence_more": [
+      "Strikes: short strike near 20 delta, the other strike 5 points further out.",
+      "Position: sell 2 SPY put credit spreads (sell a put, buy a lower one)."
+     ],
+     "assumed_shown": [
+      "Tested on the stored option history, 2024-01-18 to 2026-11-27 (no period was asked for; there are no option prices before it)."
+     ],
+     "defaults_filled_in": [
+      "stop loss"
+     ],
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": "Set the profit target on the option to 50%. Everything else stays the same.",
+     "question_or_message_shown": null,
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [
+      {
+       "headline": "Over 383 trades from Jan 2024 to Nov 2026, this made +$3,381.71 after $1,892.80 in fees: +$8.83 per trade on average.",
+       "what_happened": [
+        "That average is not reliably different from zero. Given how much single trades vary, the average per trade is likely between -$11.25 and +$27.47: a range that includes losing money.",
+        "367 of 383 trades made money (95.8%).",
+        "With every fill 2% worse than the recorded price, the result would have been +$1,694.83; it disappears at about 4.0% worse fills.",
+        "Without its three best trades the result is +$1,329.61.",
+        "Credit received per trade: median $64.00. The most such a trade can lose is far larger than the credit: median $936.00 (the distance between the strikes less the credit).",
+        "Realised losses: median $902.60, worst $1,770.28, on 16 losing trades."
+       ],
+       "why_it_matters": "A positive total is not evidence of an edge: with this many trades and this much variation, a result like this comes up often by chance. Treat it as a description of what happened, not a strategy that has been shown to work.",
+       "numbers": [
+        {
+         "label": "Total after fees",
+         "value": "+$3,381.71",
+         "detail": null
+        },
+        {
+         "label": "Average result per trade",
+         "value": "+$8.83",
+         "detail": "383 trades"
+        },
+        {
+         "label": "Trades that made money",
+         "value": "95.8%",
+         "detail": null
+        },
+        {
+         "label": "Biggest loss",
+         "value": "-$1,770.28",
+         "detail": "July 16, 2026"
+        },
+        {
+         "label": "Days that could not be tested",
+         "value": "5",
+         "detail": null
+        }
+       ],
+       "independent_check": {
+        "status": "partly",
+        "text": "Partly verified: all 766 option entry prices of the 383 trades were found again in the raw option files by a separate reader, and every trade's result and the +$3,381.71 total add up from the trades' own cash flows. Which sessions qualified, which strikes were chosen, and exits before expiration were not re-derived independently."
+       },
+       "what_this_cannot_tell_you": [
+        "Your rule occurred on 388 days, but the option prices needed exist for 383 of them; the others are not counted as wins or losses.",
+        "Prices are real option trades, not bid/ask quotes: the spread you would have paid is not in these results."
+       ],
+       "the_money_at_risk": [
+        "Credit received per trade: median $64.00. The most such a trade can lose is far larger than the credit: median $936.00 (the distance between the strikes less the credit).",
+        "Realised losses: median $902.60, worst $1,770.28, on 16 losing trades.",
+        "Two different percentages: between entry and exit SPY itself moved a median of +0.10% on the winning trades and -1.11% on the losing ones, while the position's result was a median of +44% and -903% of the credit. A target or a stop given as a percentage here is of the position's price, not of SPY's."
+       ],
+       "view": "single",
+       "failed": false
+      }
+     ],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "ran",
+      "type": "strategy",
+      "symbol": "SPY",
+      "structure": "bull_put_spread",
+      "dte": 0,
+      "strike": "delta:20",
+      "quantity": 2,
+      "entry": "10:30",
+      "exit": null,
+      "conditions": [
+       "above_vwap"
+      ],
+      "premium_target": 50.0,
+      "premium_stop": null,
+      "underlying_target": null,
+      "underlying_stop": null,
+      "hold": "to_expiration",
+      "period": [
+       null,
+       null
+      ],
+      "entries": null
+     },
+     "seconds": 14.8,
+     "_choices": [],
+     "_confirm": null
+    }
+   ],
+   "replies": []
+  },
+  "jordan/jd-14#3": {
+   "stages": [
+    {
+     "disposition": "waiting",
+     "reading_shown": "Buy 1 SPY put, expiring about 14 days out (not stated: the default), strike at the money (not stated: the default), whenever the conditions hold. Enter on every session. Ways out, whichever comes first: hold to expiration. Size: 1 contract per trade.",
+     "strategy_sentence_more": [
+      "Expiration: about 14 days out (not stated: the default)."
+     ],
+     "assumed_shown": [
+      "Tested on the stored option history, 2024-01-18 to 2026-11-27 (no period was asked for; there are no option prices before it)."
+     ],
+     "defaults_filled_in": [
+      "expiration",
+      "entry time",
+      "strike",
+      "stop loss",
+      "exit rule"
+     ],
+     "left_out_shown": null,
+     "not_represented_shown": [
+      "stop on it, the losers must be ug"
+     ],
+     "change_shown": null,
+     "question_or_message_shown": "Here is how I read that strategy. Part of the request could not be represented: \"stop on it, the losers must be ug\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part.",
+     "choices_shown": [],
+     "go_ahead_button_shown": true,
+     "why_it_waits": null,
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "flag"
+     },
+     "seconds": 0.2,
+     "_choices": [],
+     "_confirm": {
+      "kind": "confirm",
+      "version_id": 6
+     }
+    },
+    {
+     "disposition": "waiting",
+     "reading_shown": "Buy 1 SPY put, expiring about 14 days out (not stated: the default), strike at the money (not stated: the default), whenever the conditions hold. Enter on every session. Ways out, whichever comes first: take profit when the position has gained 50% of the price paid; exit when SPY has moved 0.4% against the trade from the entry; hold to expiration. Size: 1 contract per trade.",
+     "strategy_sentence_more": [
+      "Expiration: about 14 days out (not stated: the default).",
+      "Also exit when SPY has moved 0.4% against the trade from the entry."
+     ],
+     "assumed_shown": [
+      "Tested on the stored option history, 2024-01-18 to 2026-11-27 (no period was asked for; there are no option prices before it)."
+     ],
+     "defaults_filled_in": [
+      "expiration",
+      "entry time",
+      "strike"
+     ],
+     "left_out_shown": null,
+     "not_represented_shown": [
+      "stop on it, the losers must be ug"
+     ],
+     "change_shown": "Set the profit target on the option to 50%. Set the stop on the underlying to 0.4%. Everything else stays the same.",
+     "question_or_message_shown": "Updated the strategy. Part of the request could not be represented: \"stop on it, the losers must be ug\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part.",
+     "choices_shown": [],
+     "go_ahead_button_shown": true,
+     "why_it_waits": null,
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "flag"
+     },
+     "seconds": 0.2,
+     "_choices": [],
+     "_confirm": {
+      "kind": "confirm",
+      "version_id": 7
+     }
+    },
+    {
+     "disposition": "waiting",
+     "reading_shown": "Sell 2 SPY put credit spreads (sell a put, buy a lower one), expiring the same day (0DTE), short strike near 20 delta, the other strike 5 points further out, at 10:30 AM New York time. Only enter when price above session VWAP. Ways out, whichever comes first: close what is left at 3:55 PM New York time (same-day contracts are closed before they expire). Size: 2 contracts per trade.",
+     "strategy_sentence_more": [
+      "Strikes: short strike near 20 delta, the other strike 5 points further out.",
+      "Position: sell 2 SPY put credit spreads (sell a put, buy a lower one)."
+     ],
+     "assumed_shown": [
+      "Tested on the stored option history, 2024-01-18 to 2026-11-27 (no period was asked for; there are no option prices before it)."
+     ],
+     "defaults_filled_in": [
+      "stop loss",
+      "exit rule"
+     ],
+     "left_out_shown": null,
+     "not_represented_shown": [
+      "selling the put spread from before, n"
+     ],
+     "change_shown": null,
+     "question_or_message_shown": "Here is how I read that strategy. Part of the request could not be represented: \"selling the put spread from before, n\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part.",
+     "choices_shown": [],
+     "go_ahead_button_shown": true,
+     "why_it_waits": [
+      "This has several parts, so check that each one is what you meant."
+     ],
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "flag"
+     },
+     "seconds": 0.1,
+     "_choices": [],
+     "_confirm": {
+      "kind": "confirm",
+      "version_id": 8
+     }
+    }
+   ],
+   "replies": [
+    "No, same trade as before with the 50% of credit profit target, plus a stop: out if SPY drops 0.4% from where it was when I sold the spread.",
+    "No, I'm selling the put spread from before, not buying a put: 2 contracts at 10:30 if SPY is above VWAP, expiring that day, short the 20 delta, long the strike 5 points under it."
+   ],
+   "_shadow": {
+    "offer": null,
+    "why": "the rewrite changed the content (added: 20)",
+    "seconds": 3.56
+   }
+  },
+  "jordan/jd-14#4": {
+   "stages": [
+    {
+     "disposition": "answered",
+     "reading_shown": null,
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": null,
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [],
+     "other_text_shown": [
+      "The trades that lost money. Click one to replay that day."
+     ],
+     "technical_summary_of_what_was_set_up": {
+      "response": "ran",
+      "type": "explore"
+     },
+     "seconds": 0.0,
+     "_choices": [],
+     "_confirm": null
+    }
+   ],
+   "replies": []
+  },
+  "jordan/jd-14#5": {
+   "stages": [
+    {
+     "disposition": "waiting",
+     "reading_shown": "Sell SPY put credit spreads (sell a put, buy a lower one), expiring the same day (0DTE), short strike near 20 delta, the other strike 5 points further out, at 10:30 AM New York time. Only enter when price above session VWAP. Ways out, whichever comes first: close what is left at 3:55 PM New York time (same-day contracts are closed before they expire). Size: 3% of the account at risk per trade, starting with $30,000, sized off the starting account, not the running balance, no new trade that day after losing $1,500.",
+     "strategy_sentence_more": [
+      "Strikes: short strike near 20 delta, the other strike 5 points further out.",
+      "Position: sell SPY put credit spreads (sell a put, buy a lower one)."
+     ],
+     "assumed_shown": [
+      "Tested on the stored option history, 2024-01-18 to 2026-11-27 (no period was asked for; there are no option prices before it)."
+     ],
+     "defaults_filled_in": [
+      "stop loss",
+      "exit rule"
+     ],
+     "left_out_shown": null,
+     "not_represented_shown": [
+      "selling the put spread from before, n"
+     ],
+     "change_shown": "Set the size of each trade to 3% of the account at risk, from a $30,000 account, stopping for the day after losing $1,500 per trade. Everything else stays the same.",
+     "question_or_message_shown": "Updated the strategy. Part of the request could not be represented: \"selling the put spread from before, n\". Nothing was substituted for it. You can run the rest as shown, or rephrase that part.",
+     "choices_shown": [],
+     "go_ahead_button_shown": true,
+     "why_it_waits": [
+      "\"1:30\" (a time of day, 1:30 PM New York time) is not used in this reading.",
+      "\"30\" (30) is not used in this reading."
+     ],
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "flag"
+     },
+     "seconds": 0.0,
+     "_choices": [],
+     "_confirm": {
+      "kind": "confirm",
+      "version_id": 9
+     }
+    },
+    {
+     "disposition": "asked",
+     "reading_shown": null,
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": "\"10:30\" (a time of day, 10:30 AM New York time) is not used in this reading. \"12:00\" (a time of day, 12:00 PM New York time) is not used in this reading. \"1:30 PM\" (a time of day, 1:30 PM New York time) is not used in this reading. Nothing was run. Say that part another way, or leave it out if it does not matter.",
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "clarify",
+      "alternative": false
+     },
+     "seconds": 0.5,
+     "_choices": [],
+     "_confirm": null
+    },
+    {
+     "disposition": "asked",
+     "reading_shown": null,
+     "strategy_sentence_more": null,
+     "assumed_shown": null,
+     "defaults_filled_in": null,
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": "\"10:30\" (a time of day, 10:30 AM New York time) is not used in this reading. \"1:30\" (a time of day, 1:30 PM New York time) is not used in this reading. Nothing was run. Say that part another way, or leave it out if it does not matter.",
+     "choices_shown": [],
+     "go_ahead_button_shown": false,
+     "why_it_waits": null,
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "clarify",
+      "alternative": false
+     },
+     "seconds": 0.4,
+     "_choices": [],
+     "_confirm": null
+    }
+   ],
+   "replies": [
+    "Not just 10:30. Up to three entries a day, at 10:30, 12:00 and 1:30 PM, each only if SPY is above VWAP at that time.",
+    "Up to three entries a day: one at 10:30 in the morning, one at noon and one at 1:30 in the afternoon, each only if SPY is above VWAP at that time."
+   ],
+   "_shadow": {
+    "offer": null,
+    "why": "the rewrite changed the content (added: 720; added: SPY; added: 0)",
+    "seconds": 5.8
+   }
+  },
+  "jordan/jd-14#6": {
+   "stages": [
+    {
+     "disposition": "waiting",
+     "reading_shown": "Buy 1 SPY put, expiring about 14 days out (not stated: the default), strike at the money (not stated: the default), whenever the conditions hold. Enter on every session. Ways out, whichever comes first: hold to expiration. Size: 1 contract per trade.",
+     "strategy_sentence_more": [
+      "Expiration: about 14 days out (not stated: the default)."
+     ],
+     "assumed_shown": [
+      "Tested on the stored option history, 2024-01-18 to 2026-11-27 (no period was asked for; there are no option prices before it)."
+     ],
+     "defaults_filled_in": [
+      "expiration",
+      "entry time",
+      "strike",
+      "stop loss",
+      "exit rule"
+     ],
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": null,
+     "question_or_message_shown": "Here is how I read that strategy. Your message leaves which expiration, when to get in, which strike and when to get out open, and the result depends on them. The defaults are filled in below: change them, or run it as shown.",
+     "choices_shown": [],
+     "go_ahead_button_shown": true,
+     "why_it_waits": null,
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "flag"
+     },
+     "seconds": 0.3,
+     "_choices": [],
+     "_confirm": {
+      "kind": "confirm",
+      "version_id": 10
+     }
+    },
+    {
+     "disposition": "waiting",
+     "reading_shown": "Buy 1 QQQ put, expiring about 14 days out (not stated: the default), strike at the money (not stated: the default), whenever the conditions hold. Enter on every session. Ways out, whichever comes first: hold to expiration. Size: 1 contract per trade.",
+     "strategy_sentence_more": [
+      "Expiration: about 14 days out (not stated: the default)."
+     ],
+     "assumed_shown": [
+      "Tested on the stored option history, 2024-01-18 to 2026-11-27 (no period was asked for; there are no option prices before it)."
+     ],
+     "defaults_filled_in": [
+      "expiration",
+      "entry time",
+      "strike",
+      "stop loss",
+      "exit rule"
+     ],
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": "Changed SPY to QQQ. Everything else stays the same.",
+     "question_or_message_shown": "Updated the strategy. Your message leaves which expiration, when to get in, which strike and when to get out open, and the result depends on them. The defaults are filled in below: change them, or run it as shown.",
+     "choices_shown": [],
+     "go_ahead_button_shown": true,
+     "why_it_waits": null,
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "flag"
+     },
+     "seconds": 0.2,
+     "_choices": [],
+     "_confirm": {
+      "kind": "confirm",
+      "version_id": 11
+     }
+    },
+    {
+     "disposition": "waiting",
+     "reading_shown": "Sell QQQ put credit spreads (sell a put, buy a lower one), expiring about 14 days out (not stated: the default), short strike near 20 delta, the other strike 5 points further out, at 1:30 PM New York time. Only enter when the price is above VWAP. Ways out, whichever comes first: take profit when the position has gained 50% of the credit received; exit when QQQ has moved 0.4% against the trade from the entry; hold to expiration. Size: 3% of the account at risk per trade, starting with $30,000, sized off the starting account, not the running balance, no new trade that day after losing $1,500.",
+     "strategy_sentence_more": [
+      "Strikes: short strike near 20 delta, the other strike 5 points further out.",
+      "Expiration: about 14 days out (not stated: the default).",
+      "Position: sell QQQ put credit spreads (sell a put, buy a lower one).",
+      "Also exit when QQQ has moved 0.4% against the trade from the entry."
+     ],
+     "assumed_shown": [
+      "Tested on the stored option history, 2024-01-18 to 2026-11-27 (no period was asked for; there are no option prices before it)."
+     ],
+     "defaults_filled_in": [
+      "expiration"
+     ],
+     "left_out_shown": null,
+     "not_represented_shown": null,
+     "change_shown": "Added: the price is above VWAP. Set the entry time to 13:30 New York time. Set the profit target on the option to 50%. Set the size of each trade to 3% of the account at risk, from a $30,000 account, stopping for the day after losing $1,500 per trade. Set the strike to delta 0.2. Changed the position from buying puts to bull put spread. Set the stop on the underlying to 0.4%.",
+     "question_or_message_shown": "Updated the strategy. Check this reading before it runs. \"10:30\" (a time of day, 10:30 AM New York time) is not used in this reading. \"12:00\" (a time of day, 12:00 PM New York time) is not used in this reading. \"SPY\" (SPY) is not used in this reading.",
+     "choices_shown": [],
+     "go_ahead_button_shown": true,
+     "why_it_waits": [
+      "\"10:30\" (a time of day, 10:30 AM New York time) is not used in this reading.",
+      "\"12:00\" (a time of day, 12:00 PM New York time) is not used in this reading.",
+      "\"SPY\" (SPY) is not used in this reading."
+     ],
+     "answers": [],
+     "other_text_shown": null,
+     "technical_summary_of_what_was_set_up": {
+      "response": "flag"
+     },
+     "seconds": 0.1,
+     "_choices": [],
+     "_confirm": {
+      "kind": "confirm",
+      "version_id": 12
+     }
+    }
+   ],
+   "replies": [
+    "No, everything the same, just QQQ, still 5 wide. Then both results together.",
+    "No, not buying a put: sell same-day QQQ put credit spreads, short about 20 delta and long 5 points lower, at 10:30, 12:00 and 1:30 PM whenever QQQ is above VWAP, take profit at 50% of the credit, stop out if QQQ falls 0.4% below its price at entry, otherwise hold to expiration, on a $30,000 account risking 3% of it on each trade with no compounding, no new trades after losing $1,500 in a day, and show it next to the SPY result."
+   ]
+  }
+ }
+}

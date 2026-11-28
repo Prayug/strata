@@ -195,7 +195,9 @@ def frequency(res: dict, frame: dict | None, run_id: str | None = None) -> dict:
             cmp_ = f"That is {'more' if p > pb else 'less'} often than on a typical day, when it happened {_pct(pb * 100)} of the time ({_n(bn)} days)."
         happened.append(cmp_)
     if ci[0] is not None:
-        happened.append(f"Allowing for how few days there are, the true rate is likely between {_pct(ci[0] * 100)} and {_pct(ci[1] * 100)}.")
+        # ("how few days" was said of 8,515 days: found by the V10 held-out judges)
+        happened.append((f"Allowing for how few days there are, the true rate is likely between {_pct(ci[0] * 100)} and {_pct(ci[1] * 100)}." if n < 300 else
+                         f"The true rate is likely between {_pct(ci[0] * 100)} and {_pct(ci[1] * 100)} (a 95% interval on {_n(n)} days)."))
     if amb:
         happened.append(f"On {_n(amb)} more day{'s' if amb != 1 else ''} the order of events inside one price bar cannot be known; they are counted as neither.")
     matters = None
@@ -242,6 +244,9 @@ def movement(res: dict, frame: dict | None, run_id: str | None = None) -> dict:
     conds = SM._describe_conditions(f.get("conditions") or [])
     st_, en = f.get("start") or "open", f.get("end") or "close"
     span = ("from the open" if st_ in ("open", None) else f"from {st_}") + (" to the close" if en in ("close", None) else f" to {en}" if re.match(r"\d", str(en)) else "")
+    if str(en).startswith("sessions:") and (f.get("outcome") or {}).get("ref") == "prev_close":
+        nn_ = int(str(en).split(":")[1])
+        span = f"from that day's close to the close {nn_} session{'s' if nn_ != 1 else ''} later"
     if n == 0:
         return {"kind": "movement", "headline": f"No {sym} day matched{(': ' + conds) if conds else ''}.", "numbers": [], "followups": followups(f, "movement")}
     ps = res.get("path_summary") or {}
@@ -360,12 +365,26 @@ def timing(res: dict, frame: dict | None) -> dict:
         ranked = sorted([r for r in b if r["mean_abs_move_pct"] is not None], key=lambda r: -r["mean_abs_move_pct"])
         a, c = ranked[0], ranked[1]
         quiet = min(b, key=lambda r: r["mean_abs_move_pct"] if r["mean_abs_move_pct"] is not None else 99)
-        head = (f"{sym} moves most between {a['start']} and {a['end']}: {a['mean_abs_move_pct']:.2f}% on average, against {quiet['mean_abs_move_pct']:.2f}% in the quietest part of the day ({quiet['start']}–{quiet['end']}). "
-                f"The next most active is {c['start']}–{c['end']} ({c['mean_abs_move_pct']:.2f}%).")
-        happened = [f"That part of the day held the session's largest move on {_pct(a['largest_move_share'])} of sessions.", f"Counted on {per} (New York time)."]
+        rng = res["measure"] == "range"
+        head = (f"{sym} {'has its widest range' if rng else 'moves most'} between {a['start']} and {a['end']}: {a['mean_abs_move_pct']:.2f}% {'from high to low ' if rng else ''}on average, against {quiet['mean_abs_move_pct']:.2f}% in the quietest part of the day ({quiet['start']}–{quiet['end']}). "
+                f"The next {'widest' if rng else 'most active'} is {c['start']}–{c['end']} ({c['mean_abs_move_pct']:.2f}%).")
+        happened = [f"That part of the day held the session's {'widest range' if rng else 'largest move'} on {_pct(a['largest_move_share'])} of sessions.",
+                    ("The range is the highest price minus the lowest price of that part of the day, as a percentage of its first price. " if rng else "") + f"Counted on {per} (New York time)."]
         matters = None
-        numbers = [{"label": f"{a['start']}–{a['end']}", "value": f"{a['mean_abs_move_pct']:.2f}%", "detail": "average move"},
+        numbers = [{"label": f"{a['start']}–{a['end']}", "value": f"{a['mean_abs_move_pct']:.2f}%", "detail": "average range" if rng else "average move"},
                    {"label": f"{quiet['start']}–{quiet['end']}", "value": f"{quiet['mean_abs_move_pct']:.2f}%", "detail": "quietest"}, {"label": "Sessions", "value": _n(n)}]
+    z = f.get("zone")
+    if z in (60, 120, 180, -300):
+        # V10: asked in another time zone ("pacific pls"): every time is said in that zone too
+        zn = {60: "Central", 120: "Mountain", 180: "Pacific", -300: "London"}[z]
+
+        def loc(m_: re.Match) -> str:
+            t_ = int(m_.group(1)) * 60 + int(m_.group(2)) - int(z)
+            return f"{((t_ // 60 + 11) % 12) + 1}:{t_ % 60:02d} {'AM' if (t_ // 60) % 24 < 12 else 'PM'}"
+        span = lambda s_: re.sub(r"\b(\d\d):(\d\d)(?: and |–)(\d\d):(\d\d)\b", lambda m_: f"{m_.group(0)} New York ({loc(m_)} to {loc(re.match(r'(..):(..)', m_.group(3) + ':' + m_.group(4)))} {zn})", s_)  # noqa: E731
+        head = span(head)
+        happened = [span(h) for h in happened]
+        numbers = [{**n_, "detail": ((n_.get("detail") + " · ") if n_.get("detail") else "") + f"{loc(re.match(r'(..):(..)', n_['label'][:5]))} {zn}"} if re.match(r"\d\d:\d\d", str(n_.get("label"))) else n_ for n_ in numbers]
     return {"kind": "timing", "headline": head, "happened": [h for h in happened if h], "matters": matters, "limits": res.get("notes") or [], "numbers": numbers,
             "viz": {"kind": "timing", "buckets": b, "measure": res["measure"], "even": res.get("even_share")}, "followups": followups(f, "timing"), "terms": []}
 
@@ -374,27 +393,68 @@ def breakdown(res: dict, frame: dict | None) -> dict:
     f = frame or {}
     sym = res["symbol"]
     g = res["groups"]
-    best = max(g, key=lambda x: x["mean_pct"])
-    worst = min(g, key=lambda x: x["mean_pct"])
     p = res["p_value_groups_differ"]
     unit = "weekday" if res["by"] == "weekday" else "month"
-    plural = (best["group"] + "s") if res["by"] == "weekday" else best["group"]
-    plural_w = (worst["group"] + "s") if res["by"] == "weekday" else worst["group"]
+    pl_ = lambda x: (x["group"] + "s") if res["by"] == "weekday" else x["group"]  # noqa: E731
+    focus = f.get("focus")
+    focus = [focus] if isinstance(focus, str) else list(focus or [])
+    foc = [x for x in g if any(str(x["group"])[:3].lower() == str(w)[:3].lower() for w in focus)] if res["by"] == "weekday" else []
+    chance = ("These differences are no larger than shuffling the labels produces: no " + unit + " stands out." if p >= 0.05 else
+              f"The {unit}s differ by more than shuffling the labels usually produces.")
+    if res.get("share_measure"):
+        # V10: a share of days ("is Monday or Friday more likely to close red?")
+        lab = res["measure_label"]
+        best, worst = max(g, key=lambda x: x["share"]), min(g, key=lambda x: x["share"])
+        one = lambda x: f"{_pct(x['share'])} of {pl_(x)} ({_n(x['hits'])} of {_n(x['sessions'])})"  # noqa: E731
+        if len(foc) >= 2:
+            a_, b_ = sorted(foc, key=lambda x: -x["share"])[:2]
+            overlap = a_["share_ci95"][0] <= b_["share_ci95"][1] and b_["share_ci95"][0] <= a_["share_ci95"][1]
+            head = (f"{sym} ended up {lab} on {one(a_)} and on {one(b_)}. " + (f"{pl_(a_)} did so more often, but the two ranges overlap, so the difference of {a_['share'] - b_['share']:.1f} points is within what chance produces." if overlap else
+                                                                                f"{pl_(a_)} did so more often, by {a_['share'] - b_['share']:.1f} points, more than chance usually produces.")
+                    + f" Across all {unit}s: {_pct(res['overall_share'])}.")
+        elif len(foc) == 1:
+            x = foc[0]
+            inside = x["share_ci95"][0] <= (x.get("others_share") or 0) <= x["share_ci95"][1]
+            head = (f"{sym} ended up {lab} on {one(x)}, against {_pct(x['others_share'])} on the other days: " + ("no different by more than chance." if inside or p >= 0.05 else "a difference larger than chance usually produces."))
+        else:
+            head = f"Over {_n(res['sessions'])} sessions, {sym} ended up {lab} most often on {pl_(best)} ({_pct(best['share'])}) and least often on {pl_(worst)} ({_pct(worst['share'])}); on all days, {_pct(res['overall_share'])}. " + chance
+        col = "oc" if res["measure"] in ("close>open", "close<open") else "cc"
+        other = {"oc": ("cc", "against the previous close"), "cc": ("oc", "against the day's own open")}[col]
+        side = "up" if res["measure"].split(">")[0] != res["measure"] else "down"
+        happened = ["By " + unit + ": " + "; ".join(f"{x['group']} {_pct(x['share'])}" for x in g) + ".",
+                    f"Measured {other[1]} instead: " + "; ".join(f"{x['group']} {_pct(x[other[0] + '_' + side + '_share'])}" for x in g) + ".",
+                    f"From {_date(res['first'])} to {_date(res['last'])}."]
+        numbers = [{"label": x["group"], "value": _pct(x["share"]), "detail": f"{_n(x['hits'])} of {_n(x['sessions'])} days", "explore": {"kind": "group", "filter": x["group"]}} for x in (foc or g)[:5]]
+        return {"kind": "breakdown", "headline": head, "happened": happened, "limits": res.get("notes") or [], "numbers": numbers,
+                "viz": {"kind": "breakdown", "groups": [{k: v for k, v in x.items() if k != "dates"} for x in g], "by": res["by"], "share": True, "overall_share": res["overall_share"], "label": lab},
+                "followups": followups(f, "breakdown"), "details": [{"label": "Groups differ (permutation p-value)", "value": f"{p:.3f}"}], "terms": [TERMS["p_value"]]}
+    best = max(g, key=lambda x: x["mean_pct"])
+    worst = min(g, key=lambda x: x["mean_pct"])
+    plural, plural_w = pl_(best), pl_(worst)
     head = f"Over {_n(res['sessions'])} sessions, {res['measure_label']} on {sym} averaged most on {plural} ({_sp(best['mean_pct'], 3)}) and least on {plural_w} ({_sp(worst['mean_pct'], 3)}). "
     head += ("These differences are no larger than shuffling the labels produces: no " + unit + " stands out." if p >= 0.05 else
              f"The {unit}s differ by more than shuffling the labels usually produces, but the averages are a few hundredths of a percent against daily moves of around a percent.")
-    foc = next((x for x in g if f.get("focus") and str(x["group"])[:3].lower() == str(f["focus"])[:3].lower()), None)
-    if foc is not None and res["by"] == "weekday":
+    how = "from the open to the close" if res["measure"] in ("open_to_close", "return") else "close to close"
+    if len(foc) >= 2:
+        a_, b_ = sorted(foc, key=lambda x: -x["mean_pct"])[:2]
+        overlap = a_["ci95"][0] <= b_["ci95"][1] and b_["ci95"][0] <= a_["ci95"][1]
+        head = (f"{pl_(a_)} on {sym} averaged {_sp(a_['mean_pct'], 3)} {how} ({_n(a_['sessions'])} days) and {pl_(b_)} {_sp(b_['mean_pct'], 3)} ({_n(b_['sessions'])} days): "
+                + ("the two ranges overlap, so the difference is within what chance produces." if overlap else "a difference larger than chance usually produces, though small next to a typical day's move."))
+    elif len(foc) == 1:
         # the question named one day: answer about that day first, against the others
-        fn = foc["group"] + "s"
-        others = foc.get("others_mean_pct")
-        lower = others is not None and foc["mean_pct"] < others
-        inside = foc.get("ci95") and others is not None and foc["ci95"][0] <= others <= foc["ci95"][1]
-        head = (f"{fn} on {sym} averaged {_sp(foc['mean_pct'], 3)} from the open to the close, against {_sp(others, 3)} on the other days: "
+        x = foc[0]
+        fn = pl_(x)
+        others = x.get("others_mean_pct")
+        lower = others is not None and x["mean_pct"] < others
+        inside = x.get("ci95") and others is not None and x["ci95"][0] <= others <= x["ci95"][1]
+        head = (f"{fn} on {sym} averaged {_sp(x['mean_pct'], 3)} {how}, against {_sp(others, 3)} on the other days: "
                 + ("slightly worse" if lower else "slightly better") + (", but well within what chance produces, so " + fn + " are not reliably " + ("bad." if lower else "good.") if inside or p >= 0.05 else
                                                                          ", and the gap is larger than chance usually produces, though it is small next to a typical day's move.")
-                + f" ({_n(foc['sessions'])} {fn}.)")
-    happened = [f"On {plural} it closed higher than it opened on {_pct(best['positive_share'])} of days; on {plural_w}, {_pct(worst['positive_share'])}." if res["measure"] in ("open_to_close", "return") else "",
+                + f" ({_n(x['sessions'])} {fn}.)")
+    other_key, other_how = ("cc_mean_pct", "close to close (the overnight move included)") if how.startswith("from") else ("oc_mean_pct", "from the open to the close")
+    happened = [f"On {plural} it closed higher than {'it opened' if how.startswith('from') else 'the previous close'} on {_pct(best['positive_share'])} of days; on {plural_w}, {_pct(worst['positive_share'])}.",
+                # V10: "the worst day" can be judged from the open or from the previous close; the other one is given too
+                (f"Measured {other_how} instead: " + "; ".join(f"{x['group']} {_sp(x[other_key], 3)}" for x in g) + ".") if all(x.get(other_key) is not None for x in g) else "",
                 f"From {_date(res['first'])} to {_date(res['last'])}."]
     numbers = [{"label": f"Best: {best['group']}", "value": _sp(best["mean_pct"], 3), "detail": f"{_n(best['sessions'])} days", "explore": {"kind": "group", "filter": best["group"]}},
                {"label": f"Worst: {worst['group']}", "value": _sp(worst["mean_pct"], 3), "detail": f"{_n(worst['sessions'])} days", "explore": {"kind": "group", "filter": worst["group"]}},
@@ -412,6 +472,32 @@ def event_frequency(res: dict, frame: dict | None) -> dict:
     return {"kind": "frequency", "headline": head, "happened": [f"About once every {n / k:.0f} sessions." if k else "It never happened in the stored history."], "limits": res.get("notes") or [],
             "numbers": numbers, "viz": {"kind": "frequency", "hits": k, "misses": n - k, "ambiguous": 0, "n": n, "rate": k / n if n else None, "by_year": res.get("by_year") or []},
             "followups": followups(f, "frequency")}
+
+
+def relation_frequency(res: dict, frame: dict | None) -> dict:
+    """How often one price of the session stood above or below another level, and, when asked, what followed on those sessions."""
+    from strata.ai import semantics as SM
+    f = frame or {}
+    k, n = res["k"], res["n"]
+    what = SM.describe_rel((f.get("outcome") or {}).get("rel") or {}).removeprefix("it ")
+    conds = SM._describe_conditions(f.get("conditions") or [])
+    past = lambda w: re.sub(r"^closes\b", "closed", re.sub(r"^opens\b", "opened", re.sub(r"^trades\b", "traded", re.sub(r"^is\b", "was", w))))  # noqa: E731
+    if not n:
+        return {"kind": "frequency", "headline": f"No stored session of {res['symbol']} meets the conditions" + (f" ({conds})" if conds else "") + ", so there is nothing to count.", "happened": [], "limits": res.get("notes") or [],
+                "numbers": [], "followups": followups(f, "frequency")}
+    head = (f"{res['symbol']} {past(what)} on {_n(k)} of {_n(n)} sessions ({_pct(res['pct'])})" + (f" where {conds}" if conds else "") + f", from {_date(res['first'])} to {_date(res['last'])}.")
+    happened = [f"On the other {_n(n - k)} sessions it did not."] if k and n - k else []
+    numbers = [{"label": "Sessions it happened", "value": _n(k), "explore": {"kind": "dates", "filter": "hit"}}, {"label": "Sessions it did not", "value": _n(n - k), "explore": {"kind": "dates", "filter": "miss"}},
+               {"label": "Share", "value": _pct(res["pct"])}]
+    t = res.get("then")
+    if t and f.get("then"):
+        w2 = SM.describe_rel(f["then"]["rel"]).removeprefix("it ")
+        happened.insert(0, f"On those {_n(t['n'])} sessions it {past(w2)} {_n(t['k'])} times ({_pct(t['pct'])}) and did not {_n(t['n'] - t['k'])} times." if t["n"] else "There were no such sessions to look at.")
+        numbers += [{"label": "Of those, the second part held", "value": _n(t["k"])}, {"label": "Share of those", "value": _pct(t["pct"])}]
+    if n < 30:
+        happened.append(f"{_n(n)} sessions is a small sample: one more or one fewer would move the share by about {100 / n:.0f} points.")
+    return {"kind": "frequency", "headline": head, "happened": happened, "limits": res.get("notes") or [], "numbers": numbers,
+            "viz": {"kind": "frequency", "hits": k, "misses": n - k, "ambiguous": 0, "n": n, "rate": k / n if n else None, "by_year": res.get("by_year") or []}, "followups": followups(f, "frequency")}
 
 
 # ---------------------------------------------------------------------------------------------------------- strategy
@@ -508,14 +594,41 @@ def sizing_story(run: dict, res: dict, trades: list[dict], frame: dict | None) -
         lines.append(f"Sized at {budget} per trade, positions ranged from {min(units)} to {max(units)} contract{'s' if max(units) != 1 else ''} (median {sorted(units)[len(units) // 2]}).")
     dp = sorted(debit)
     if any(dp):
-        lines.append(f"Premium paid per trade: median {_usd(dp[len(dp) // 2]).lstrip('+')}, largest {_usd(dp[-1]).lstrip('+')}. For a bought option that premium is also the most the trade could lose.")
+        worst_ = max([-float(t["pnl"]) for t in trades if t["pnl"] < 0] or [0.0])
+        fees_ = max([float(t.get("commissions") or 0) for t in trades] or [0.0])
+        # the premium is the most a bought option can lose; said only when the run's own losses bear it out (a position that
+        # holds shares or adds to itself can lose more: found by the V10 held-out judges next to a larger realised loss)
+        lines.append(f"Premium paid per trade: median {_usd(dp[len(dp) // 2]).lstrip('+')}, largest {_usd(dp[-1]).lstrip('+')}."
+                     + (" For a bought option that premium is also the most the trade could lose." if worst_ <= dp[-1] * 1.02 + fees_ + 0.01 else
+                        f" The worst loss ({_usd(worst_).lstrip('+')}) was larger than the premium paid at entry, so the premium was not the most this position could lose."))
     if stop_pct is not None and any(dp):
         planned = [d * stop_pct / 100 for d in debit]
         over = [t for t, p in zip(trades, planned) if t["pnl"] < 0 and -t["pnl"] > p * 1.05 + float(t.get("commissions") or 0)]
         lines.append(f"The {stop_pct:g}% stop meant to limit a loss to about {_usd(sorted(planned)[len(planned) // 2]).lstrip('+')} per trade (median); the price jumped past it on {len(over)} of {len(losers)} losing trades, which lost more than planned.")
+    credit = sorted(float(t.get("entry_cash") or 0) for t in trades if float(t.get("entry_cash") or 0) > 0)
+    if credit and not any(dp):
+        # V10: a position that was sold: the credit is not what is at risk
+        risk = sorted(float(t["max_risk"]) for t in trades if t.get("max_risk") is not None)
+        legs_ = ((res.get("config") or {}).get("strategies") or [{}])[0].get("legs") or ((run.get("config") or {}).get("strategies") or [{}])[0].get("legs") or []
+        covered_ = any(l.get("side") == "buy" and l.get("kind") != "stock" for l in legs_)  # a bought option stands behind what was sold
+        # (a single short call or put was given "the distance between the strikes less the credit" as its maximum loss, which
+        # is false: it has one strike and no such cap. Found by the V10 held-out judges.)
+        lines.append(f"Credit received per trade: median {_usd(credit[len(credit) // 2]).lstrip('+')}." + (
+            f" The most such a trade can lose is far larger than the credit: median {_usd(risk[len(risk) // 2]).lstrip('+')} (the distance between the strikes less the credit)." if risk and covered_ else
+            " A sold option with no bought option behind it has no fixed maximum loss: the credit is not what is at risk."))
     if losers:
         lw = sorted(-t["pnl"] for t in losers)
         lines.append(f"Realised losses: median {_usd(lw[len(lw) // 2]).lstrip('+')}, worst {_usd(lw[-1]).lstrip('+')}, on {len(losers)} losing trades.")
+    # V10: the two percentages people mix up, side by side: how far the underlying moved, and how far the position's price did
+    mv = [(t["pnl"] > 0, (float(t["exit_spot"]) / float(t["entry_spot"]) - 1) * 100, float(t["pnl_pct_premium"])) for t in trades
+          if t.get("entry_spot") and t.get("exit_spot") and t.get("pnl_pct_premium") is not None]
+    wins, loss = [x for x in mv if x[0]], [x for x in mv if not x[0]]
+    if len(wins) >= 3 and len(loss) >= 3:
+        med = lambda xs: sorted(xs)[len(xs) // 2]  # noqa: E731
+        sym = (trades[0].get("symbol") or "the underlying")
+        base = "the credit" if credit and not any(dp) else "the premium paid"
+        lines.append(f"Two different percentages: between entry and exit {sym} itself moved a median of {_sp(med([x[1] for x in wins]), 2)} on the winning trades and {_sp(med([x[1] for x in loss]), 2)} on the losing ones, "
+                     f"while the position's result was a median of {_sp(med([x[2] for x in wins]), 0)} and {_sp(med([x[2] for x in loss]), 0)} of {base}. A target or a stop given as a percentage here is of the position's price, not of {sym}'s.")
     skipped = 0
     for s_ in ((res.get("diagnostics") or {}).get("skipped_signals") or res.get("skipped_signals") or []):
         why = str(s_.get("reason") or s_.get("why") or "") if isinstance(s_, dict) else str(s_)

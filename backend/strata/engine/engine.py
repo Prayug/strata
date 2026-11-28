@@ -784,6 +784,8 @@ class Backtester:
         at_close = bool(pos.meta.get("exit_at_close")) and ctx.is_last_tick
         targets = [i for i, l in enumerate(pos.legs) if l.is_open and (leg_idx is None or i in leg_idx) and (t < l.exp_close or (at_close and t == l.exp_close))]
         if not targets:
+            # nothing left that can be traded. A rule that fires on the last tick of the legs' life places no order: the
+            # position expires, and is recorded as an expiration (strata.audit.reference agrees since V10)
             return True
         blocked = [pos.legs[i] for i in targets if pos.legs[i].stale or not math.isfinite(pos.legs[i].mid)]
         if blocked:

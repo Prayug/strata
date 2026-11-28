@@ -221,7 +221,7 @@ class Ollama(LLM):
         # models), which makes a 6 GB model occupy over 13 GB and answer in minutes on a 16 GB machine; one fixed size also
         # keeps the server from reloading the model between calls
         body = {"model": self.model, "stream": False, "messages": [{"role": "system", "content": system}] + messages,
-                "options": {"temperature": 0, "num_predict": max_tokens, "num_ctx": self.context_tokens}, "keep_alive": "30m"}
+                "options": {"temperature": 0, "num_predict": max_tokens, "num_ctx": self.context_tokens, **({"stop": list(self.stop)} if getattr(self, "stop", None) else {})}, "keep_alive": "30m"}
         if fmt is not None:
             body["format"] = fmt
         if re.match(r"(?:qwen3|deepseek-r1|qwq|magistral|cogito)", self.model or ""):

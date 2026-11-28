@@ -28,7 +28,8 @@ FIELDS = {"symbol": "underlying", "dte": "days to expiration", "entry_time": "en
           "premium_stop": "stop, % of premium", "underlying_target": "target, % move of the underlying", "prev_decline": "previous-day decline, %"}
 NUMS = r"(\d+(?:\.\d+)?)"
 SEP = r"(?:\s*,\s*(?:and\s+|or\s+)?|\s+(?:and|or|versus|vs\.?|against|&)\s+)"  # "15, 30, 60, and 120": a comma, a word, or both
-LIST = rf"(\d+(?:\.\d+)?\s*%?(?:{SEP}\d+(?:\.\d+)?\s*%?)+)"
+# a number of a list is never the minutes of a clock time ("at 10:30, 20 delta" is one delta, not the list 30, 20) nor its hour
+LIST = rf"((?<![\d:.])\d+(?:\.\d+)?(?!:\d)\s*%?(?:{SEP}\d+(?:\.\d+)?(?!:\d)\s*%?)+)"
 STEP_WORDS = {"half-percent": 0.5, "half percent": 0.5, "half a percent": 0.5, "quarter-percent": 0.25, "quarter percent": 0.25, "one-percent": 1.0, "one percent": 1.0, "whole-percent": 1.0}
 CUE = re.compile(r"\bcompare\b|\bversus\b|\bvs\.?\b|\bsweep\b|\bside by side\b|\btest\b|\btry\b|\bacross\b|\beach with\b|\bincrements?\b|\bsteps?\b|\bevery \d+ minutes\b|\bagainst\b|\bfor each\b|\bmultiple\b|\bseveral\b|\bdifferent\b|\bvary\b|\bgrid\b", re.I)
 
@@ -194,7 +195,8 @@ def find_dims(text: str, known: list[str]) -> Found:
     m = re.search(rf"deltas?\s+of\s+{LIST}|{LIST}\s*-?\s*deltas?\b", low)
     if m:
         vals = [("delta", round(x / 100 if x > 1 else x, 4)) for x in _floats(m.group(1) or m.group(2))]
-        f.add("strike", vals, m.span())
+        if all(0 < v <= 1 for _, v in vals):  # a delta is between 0 and 100: "1030, 20 delta" is a time and one delta
+            f.add("strike", vals, m.span())
     else:
         m = re.search(rf"(?:at[- ]the[- ]money|atm)\s+(?:calls?\s+|puts?\s+|contracts?\s+|strikes?\s+)?(?:with|and|versus|vs\.?|against|to)\s+{LIST}\s*%?\s*(?:out[- ]of[- ]the[- ]money|otm)", low)
         if not m:  # one distance: "ATM versus 1% OTM"

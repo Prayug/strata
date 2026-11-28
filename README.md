@@ -14,6 +14,7 @@ limits stated next to every number.
 
 ## Contents
 - [Quick start](#quick-start)
+- [What V10 changes](#what-v10-changes)
 - [What V9 adds](#what-v9-adds)
 - [What V8 adds](#what-v8-adds)
 - [What V7 adds](#what-v7-adds)
@@ -80,6 +81,51 @@ main path through each; *Advanced* adds the specialist tools. The calculations a
    option contract's own prints underneath; press `?` for the keyboard shortcuts.
 5. **Market Explorer**, **Strategy Builder**, **Backtests** and **Data** remain for working
    by hand. Everything the lab runs appears there too.
+
+## What V10 changes
+V10 adds no feature. It set out to make Strata read what was typed and stop instead of answering a different question,
+and measured how far it got on questions the developer had not written or seen. The full record, with the evaluation by
+separate agents, is [docs/V10_REPORT.md](docs/V10_REPORT.md).
+
+**It did not reach its targets.** On 147 held-out conversations (234 turns) written by separate agents and judged by
+separate agents, 10.9% of supported turns were read correctly on the first attempt (target 90%), 18.3% counting one
+clarification, and 23.4% ended with a different question answered without saying so (target under 2%). On the sets the
+developer had seen the same readers score 302 of 338. An independent recalculation of 26 answers differed on 12. What
+went wrong, what was fixed afterwards (unmeasured), and what this says about the approach are in the report. Read the
+points below as what V10 does when it reads a message correctly, not as a claim that it usually does.
+
+- **One typed description of the request, and one gate** (`strata/ai/intent.py`, `Agent.interpret`). Every time,
+  percentage (with what it is a percentage of), dollar amount, count, expiration, delta, strike, weekday, ticker and year
+  in the message must be held by the reading as the same kind of thing. "Out by 1245 PST" cannot become a 1,245% target:
+  a clock held as a percentage stops the run. Where the words leave one way to place something it is placed and said;
+  otherwise the reading is shown with what is wrong, or one question is asked whose answers are complete messages.
+- **A simple question is answered at once; a complex one shows its reading first.** Two conditions, a second step, a
+  set clock time, several exits, a sizing rule or several legs make a reading complex: it is shown as one sentence and
+  waits for "Yes, run it" (Settings can turn this off). The ticker, each condition and the period of the sentence can be
+  clicked and changed in place.
+- **What the stored data cannot answer is declined, with the reason and the nearest request it can answer**: event
+  calendars (Fed, CPI, earnings, expiration weeks), technical indicators other than VWAP, fills at the bid and ask,
+  forecasts and advice, option tests before 2024-01-18.
+- **More of how traders ask is read**: one price against a level with a time window ("opens above yesterday's high and
+  trades back under it before the close"), gap fills, streaks, returns several sessions later, weekday comparisons as a
+  share of days, the widest hour by range, times in four time zones, and many more wordings of exits, sizes and spreads.
+- **Every answer says how far it was verified**: fully (a second calculation in SQL found the same sessions and
+  figures; now also for relation, time-of-day, weekday and event questions), partly (for any options backtest: every
+  entry price re-read from the raw option files and every total re-added), or not at all. A disagreement is shown in
+  red above the answer.
+- **Local models were measured, not assumed to help.** As a proposer of a checked rewrite when the built-in reader
+  stops, five local models gave 53 accepted suggestions on 41 development turns, 14 of them right. The feature ships
+  off. No hosted model was called.
+- **A reply in your own words answers what is waiting.** "Yes", "looks right, go ahead" and "no, not what I meant" run
+  or drop a waiting reading; "the first one" picks a choice; "40%" answers "what should the stop be?". "No, same trade as
+  before, plus a stop" sets a misread trade aside and changes the trade before it. A research plan with several steps is
+  shown as one sentence and waits like any other reading with several parts.
+- **Found by using it, and by rehearsing the evaluation on development questions**: an empty page for fourteen seconds,
+  a five-minute run that came back with a question, a spread shown as "calls", "put a stop on it" read as buying a put,
+  "at 10:30, 20 delta" run as a comparison of two deltas, "noon pt" ignored as an exit time. All fixed; see the report.
+
+Three defaults change: a time without a zone is New York time (was Pacific) unless you choose your zone in Settings; a
+request with several parts waits for a go-ahead; an options test with no period runs on the stored option history.
 
 ## What V9 adds
 V9 improves what exists rather than adding another workspace: the question reader, the checking of every answer, the

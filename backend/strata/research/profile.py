@@ -57,7 +57,7 @@ def _daily(store: MarketStore, sym: str) -> pl.DataFrame:
         whole = _whole_sessions(m)
         fo = m.filter(pl.col("d").is_in(whole.implode())).sort(["d", "mod"]).group_by("d", maintain_order=True).agg(pl.col("open").first().alias("_mo")).rename({"d": "date"})
         d = d.join(fo, on="date", how="left").with_columns(open=pl.coalesce(pl.col("_mo"), pl.col("open"))).drop("_mo")
-    d = d.with_columns(prev_close=pl.col("close").shift(1), prev2_close=pl.col("close").shift(2))
+    d = d.with_columns(prev_close=pl.col("close").shift(1), prev2_close=pl.col("close").shift(2), prev_high=pl.col("high").shift(1), prev_low=pl.col("low").shift(1))
     d = d.with_columns(gap=(pl.col("open") / pl.col("prev_close") - 1) * 100, prev_return=(pl.col("prev_close") / pl.col("prev2_close") - 1) * 100,
                        oc=(pl.col("close") / pl.col("open") - 1) * 100, cc=(pl.col("close") / pl.col("prev_close") - 1) * 100, wd=pl.col("date").dt.weekday() - 1, mo=pl.col("date").dt.month())
     return d
@@ -141,9 +141,10 @@ def timing(store: MarketStore, symbol: str, measure: str = "abs_move", bucket: i
         even = 100 / nb
         value_name = "share of sessions"
     else:
-        # the absolute move of each bucket: |last close / first open - 1|, averaged over sessions
-        bb = m.group_by(["d", "b"], maintain_order=True).agg(o=pl.col("open").first(), c=pl.col("close").last())
-        bb = bb.with_columns(mv=((pl.col("c") / pl.col("o") - 1).abs() * 100))
+        # the absolute move of each bucket: |last close / first open - 1|, averaged over sessions; or (V10, measure "range")
+        # its range: (highest high - lowest low) / first open
+        bb = m.group_by(["d", "b"], maintain_order=True).agg(o=pl.col("open").first(), c=pl.col("close").last(), hi=pl.col("high").max(), lo=pl.col("low").min())
+        bb = bb.with_columns(mv=(((pl.col("hi") - pl.col("lo")) / pl.col("o") * 100) if measure == "range" else ((pl.col("c") / pl.col("o") - 1).abs() * 100)))
         agg = bb.group_by("b").agg(mean=pl.col("mv").mean(), median=pl.col("mv").median(), n=pl.len())
         a = {int(r["b"]): r for r in agg.iter_rows(named=True)}
         # the bucket with the largest move of each session
@@ -153,7 +154,7 @@ def timing(store: MarketStore, symbol: str, measure: str = "abs_move", bucket: i
                  "sessions": int(a[i]["n"]) if i in a else 0, "largest_move_share": bigc.get(i, 0) / n_days * 100} for i in range(nb)]
         top = max([r for r in rows if r["mean_abs_move_pct"] is not None], key=lambda r: r["mean_abs_move_pct"])
         even = None
-        value_name = "average size of the move"
+        value_name = "average high-to-low range" if measure == "range" else "average size of the move"
         per_session = [{"date": r["d"].isoformat(), "bucket": labels[int(r["b"])], "move_pct": round(float(r["mv"]), 4)} for r in big.sort("d").iter_rows(named=True)]
     first, last = keep.min(), keep.max()
     return {"kind": "timing", "symbol": symbol, "measure": measure, "bucket_minutes": bucket, "buckets": rows, "sessions": n_days, "first": first.isoformat(), "last": last.isoformat(),
@@ -161,15 +162,35 @@ def timing(store: MarketStore, symbol: str, measure: str = "abs_move", bucket: i
             "notes": ["Only whole sessions of one-minute bars are used; a session the provider holds in part is left out."] + ([f"Not applied (cannot be evaluated here): {', '.join(cannot)}."] if cannot else [])}
 
 
+SHARE_MEASURES = {"close>open": ("oc", 1, "closing above the open"), "close<open": ("oc", -1, "closing below the open"),
+                  "close>prev_close": ("cc", 1, "closing above the previous close"), "close<prev_close": ("cc", -1, "closing below the previous close")}
+
+
+def _wilson(k: int, n: int) -> list[float] | None:
+    if not n:
+        return None
+    z, ph = 1.96, k / n
+    den = 1 + z * z / n
+    mid, half = (ph + z * z / (2 * n)) / den, z * math.sqrt(ph * (1 - ph) / n + z * z / (4 * n * n)) / den
+    return [float((mid - half) * 100), float((mid + half) * 100)]
+
+
 def breakdown(store: MarketStore, symbol: str, by: str = "weekday", measure: str = "open_to_close", period=None, conditions: list[dict] | None = None) -> dict:
-    """A daily measurement grouped by weekday or month, each group against all the others."""
+    """A daily measurement grouped by weekday or month, each group against all the others.
+
+    `measure` is an average (open_to_close, close_to_close) or, V10, a share of days (SHARE_MEASURES: "close<prev_close" is
+    the share of days that closed below the previous close). Every group also carries both averages and both up-shares, so
+    that a word with two readings ("red") can be answered with both."""
     d = _period(_daily(store, symbol), period).drop_nulls(["prev_close"])
     d, cannot = _filter_days(store, d, conditions or [])
-    col = {"open_to_close": "oc", "return": "oc", "close_to_close": "cc", "close>open": "oc"}.get(measure, "oc")
+    share = SHARE_MEASURES.get(measure)
+    col = share[0] if share else {"open_to_close": "oc", "return": "oc", "close_to_close": "cc"}.get(measure, "oc")
+    sign = share[1] if share else 0
     key = "wd" if by == "weekday" else "mo"
     names = WEEKDAYS if by == "weekday" else MONTHS
-    x = d.select("date", key, col).drop_nulls()
+    x = d.select("date", key, "oc", "cc").drop_nulls()
     vals = x[col].to_numpy()
+    hit = (vals * sign > 0) if sign else None
     groups = []
     for gk in sorted(set(x[key].to_list())):
         if by == "weekday" and gk > 4:
@@ -178,26 +199,36 @@ def breakdown(store: MarketStore, symbol: str, by: str = "weekday", measure: str
         v = sub[col].to_numpy()
         rest = x.filter(pl.col(key) != gk)[col].to_numpy()
         se = v.std(ddof=1) / math.sqrt(len(v)) if len(v) > 1 else float("nan")
-        groups.append({"group": names[gk if by == "weekday" else gk - 1], "sessions": int(len(v)), "mean_pct": float(v.mean()), "median_pct": float(np.median(v)), "ci95": [float(v.mean() - 1.96 * se), float(v.mean() + 1.96 * se)],
-                       "positive_share": float((v > 0).mean() * 100), "others_mean_pct": float(rest.mean()) if len(rest) else None,
-                       "dates": [z.isoformat() for z in sub["date"].to_list()]})
-    # do the groups differ by more than chance? A permutation test on the spread of the group means (no normality assumed)
+        oc, cc = sub["oc"].to_numpy(), sub["cc"].to_numpy()
+        g = {"group": names[gk if by == "weekday" else gk - 1], "sessions": int(len(v)), "mean_pct": float(v.mean()), "median_pct": float(np.median(v)), "ci95": [float(v.mean() - 1.96 * se), float(v.mean() + 1.96 * se)],
+             "positive_share": float((v > 0).mean() * 100), "others_mean_pct": float(rest.mean()) if len(rest) else None,
+             "oc_mean_pct": float(oc.mean()), "cc_mean_pct": float(cc.mean()), "oc_up_share": float((oc > 0).mean() * 100), "oc_down_share": float((oc < 0).mean() * 100),
+             "cc_up_share": float((cc > 0).mean() * 100), "cc_down_share": float((cc < 0).mean() * 100),
+             "dates": [z.isoformat() for z in sub["date"].to_list()]}
+        if sign:
+            k_ = int((v * sign > 0).sum())
+            g.update(share=float(k_ / len(v) * 100) if len(v) else None, hits=k_, share_ci95=_wilson(k_, len(v)), others_share=float((rest * sign > 0).mean() * 100) if len(rest) else None)
+        groups.append(g)
+    # do the groups differ by more than chance? A permutation test on the spread of the group figures (no normality assumed)
     rng = np.random.default_rng(7)
     labs = x[key].to_numpy()
     uniq = np.unique(labs)
+    stat = hit.astype(float) if sign else vals
 
     def spread(lb):
-        return float(np.var([vals[lb == u].mean() for u in uniq]))
+        return float(np.var([stat[lb == u].mean() for u in uniq]))
     obs = spread(labs)
     perm = [spread(rng.permutation(labs)) for _ in range(400)]
     p = (1 + sum(1 for s in perm if s >= obs)) / (1 + len(perm))
-    best = max(groups, key=lambda g: g["mean_pct"])
-    worst = min(groups, key=lambda g: g["mean_pct"])
+    rank = (lambda g: g["share"]) if sign else (lambda g: g["mean_pct"])
+    best = max(groups, key=rank)
+    worst = min(groups, key=rank)
     return {"kind": "breakdown", "symbol": symbol, "by": by, "measure": measure, "groups": groups, "sessions": int(len(vals)), "overall_mean_pct": float(vals.mean()) if len(vals) else None,
             "overall_positive_share": float((vals > 0).mean() * 100) if len(vals) else None, "p_value_groups_differ": p, "best": best["group"], "worst": worst["group"],
+            "share_measure": bool(sign), "overall_share": float(hit.mean() * 100) if sign and len(vals) else None,
             "first": x["date"].min().isoformat() if x.height else None, "last": x["date"].max().isoformat() if x.height else None, "conditions_not_evaluated": cannot,
-            "measure_label": {"oc": "the move from the open to the close", "cc": "the close-to-close move"}[col],
-            "notes": ["Differences between groups are tested by shuffling the group labels 400 times: if the real spread of the group averages is ordinary among the shuffled ones, the groups do not differ by more than chance."]
+            "measure_label": share[2] if share else {"oc": "the move from the open to the close", "cc": "the close-to-close move"}[col],
+            "notes": ["Differences between groups are tested by shuffling the group labels 400 times: if the real spread of the group " + ("shares" if sign else "averages") + " is ordinary among the shuffled ones, the groups do not differ by more than chance."]
             + ([f"Not applied (cannot be evaluated here): {', '.join(cannot)}."] if cannot else [])}
 
 
@@ -224,3 +255,90 @@ def event_frequency(store: MarketStore, symbol: str, event: dict, period=None, c
             "first": d["date"].min().isoformat() if d.height else None, "last": d["date"].max().isoformat() if d.height else None,
             "dates": [x.isoformat() for x in hit["date"].to_list()], "by_year": years, "conditions_not_evaluated": cannot,
             "notes": ["Counted from daily bars: the open against the previous session's close."] + ([f"Not applied (cannot be evaluated here): {', '.join(cannot)}."] if cannot else [])}
+
+
+# ------------------------------------------------------------------------------------------- relations between levels
+# V10. "How often does SPY take out yesterday's high?", "does it close back under it?", "it opens below the previous close
+# but is above it by 10:00: how often does it finish above it?" are all one kind of statement: one price of the session
+# against another level. A price is the session's open, high, low or close, the previous session's high, low or close, or,
+# from one-minute bars, the price at a time of day and the high or low up to or from that time.
+DAILY_FEATURES = ("open", "high", "low", "close", "prev_close", "prev_high", "prev_low")
+
+
+def _hhmm_min(t: str) -> int:
+    return int(t[:2]) * 60 + int(t[3:5])
+
+
+def _with_features(store: MarketStore, sym: str, d: pl.DataFrame, feats: set[str]) -> tuple[pl.DataFrame, bool]:
+    """`d` with a column for every feature named ("at:10:00", "high_by:10:30", "low_from:14:00", ...). Returns the table and
+    whether one-minute bars were needed (the sessions are then those with whole sessions of minute bars)."""
+    timed = sorted(f for f in feats if ":" in f)
+    if not timed:
+        return d, False
+    m = _minutes(store, sym)
+    if m.is_empty():
+        raise LookupError(f"No one-minute history is stored for {sym}, so a price at a time of day cannot be measured.")
+    whole = _whole_sessions(m)
+    m = m.filter(pl.col("d").is_in(whole.implode())).sort(["d", "mod"])
+    cols = None
+    for f in timed:
+        kind, t = f.split(":", 1)
+        mm = _hhmm_min(t)
+        if kind == "at":
+            # the price at a time is the close of the last minute bar that ended by then (the 09:59 bar for 10:00); at 09:30 it is the open
+            x = (m.filter(pl.col("mod") < mm).group_by("d", maintain_order=True).agg(pl.col("close").last().alias(f)) if mm > 570 else m.group_by("d", maintain_order=True).agg(pl.col("open").first().alias(f)))
+        elif kind == "high_by":
+            x = m.filter(pl.col("mod") < mm).group_by("d", maintain_order=True).agg(pl.col("high").max().alias(f))
+        elif kind == "low_by":
+            x = m.filter(pl.col("mod") < mm).group_by("d", maintain_order=True).agg(pl.col("low").min().alias(f))
+        elif kind == "high_from":
+            x = m.filter(pl.col("mod") >= mm).group_by("d", maintain_order=True).agg(pl.col("high").max().alias(f))
+        elif kind == "low_from":
+            x = m.filter(pl.col("mod") >= mm).group_by("d", maintain_order=True).agg(pl.col("low").min().alias(f))
+        else:
+            raise ValueError(f"unknown price {f!r}")
+        cols = x if cols is None else cols.join(x, on="d", how="inner")
+    return d.join(cols.rename({"d": "date"}), on="date", how="inner"), True
+
+
+def _rel_expr(rel: dict) -> pl.Expr:
+    a, b = pl.col(rel["a"]), pl.col(rel["b"])
+    if rel.get("pct"):
+        b = b * (1 + float(rel["pct"]) / 100)
+    return (a > b) if rel["op"] == ">" else (a < b) if rel["op"] == "<" else (a >= b) if rel["op"] == ">=" else (a <= b)
+
+
+def relation_frequency(store: MarketStore, symbol: str, outcome: dict, period=None, conditions: list[dict] | None = None, then: dict | None = None) -> dict:
+    """How often one price of the session stood above or below another level, on the sessions that meet the conditions.
+
+    `outcome` and `then` are relations {a, op, b, pct?}; a condition is a relation ({"key": "rel", "rel": {...}}) or one of
+    the conditions known by the open (_filter_days). `then` is counted on the sessions where `outcome` held ("... and when
+    it does, how often does it close back under it?")."""
+    conditions = list(conditions or [])
+    rels = [c["rel"] for c in conditions if c.get("key") == "rel"] + [outcome] + ([then] if then else [])
+    feats = {r[x] for r in rels for x in ("a", "b")}
+    d = _period(_daily(store, symbol), period).drop_nulls(["prev_close", "prev_high", "prev_low"])
+    d, minute = _with_features(store, symbol, d, feats)
+    d, cannot = _filter_days(store, d, [c for c in conditions if c.get("key") != "rel"])
+    for c in conditions:
+        if c.get("key") == "rel":
+            d = d.filter(_rel_expr(c["rel"]))
+    d = d.drop_nulls([f for f in feats])
+    cond = _rel_expr(outcome)
+    hit = d.filter(cond)
+    years = []
+    for y in sorted(set(d["date"].dt.year().to_list())):
+        dy = d.filter(pl.col("date").dt.year() == y)
+        ky = dy.filter(cond).height
+        years.append({"year": str(y), "n": dy.height, "target": ky, "probability": ky / dy.height if dy.height else None})
+    out = {"kind": "relation", "symbol": symbol, "k": hit.height, "n": d.height, "pct": hit.height / d.height * 100 if d.height else None,
+           "first": d["date"].min().isoformat() if d.height else None, "last": d["date"].max().isoformat() if d.height else None,
+           "dates": [x.isoformat() for x in hit["date"].to_list()], "miss_dates": [x.isoformat() for x in d.filter(~cond)["date"].to_list()], "by_year": years, "conditions_not_evaluated": cannot,
+           "bars": "one-minute bars (whole sessions only)" if minute else "daily bars",
+           "notes": [("Measured on one-minute bars, on sessions whose minute bars cover the whole session; a price at a time of day is the close of the last minute that ended by then." if minute
+                      else "Measured on daily bars: each session's open, high, low and close against the previous session's.")]
+           + ([f"Not applied (cannot be evaluated here): {', '.join(cannot)}."] if cannot else [])}
+    if then:
+        h2 = hit.filter(_rel_expr(then))
+        out["then"] = {"k": h2.height, "n": hit.height, "pct": h2.height / hit.height * 100 if hit.height else None, "dates": [x.isoformat() for x in h2["date"].to_list()]}
+    return out

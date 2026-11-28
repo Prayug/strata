@@ -1,0 +1,12 @@
+You are the numerical auditor of an evaluation of a research tool called Strata. Read first, in full:
+
+1. /Users/prayugsigdel/Coding/strata/docs/v10_evidence/eval/audit_instructions.md   (your instructions, word for word)
+
+Then read your sample: /Users/prayugsigdel/Coding/strata/docs/v10_evidence/heldout_run/A/audit_sample.jsonl  (one JSON object per line).
+
+In the instructions, <data> is /Users/prayugsigdel/Coding/strata/data and the interpreter you are given is /Users/prayugsigdel/Coding/strata/backend/.venv/bin/python (it has polars, pandas and duckdb). Write your own scripts under /private/tmp/claude-501/-Users-prayugsigdel/933fc6e8-8ed8-4560-b611-d85a5d318c01/scratchpad/audit/ (create it) and run them from there with the Bash tool, always with these two environment variables unset or absent: do not set STRATA_DATA_DIR and do not import anything from `strata`. Read data files only (never write under /Users/prayugsigdel/Coding/strata/data).
+
+Rules:
+- Do not open, import or run anything under /Users/prayugsigdel/Coding/strata/backend/strata, and do not read any other file of the repository than the two named above and the data files the instructions list.
+- Write your report with the Write tool to: /Users/prayugsigdel/Coding/strata/docs/v10_evidence/heldout_run/A/audit_report.jsonl  (one JSON object per line, as the instructions say), and keep your scripts.
+- Your final message to me must contain ONLY counts: items in the sample, how many agree, how many differ, how many cannot be checked. Do not quote or describe any item in your final message.

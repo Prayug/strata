@@ -261,9 +261,13 @@ def run_study(cfg: StudyConfig | dict, store: MarketStore | None = None, max_ses
                 ib = min(i0 + it, i1 - 1)  # the closing print appended above belongs to the session's last bar
                 t_tgt = (int(ser.end[ib]) - t_e) / 60.0 if not ((o[it] >= tgt) if up else (o[it] <= tgt)) else (int(ser.ts[ib]) - t_e) / 60.0
             sign = 1.0 if up else -1.0
-            mfe = float(((h.max() if up else -l.min()) - sign * entry_px) / entry_px * 100)
-            mae = float(((l.min() if up else -h.max()) - sign * entry_px) / entry_px * 100)
-            end_ret = float((c[-1] / entry_px - 1) * 100)
+            # A study with no target that names a reference ("from that session's close to the close 5 sessions later") is
+            # measured FROM that reference. Until the V10 held-out audit it was always measured from the entry price (the
+            # next session's open), which is not what its own description said.
+            base_px = ref if (cfg.target is None and cfg.stop is None and cfg.reference != "entry") else entry_px
+            mfe = float(((h.max() if up else -l.min()) - sign * base_px) / base_px * 100)
+            mae = float(((l.min() if up else -h.max()) - sign * base_px) / base_px * 100)
+            end_ret = float((c[-1] / base_px - 1) * 100)
             if count_base:
                 base_first.append(first_)
                 base_dates.append(d.isoformat())

@@ -20,3 +20,6 @@
 {"at":"2026-11-27T07:57:52.052Z","workload":"sensitivity_map_35_cells_ms","ms":1650,"ci":false}
 {"at":"2026-11-27T08:12:54.838Z","workload":"sensitivity_map_35_cells_ms","ms":1141,"ci":false}
 {"at":"2026-11-27T08:55:34.522Z","workload":"sensitivity_map_35_cells_ms","ms":907,"ci":false}
+{"at":"2026-11-28T03:31:13.971Z","workload":"sensitivity_map_35_cells_ms","ms":917,"ci":false}
+{"at":"2026-11-28T03:59:19.478Z","workload":"sensitivity_map_35_cells_ms","ms":943,"ci":false}
+{"at":"2026-11-28T05:42:39.342Z","workload":"sensitivity_map_35_cells_ms","ms":931,"ci":false}

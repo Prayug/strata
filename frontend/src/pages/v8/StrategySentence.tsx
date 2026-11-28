@@ -10,7 +10,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 const ZONES: [string, number, string][] = [["ET", 0, "Eastern"], ["CT", -60, "Central"], ["MT", -120, "Mountain"], ["PT", -180, "Pacific"]];
-const STRUCT: Record<string, string> = { long_call: "calls", long_put: "puts", short_call: "short calls", short_put: "short puts" };
+/* every structure a trade can have, in words. Until V10 only the four single options had words and anything else was shown
+   as "calls": an iron condor read "Buy SPY calls". */
+const STRUCT: Record<string, string> = { long_call: "calls", long_put: "puts", short_call: "calls (sold short)", short_put: "puts (sold short)",
+  bull_call_spread: "call debit spreads", bear_put_spread: "put debit spreads", bull_put_spread: "put credit spreads", bear_call_spread: "call credit spreads",
+  iron_condor: "iron condors", iron_butterfly: "iron butterflies", long_straddle: "straddles", short_straddle: "straddles (sold short)", long_strangle: "strangles", short_strangle: "strangles (sold short)", covered_call: "covered calls" };
+const SOLD = ["short_call", "short_put", "bull_put_spread", "bear_call_spread", "iron_condor", "iron_butterfly", "short_straddle", "short_strangle", "covered_call"];
 
 const toMin = (t: string) => (t === "open" ? 570 : t === "close" ? 960 : Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5)));
 const toHHMM = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
@@ -149,7 +154,7 @@ export function describeChange(before: any, after: any, zone: number): string[] 
   return out;
 }
 
-export function StrategySentence({ draft, symbols, onRun, busy }: { draft: any; symbols: string[]; onRun: (d: any) => void; busy: boolean }) {
+export function StrategySentence({ draft, symbols, onRun, busy, more, effective }: { draft: any; symbols: string[]; onRun: (d: any) => void; busy: boolean; more?: string[]; effective?: any }) {
   const [d, setD] = useState<any>(draft);
   useEffect(() => setD(draft), [draft]);
   const [open, setOpen] = useState<string | null>(null);
@@ -181,18 +186,20 @@ export function StrategySentence({ draft, symbols, onRun, busy }: { draft: any; 
   };
   const sym = d.symbol || "SPY";
   const entry = d.entry_time ? (d.entry_time === "open" ? "the open" : `${clock(d.entry_time, zone)} ${zname}`) : "any time the conditions hold";
-  const exit = d.exit_time ? (d.exit_time === "close" ? "the close" : `${clock(d.exit_time, zone)} ${zname}`) : d.hold_minutes ? `${d.hold_minutes} minutes after entry` : d.hold_sessions ? `the end of ${d.hold_sessions} sessions` : "expiration";
+  const exit = d.exit_time ? (d.exit_time === "close" ? "the close" : `${clock(d.exit_time, zone)} ${zname}`) : d.hold_minutes ? `${d.hold_minutes} minutes after entry` : d.hold_sessions ? `the end of ${d.hold_sessions} sessions`
+    : effective?.exit_time && (d.dte ?? effective?.dte ?? 0) === 0 ? `${clock(effective.exit_time, zone)} ${zname} (before the contracts expire)` : "expiration";
   return (
     <div className="serif" style={{ fontSize: 21, lineHeight: 1.75 }} data-testid="strategy-sentence">
       <div>
-        {d.structure?.startsWith("short") ? "Sell " : "Buy "}
+        {SOLD.includes(d.structure) ? "Sell " : "Buy "}
         <span className="relative inline-block"><Slot testid="slot-symbol" onClick={() => setOpen("symbol")}>{sym}</Slot>
           <Pop open={open === "symbol"} onClose={() => setOpen(null)}>{symbols.map((s) => <button key={s} className="link text-left" onClick={() => set({ symbol: s })}>{s}</button>)}</Pop></span>{" "}
         <span className="relative inline-block"><Slot testid="slot-structure" onClick={() => setOpen("structure")}>{STRUCT[d.structure] || "calls"}</Slot>
           <Pop open={open === "structure"} onClose={() => setOpen(null)}>{Object.entries(STRUCT).map(([k, l]) => <button key={k} className="link text-left" onClick={() => set({ structure: k })}>{l}</button>)}</Pop></span>
         {" with "}
-        <span className="relative inline-block"><Slot testid="slot-dte" onClick={() => setOpen("dte")}>{d.dte ?? 0} day{(d.dte ?? 0) === 1 ? "" : "s"}</Slot>
-          <Pop open={open === "dte"} onClose={() => setOpen(null)}><NumberEdit value={d.dte ?? 0} onSave={(v) => set({ dte: Math.max(0, Math.round(v ?? 0)) })} suffix="days to expiration" /></Pop></span>
+        {/* the expiration the run uses: the one stated, else the one it was compiled with (never a guess made here) */}
+        <span className="relative inline-block"><Slot testid="slot-dte" onClick={() => setOpen("dte")}>{d.dte ?? effective?.dte ?? 0} day{(d.dte ?? effective?.dte ?? 0) === 1 ? "" : "s"}</Slot>
+          <Pop open={open === "dte"} onClose={() => setOpen(null)}><NumberEdit value={d.dte ?? effective?.dte ?? 0} onSave={(v) => set({ dte: Math.max(0, Math.round(v ?? 0)) })} suffix="days to expiration" /></Pop></span>
         {" to expiration at "}
         <span className="relative inline-block"><Slot testid="slot-entry" onClick={() => setOpen("entry")}>{entry}</Slot>
           <Pop open={open === "entry"} onClose={() => setOpen(null)}><TimeEdit value={d.entry_time && d.entry_time !== "close" ? d.entry_time : "09:30"} zone={zone} setZone={setZone} onSave={(et) => set({ entry_time: et, entry_time_stated: null })} /></Pop></span>.
@@ -217,11 +224,10 @@ export function StrategySentence({ draft, symbols, onRun, busy }: { draft: any; 
         </span>.
       </div>
       <div className="mt-2">
-        Take profit when <span className="relative inline-block"><Slot testid="slot-target" onClick={() => setOpen("target")}>{d.premium_target_pct != null ? `the option gains ${d.premium_target_pct}%` : "never (no target)"}</Slot>
+        Take profit when <span className="relative inline-block"><Slot testid="slot-target" onClick={() => setOpen("target")}>{d.premium_target_pct != null ? (SOLD.includes(d.structure) ? `the position has gained ${d.premium_target_pct}% of the credit` : `the option gains ${d.premium_target_pct}%`) : "never (no target)"}</Slot>
           <Pop open={open === "target"} onClose={() => setOpen(null)}><NumberEdit value={d.premium_target_pct} allowNone onSave={(v) => set({ premium_target_pct: v })} suffix="% gain on the premium" /></Pop></span>.
-        {" "}Stop when <span className="relative inline-block"><Slot testid="slot-stop" onClick={() => setOpen("stop")}>{d.premium_stop_pct != null ? `the option loses ${d.premium_stop_pct}%` : "never (no stop)"}</Slot>
+        {" "}Stop when <span className="relative inline-block"><Slot testid="slot-stop" onClick={() => setOpen("stop")}>{d.premium_stop_pct != null ? (SOLD.includes(d.structure) ? `the position has lost ${d.premium_stop_pct}% of the credit` : `the option loses ${d.premium_stop_pct}%`) : "never (no stop)"}</Slot>
           <Pop open={open === "stop"} onClose={() => setOpen(null)}><NumberEdit value={d.premium_stop_pct} allowNone onSave={(v) => set({ premium_stop_pct: v })} suffix="% loss on the premium" /></Pop></span>.
-        {d.underlying_target_pct != null && <> Also exit when {sym} moves {d.underlying_target_pct}% in the trade's favour.</>}
       </div>
       <div className="mt-2">
         Close any remaining position at <span className="relative inline-block"><Slot testid="slot-exit" onClick={() => setOpen("exit")}>{exit}</Slot>
@@ -231,6 +237,13 @@ export function StrategySentence({ draft, symbols, onRun, busy }: { draft: any; 
         Size each trade at <span className="relative inline-block"><Slot testid="slot-size" onClick={() => setOpen("size")}>{sizeText(d)}</Slot>
           <Pop open={open === "size"} onClose={() => setOpen(null)}><SizeEdit d={d} onSave={(patch) => set(patch)} /></Pop></span>.
       </div>
+      {/* the parts of the trade this sentence has no slot for (strikes, a spread's width, exits on the underlying, weekdays,
+          steps, partial exits, the period), in the server's words, so that nothing the trade holds is left unsaid */}
+      {(more || []).length > 0 && changes.length === 0 && (
+        <ul className="mt-3 flex flex-col gap-1" style={{ fontFamily: "var(--font-sans)", fontSize: 14.5, lineHeight: 1.5, color: "var(--paper-2)" }} data-testid="sentence-more">
+          {(more || []).map((x, i) => <li key={i}>{x}</li>)}
+        </ul>
+      )}
       <div className="mt-4 flex flex-wrap items-center gap-3" style={{ fontFamily: "var(--font-sans)", fontSize: 14, lineHeight: 1.5 }}>
         {changes.length > 0 ? (
           <>

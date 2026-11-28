@@ -253,7 +253,10 @@ def backtest_text(res: dict, facts: list[dict]) -> str:
         parts.append(f"The largest winner was {fs(facts, 'largest_winner')} and the largest loser {fs(facts, 'largest_loser')}; the deepest drawdown was {fs(facts, 'max_drawdown')} of equity.")
     t = fv(facts, "t_stat") if n >= 5 else None
     if t is not None:
-        parts.append(f"The per-trade profit has a t-statistic of {fs(facts, 't_stat')}, which is {'above' if abs(t) >= 2 else 'below'} the conventional threshold of two, so the edge is {'statistically distinguishable from zero' if abs(t) >= 2 else 'not statistically distinguishable from zero'} in this sample.")
+        # (a t-statistic of -6.28 was called "above the conventional threshold" and a net loss an "edge": V10 held-out judges)
+        parts.append(f"The per-trade result has a t-statistic of {fs(facts, 't_stat')}, " + (
+            f"which is beyond the conventional threshold of two, so the average {'profit' if t > 0 else 'loss'} per trade is statistically distinguishable from zero in this sample." if abs(t) >= 2 else
+            "which is within the conventional threshold of two, so the average result per trade is not statistically distinguishable from zero in this sample."))
     if modeled:
         parts.append("Premiums are theoretical estimates, so treat every dollar figure as approximate.")
     if fget(facts, "qualifying") and fget(facts, "executable") and (fv(facts, "executable") or 0) < (fv(facts, "qualifying") or 0):

@@ -47,6 +47,11 @@ DEFAULTS = {
     # check = both read every strategy and comparison, and where they differ the difference is asked instead of run |
     # auto = check for a local model, model for a hosted one
     "llm.mode": "auto",
+    # V10: when the built-in reader stops on a message, may the configured model offer ONE rewrite of it (checked to hold the
+    # same numbers and times, and to be readable by the built-in reader) as a choice under the reply? off | focused | schema |
+    # plain (how the model is asked; measured in docs/V10_REPORT.md). Off by default: on the development questions a small
+    # local model's accepted rewrites were wrong more often than right.
+    "llm.proposer": "off",
     # how a model is asked: tools = the full planner (every tool, free expressions) | form = a short form of typed fields that a
     # small model can fill, every value checked against the sentence | auto = form for a local model, tools for a hosted one
     "llm.planner": "auto",
@@ -54,6 +59,12 @@ DEFAULTS = {
     "llm.timeout_seconds": 90, "llm.max_retries": 2,
     "ai.exec_mode": "quick",  # quick | review (default for new research sessions)
     "ui.timezone": "America/Los_Angeles", "data.default_symbol": "SPY",
+    # V10: has the user said which zone their times are in? Until they have, a time with no zone that could be in more than
+    # one is asked about once per notebook instead of being assumed (Settings, or the answer to that question, sets it).
+    "ui.timezone_confirmed": False,
+    # V10: a reading with several parts (two conditions, a second step, several exits ...) is shown and waits for a go-ahead
+    # before it runs; a simple question is answered at once. Off: only a reading with something wrong or missing waits.
+    "ai.confirm_complex": True,
     "ui.mode": "simple",  # simple | advanced: how much of each screen is shown. One calculation engine either way.
     "ui.onboarded": "",
 }

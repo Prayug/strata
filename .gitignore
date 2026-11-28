@@ -17,3 +17,7 @@ frontend/playwright-report/
 
 # local database backups (strata backup)
 /backups/
+
+# V10 evaluation runs: the sandbox database and result files of a run are working files; its state and verdicts are the record
+docs/v10_evidence/heldout_run/*/sandbox/
+docs/v10_evidence/heldout_run/*/.lock

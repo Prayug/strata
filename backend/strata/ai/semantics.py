@@ -37,7 +37,7 @@ STORED_DEFAULT = ("SPY", "QQQ", "IWM")
 
 # ----------------------------------------------------------------------------------------------------------- normalise
 WORD_MAP = {
-    "yday": "yesterday", "yest": "yesterday", "ystd": "yesterday", "yesterdays": "yesterday", "yesterday's": "yesterday", "ytd": "yesterday",
+    "yday": "yesterday", "yday's": "yesterday", "ydays": "yesterday", "yest": "yesterday", "ystd": "yesterday", "yesterdays": "yesterday", "yesterday's": "yesterday", "ytd": "yesterday",
     "todays": "today", "today's": "today", "tmrw": "tomorrow", "tmr": "tomorrow", "tomorow": "tomorrow",
     "prev": "previous", "prior": "previous", "preceding": "previous",
     "percent": "%", "pct": "%", "perc": "%", "percentage": "%",
@@ -65,6 +65,10 @@ WORD_MAP = {
     "s&p": "spy", "sp500": "spy", "nasdaq": "qqq", "nq": "qqq", "russell": "iwm", "rut": "iwm",
     "greens": "green", "reds": "red", "mornings": "morning", "afternoons": "afternoon",
     "losers": "losing", "winners": "winning", "loser": "losing", "winner": "winning", "loses": "lose", "lost": "lose",
+    # V10: short words typed in a hurry (too short for the one-letter-away rule below)
+    "aftr": "after", "afer": "after", "b4": "before", "bfore": "before", "gren": "green", "grn": "green", "dos": "does", "dose": "does", "wen": "when", "whn": "when", "clse": "close", "oftn": "often",
+    "ystrdy": "yesterday", "ystrday": "yesterday", "yestrdays": "yesterday", "yestrday": "yesterday", "ydays": "yesterday", "pdh": "previous high", "pdl": "previous low", "pdc": "previous close",
+    "dn": "down", "abv": "above", "abve": "above", "abov": "above", "blw": "below", "belw": "below", "clos": "close", "opn": "open", "hod": "high of the day", "lod": "low of the day",
 }
 NAME_TICKERS = {"tesla": "TSLA", "apple": "AAPL", "nvidia": "NVDA", "microsoft": "MSFT", "amazon": "AMZN", "google": "GOOGL", "alphabet": "GOOGL", "meta": "META",
                 "facebook": "META", "netflix": "NFLX", "amd": "AMD", "dia": "DIA", "dow": "DIA", "spx": "SPX", "ndx": "NDX", "tsla": "TSLA", "aapl": "AAPL", "nvda": "NVDA",
@@ -73,7 +77,7 @@ NUM_WORDS = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "s
              "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "ninety": 90, "a couple": 2, "couple": 2, "single": 1}
 # words that carry no research meaning on their own (the slots that do are claimed by the recognisers)
 FILLER = set("""a an the of in on at for to from by with about into onto over under than then also too as so very really just still even again ever any some
-all each every both either one ones this that these those it its it's itself they them their there here what which who whom whose how why when where whether
+all each every both either one ones this that these those it its it's itself they them their there here what which who whom whose how far why when where whether only
 is are was were be been being am do does did done doing have has had having get gets got getting go goes going went gone make makes made making
 i me my we our us you your yours he she his her him please pls plz thanks thank ok okay hey hi hello so um uh lol like
 can could would should will shall may might must need needs want wants wanted know think tell show see look looks find check let lets give
@@ -87,7 +91,11 @@ much many more most less least lot lots bit little
 same different other another
 work works worked working happen happens happened happening thing things stuff way ways
 good bad best worse worst better
-""".split())
+ actually really basically honestly literally myth true thing things stuff guess wonder wondering curious kinda sorta pretty quite exactly lol lmao haha btw idk imo tbh fwiw bro man dude ok okay hey hi well anyway
+ idea classic one kick around heres here's test tested testing feel years never once thats that's whats what's im i'm ive i've id i'd dont don't cant can't wanna gonna gotta lemme pls please thanks thx reading read been
+ take takes taken taking them share proportion fraction portion point onward onwards said say says meaning means broken break split separately also would like case
+ weekday weekdays meaningfully meaningful materially noticeably others
+ swear swears figured figure always staring keep keeps doing mean means meaning quick question curious real normal usual """.split())
 
 
 def _edit1(a: str, b: str) -> bool:
@@ -151,12 +159,13 @@ def normalise(text: str, vocab: set[str] | None = None) -> Norm:
     omap.append(len(src))
     # phrases that name a number
     n = Norm(text, norm, omap)
-    for pat, rep in ((r"\bhalf (?:a |of a |of one )?%", "0.5 %"), (r"\ba quarter (?:of a |of one )?%|\bquarter (?:of a )?%", "0.25 %"), (r"\b(?:a|one) %", "1 %"),
+    for pat, rep in ((r"\b(?:three|3)[- ]quarter(?:s)? (?:of )?(?:a |one )?%", "0.75 %"), (r"\b(?:one|1|a) and a half %", "1.5 %"), (r"\b(?:two|2) and a half %", "2.5 %"), (r"\b(?:one|a)[- ]tenth (?:of )?(?:a |one )?%", "0.1 %"),
+                     (r"\bhalf (?:a |of a |of one )?%", "0.5 %"), (r"\ba quarter (?:of a |of one )?%|\bquarter (?:of a )?%", "0.25 %"), (r"\b(?:a|one) %", "1 %"),
                      (r"\bhalf an hour\b|\ba half hour\b|\bhalf hour\b|\bhalf-hour\b", "30 min"), (r"\ban hour\b", "60 min"),
                      (r"\b(\d+(?:\.\d+)?) ?m\b(?! ?%)", r"\1 min"), (r"\b(\d+(?:\.\d+)?) ?h\b", r"\1 hour"), (r"\b(\d+) ?d\b(?!te)", r"\1 day")):
         n = _sub(n, pat, rep)
     for wd, v in sorted(NUM_WORDS.items(), key=lambda kv: -len(kv[0])):
-        n = _sub(n, rf"\b{wd}\b(?= (?:- )?(?:%|min|hour|day|dte|delta|green|red|up|down|straight|consecutive|session|week|month|year|contract|call|put|lot|time))", str(v))
+        n = _sub(n, rf"\b{wd}\b(?= (?:- )?(?:%|min|hour|day|dte|delta|green|red|up|down|lower|higher|losing|winning|straight|consecutive|session|week|month|year|contract|call|put|lot|time|trade day|trade session|close in a row|strike|point|bar|candle)\b)", str(v))
     return n
 
 
@@ -299,27 +308,39 @@ def tag(text: str, known: list[str] | None = None) -> tuple[Norm, list[Mention]]
     t.each(r"\b(?:in|during|for|throughout|over) (?:the year )?(?:19|20)\d\d\b(?! ?%)", period, "period", "period")
     t.each(r"\b(?:until|before|through) (?:19|20)\d\d\b(?! ?%)", period, "period", "period")
     t.each(r"\b(?:during |in )?(?:the )?(?:covid(?: crash)?|2022 bear market)\b", period, "period", "period")
-    t.each(r"\b(?:in |over |for )?(?:the )?(?:last|past) (\d+) (year|month)\b", period, "period", "period")
+    t.each(r"\b(?:in |over |for )?(?:the )?(?:last|past) (\d+) (year|month)\b(?: or so)?", period, "period", "period")
+    t.each(r"\b(?:only want |i want |use |using |for |from )?(?:19|20)\d\d (?:to|through|thru|until|till|-) (?:19|20)\d\d\b(?! ?%)", period, "period", "period")
+    t.each(r"\b(?:only want |i want |use |using |for |from )?(?:19|20)\d\d (?:onwards?|forward|and (?:later|after|on)\b|(?:to|through|thru|until|till|-) ?(?:the )?(?:present|now|today|date|latest|current)|on(?= ?[.,;?!]| ?$))", period, "period", "period")
+    t.each(r"\b(?:since|from|after) (?:the )?(?:start|beginning|turn|first day) of (?:19|20)\d\d\b|\b(?:going |go |goes |all the way )?back to (?:19|20)\d\d\b", period, "period", "period")
+
+    t.each(r"\bgo(?:ing)? (?:all the way )?back as far as (?:you(?:'ve| have)? (?:got|get|have|can|go)|possible|it goes|the data (?:goes|allows|go))\b|\bas far back as (?:you can|possible|it goes|you(?:'ve| have)? (?:got|get|have)|the data (?:goes|go))\b"
+           r"|\b(?:use |using |over |on |across |with )?(?:all|the whole|the full|the entire|every bit of) (?:of )?(?:the )?(?:available |stored )?(?:data|history|record|years)(?: you(?:'ve| have)? (?:got|get|have))?\b|\beverything you(?:'ve| have)? (?:got|get|have)\b|\b(?:the )?(?:whole|full|entire) (?:history|record|dataset|sample)\b",
+           lambda m: {"word": m.group(0)}, "output", "output")
 
     # ---- instruments
     for sym in sorted(set(known) | {"SPY", "QQQ", "IWM"}, key=len, reverse=True):
         t.each(rf"\b{re.escape(sym.lower())}\b", lambda m, sym=sym: {"symbol": sym, "stored": sym in known}, "symbol", "symbol")
     t.each(r"\b(" + "|".join(NAME_TICKERS) + r")\b", lambda m: {"symbol": NAME_TICKERS[m.group(1)], "stored": NAME_TICKERS[m.group(1)] in known}, "symbol", "symbol")
 
-    # ---- the kind of question (claimed so that its words are not read as anything else)
-    for kind, pat in (
-        ("agreement", r"\b(?:predict|(?:a )?(?:good |bad |reliable |useful )?(?:sign|indicator|signal|tell|clue|hint) (?:of|for|about)|tell(?: you| us| me)? (?:anything |something |much )?about|right about|wrong about|say about|foreshadow|match|matches|agree with|same (?:way|direction) as|carry over to|follow through)\b"),
-        ("timing", r"\bwhen (?:is|does|do|are) (?:\w+ ){0,3}(?:most volatile|least volatile|calmest|quietest|most active|move the most|moves the most|make (?:its|the) (?:biggest )?moves?)\b|\bwhen during the day\b|\bwhat time(?: of day)?\b|\bwhich (?:half ?hour|hour|time of day|part of the day|30 min|15 min)\b|\btime of day\b|\bintraday (?:volatility )?profile\b|\bvolatility profile\b|\b(?:15|30|60) min buckets?\b"),
-        ("breakdown", r"\b(?:good|bad|strong|weak|best|worst|better|worse|green|red) (?:day|days) (?:for|to (?:buy|trade|own|hold))\b|\b(?:is|are) (?:monday|tuesday|wednesday|thursday|friday)s? (?:usually |generally |typically )?(?:good|bad|strong|weak|green|red|up|down|positive|negative)\b|\b(?:which|what) (?:day of the week|weekday|days of the week|month|months)\b|\bby (?:weekday|day of the week|month(?: of the year)?)\b|\bbreak ?down\b|\bbucket\b|\bper (?:weekday|month|decile)\b|\bdeciles?\b|\bwhich weekdays?\b"),
-        ("movement", r"\bwhat (?:usually |typically |normally |generally )?(?:happens|happened)\b|\bwhat does \w+ (?:usually |typically |normally |generally )?do\b|\bhow does \w+ (?:usually )?(?:trade|move|behave|do)\b|\bshow me how\b|\bhow much does \w+ (?:usually |typically )?move\b|\btypical (?:move|range|day)\b|\baverage (?:move|range)\b|\bwhere does \w+ go\b|\bhow (?:far|much) does it (?:go|move)\b"),
-        ("frequency", r"\b(?:does|do|did|is|are|will|would) (?:\w+ ){0,3}(?:usually|typically|tend to|tends to|generally|normally|often|ever|historically|reliably)\b|^\s*(?:does|do|did) (?:\w+ ){0,2}(?=(?:recover|bounce|rebound|reverse|fill|rise|fall|drop|rally|close|finish|end|gap|keep)\b)|\bhow (?:often|frequently|many times|likely|common)\b|\bis it (?:common|likely|usual)\b|\bwhat (?:is )?(?:the )?(?:%|percent|share|fraction|proportion|odds|probability|chances?|likelihood|hit rate|win rate)\b(?: of the time)?|\b(?:odds|probability|chances?|likelihood|hit rate) (?:of|that|for)?\b|\bp ?\(|\bhow (?:much )?of the time\b|\bwhat % of\b|\b% of the time\b|\bwin rate\b|\bhit rate\b"),
+    # ---- the kind of question: its patterns (read at the END of this function, see there)
+    KIND_PATTERNS = (
+        ("agreement", r"\bmeans? (?:a |an |the |that |it (?:is |will be )?)?(?:strong|weak|good|bad|green|red|up|down|big|higher|lower|positive|negative)\b|\b(?:lead|leads|translate|translates|carry|carries) (?:in)?to\b|\bsets? the tone\b|\bgo(?:es)? (?:along )?with\b|"
+                      r"\b(?:predict|(?:a )?(?:good |bad |reliable |useful )?(?:sign|indicator|signal|tell|clue|hint) (?:of|for|about)|tell(?: you| us| me)? (?:anything |something |much )?about|right about|wrong about|say about|foreshadow|match|matches|agree with|same (?:way|direction) as|carry over to|follow through)\b"),
+        ("timing", r"\b(?:more|most|less|least) (?:volatile|active|quiet|movement)\b|\b(?:fattest|biggest|widest|busiest|wildest|quietest|calmest|slowest) (?:hour|half ?hour|part of the day|time of day)\b|\bwhen (?:is|does|do|are) (?:\w+ ){0,3}(?:most volatile|least volatile|calmest|quietest|most active|move the most|moves the most|make (?:its|the) (?:biggest )?moves?)\b|\bwhen (?:during|in) the day\b|\bwhat time(?: of day)?\b|\bwhen (?:does|do|did) (?:it|that|this) (?:usually |typically |mostly )?(?:happen|move|occur)\b|\bwhich (?:half ?hour|hour|time of day|part of the day|30 min|15 min)\b|\btime of day\b|\bintraday (?:volatility )?profile\b|\bvolatility profile\b|\b(?:15|30|60) min buckets?\b"),
+        ("breakdown", r"\b(?:is|are) (?:monday|tuesday|wednesday|thursday|friday)s? (?:\w+ ){0,3}?(?:different|better|worse|the best|the worst|best|worst|special|weaker|stronger|any good|real)\b|\b(?:the )?(?:monday|tuesday|wednesday|thursday|friday) (?:thing|effect)\b|"
+                      r"\b(?:monday|tuesday|wednesday|thursday|friday)s? or (?:monday|tuesday|wednesday|thursday|friday)s?\b|\bday of (?:the )?week\b|\bby (?:the )?day\b|\beach weekday\b|\bweekday effect\b|"
+                      r"\b(?:good|bad|strong|weak|best|worst|better|worse|green|red) (?:day|days) (?:for|to (?:buy|trade|own|hold))\b|\b(?:is|are) (?:monday|tuesday|wednesday|thursday|friday)s? (?:usually |generally |typically )?(?:good|bad|strong|weak|green|red|up|down|positive|negative)\b|\b(?:which|what) (?:day of the week|weekday|days of the week|month|months)\b|\bby (?:weekday|day of the week|month(?: of the year)?)\b|\bbreak ?down\b|\bbucket\b|\bper (?:weekday|month|decile)\b|\bdeciles?\b|\bwhich weekdays?\b"),
+        ("movement", r"\bshow me how \w+ (?:usually |typically )?(?:trade|behave|behaves|act|acts|move|perform|performs|do|does|look|looks)\b|\bhow (?:far|much) (?:does|do|did) (?:\w+ )?(?:usually |typically |normally )?(?:go|move|run|travel|extend|rally|drop|fall|bounce|trade)\b"
+                     r"|\b(?:median|mean|average|typical) (?:size of the )?(?:move|return|change|range)\b|\bwhere (?:is|was|does|did) (?:it|\w+)(?: (?:end up|go|trade|sit|stand|land))? (?:\d+ |a |one )(?:trad(?:e|ing) )?(?:day|session|week|month)s? (?:later|after|out|on)\b|\bwhat (?:has|have|is|was|were) (?:the |its )?(?:average |mean |median |typical )?(?:\d+[- ]?(?:day|session|week) )?(?:forward )?return\b"
+                     r"|\b(?:average|mean|median|typical) (?:\d+[- ]?(?:trad(?:e|ing)[- ])?(?:day|session|week) )(?:forward )?return\b|\bhow (?:did|does|do|has) (?:it|\w+) (?:do|done|fare|perform)\b"
+                     r"|\bwhat (?:usually |typically |normally |generally )?(?:happens|happened)\b|\bwhat does \w+ (?:usually |typically |normally |generally )?do\b|\bhow does \w+ (?:usually )?(?:trade|move|behave|do)\b|\bshow me how\b|\bhow much does \w+ (?:usually |typically )?move\b|\btypical (?:move|range|day)\b|\baverage (?:move|range)\b|\bwhere does \w+ go\b|\bhow (?:far|much) does it (?:go|move)\b"),
+        ("frequency", r"\b(?:usually|typically|tend to|tends to|generally|normally|ever|historically|reliably|more often|more likely|most of the time)\b|(?<!how )\boften\b|^\s*(?:does|do|did) (?:\w+ ){0,2}(?=(?:recover|bounce|rebound|reverse|fill|rise|fall|drop|rally|close|finish|end|gap|keep)\b)|\b(?:in|on) what (?:share|fraction|%|proportion) of\b|\bwhat share\b|\bhow many (?:day|session|time)s?\b|\bhow (?:often|frequently|many times|likely|common)\b|\bis it (?:common|likely|usual)\b|\bwhat (?:is )?(?:the )?(?:%|percent|share|fraction|proportion|odds|probability|chances?|likelihood|hit rate|win rate)\b(?: of the time)?|\b(?:odds|probability|chances?|likelihood|hit rate) (?:of|that|for)?\b|\bp ?\(|\bhow (?:much )?of the time\b|\bwhat % of\b|\b% of the time\b|\bwin rate\b|\bhit rate\b"),
         ("strategy", r"\bbacktest\b|\bif i (?:buy|sell)\b|\bwhat if i (?:buy|sell)\b|\bwould i make money\b|\bdo i make money\b|\bprofitable\b|\bmake money\b"),
         ("explain", r"\bwhy\b|\bexplain\b|\bwhat does (?:this|that|it) mean\b|\bhow come\b"),
-        ("reliability", r"\bjust (?:get )?lucky\b|\bluck\b|\bstatistically significant\b|\bsignificant\b|\bis (?:this|it|that) (?:real|reliable|robust)\b|\bgood strategy\b"),
+        ("reliability", r"\bjust noise\b|\bnoise\b|\bby chance\b|\bcoincidence\b|\bfluke\b|\bmean anything\b|\btea leaves\b|\bsample size\b|\benough (?:day|trade|data|sample|observation)s? to\b|\bcan i trust (?:this|it|that)\b|\bjust (?:get )?lucky\b|\bluck\b|\bstatistically significant\b|\bsignificant\b|\bis (?:this|it|that) (?:real|reliable|robust)\b|\bgood strategy\b"),
         ("compare", r"\bcompare\b|\bversus\b|\bvs\.?\b|\bcompared (?:to|with)\b|\bside by side\b"),
         ("forecast", r"\b(?:will|is going to|gonna) \w+ (?:go up|go down|rise|fall|drop|rally|crash|close (?:up|down|green|red))\b(?:.*\b(?:tomorrow|today|next week|this week)\b)?"),
-    ):
-        t.each(pat, lambda m, kind=kind: {"kind": kind}, "kind", "kind")
+    )
 
     # ---- events that are known before or during the session (conditions, and sometimes outcomes)
     def pct(m, neg: bool):
@@ -327,12 +348,12 @@ def tag(text: str, known: list[str] | None = None) -> tuple[Norm, list[Mention]]
         return -v if neg else v
 
     # a gap at the open
-    t.each(rf"\b(?:when |if |after |on days (?:when |that )?)?(?:it |{SYM_RX} )?(?:gap|open) (?:(?P<d>{UP}|{DOWN}|higher|lower|above|below) )?(?:of |by )?(?:{ATLEAST}|{MORETHAN} |more than |at least |over )?(?P<num>\d+(?:\.\d+)?) ?%(?: ?\+| or more| or greater| plus)?(?: (?P<d2>higher|lower|up|down|above|below))?(?: (?:than |from |vs )?(?:the )?(?:previous|yesterday) ?(?:close|'s close|day's close)?)?",
-           lambda m: {"key": "gap", "op": ">=" if (m.group("d") or m.group("d2") or "up") in ("up", "higher", "above", "green", "rise", "rally", "gain", "climb", "pop", "bullish", "positive", "advance") else "<=",
-                      "value": pct(m, (m.group("d") or m.group("d2") or "up") not in ("up", "higher", "above", "green", "rise", "rally", "gain", "climb", "pop", "bullish", "positive", "advance"))}, "event")
+    GAP_UP = ("up", "higher", "above", "over", "north of", "green", "rise", "rally", "gain", "climb", "pop", "bullish", "positive", "advance")
+    t.each(rf"\b(?:when |if |after |on days (?:when |that )?)?(?:it |{SYM_RX} )?(?:gap|open) (?:is |was |be )?(?:(?P<d>{UP}|{DOWN}|higher|lower|above|below) )?(?:of |by )?(?:{ATLEAST}|{MORETHAN} |more than |at least |over )?(?P<num>\d+(?:\.\d+)?) ?%(?: ?\+| or more| or greater| plus)?(?: (?P<d2>higher|lower|up|down|above|below|under|over|beneath|underneath|north of|south of))?(?: (?:than |from |vs )?(?:the )?(?:previous|yesterday) ?(?:close|'s close|day's close)?)?",
+           lambda m: {"key": "gap", "op": ">=" if (m.group("d") or m.group("d2") or "up") in GAP_UP else "<=", "value": pct(m, (m.group("d") or m.group("d2") or "up") not in GAP_UP)}, "event")
     t.each(rf"\bgap (?P<d>ups|downs)(?: of| by| over| above| more than| bigger than| larger than| greater than| at least| >=?)? ?(?P<num>\d+(?:\.\d+)?) ?%",
            lambda m: {"key": "gap", "op": ">=" if m.group("d") == "ups" else "<=", "value": pct(m, m.group("d") == "downs")}, "event")
-    t.each(rf"\b(?:a |an )?(?P<num>\d+(?:\.\d+)?) ?%\+? (?:overnight |opening )?gap (?P<d>up|down|higher|lower)",
+    t.each(rf"\b(?:a |an )?(?P<num>\d+(?:\.\d+)?) ?% ?\+? ?(?:or more |or bigger |plus )?(?:overnight |opening )?gap (?P<d>up|down|higher|lower)",
            lambda m: {"key": "gap", "op": ">=" if m.group("d") in ("up", "higher") else "<=", "value": pct(m, m.group("d") in ("down", "lower"))}, "event")
     t.each(rf"\b(?:a |an )?(?P<num>\d+(?:\.\d+)?) ?%\+? (?:overnight |opening )?gap (?P<d>{DOWN}|{UP})?",
            lambda m: None, "event")
@@ -350,8 +371,12 @@ def tag(text: str, known: list[str] | None = None) -> tuple[Norm, list[Mention]]
            lambda m: {"key": "prev_return", "op": "<=" if m.group("d") in ("decline", "drop", "fall", "loss", "selloff", "sell off", "down move") else ">=",
                       "value": pct(m, m.group("d") in ("decline", "drop", "fall", "loss", "selloff", "sell off", "down move"))} if m.group("d") != "move" else
                      {"key": "prev_return", "op": "abs>=", "value": _f(m.group("num"))}, "event")
-    t.each(rf"\b(?P<num>\d+) (?:straight |consecutive )?(?P<d>{UP}|{DOWN}) (?:day|session)s?(?: in a row| straight| consecutively)?\b",
-           lambda m: {"key": "up_streak" if re.fullmatch(UP + r"s?", m.group("d")) else "down_streak", "op": ">=", "value": _f(m.group("num"))}, "event")
+    streak = lambda m: {"key": "up_streak" if re.fullmatch(UP + r"s?", m.group("d")) else "down_streak", "op": ">=", "value": _f(m.group("num"))}  # noqa: E731
+    t.each(rf"\b(?P<num>\d+) (?:straight |consecutive )?(?P<d>{UP}|{DOWN}) (?:day|session|close|finish)s?(?: in a row| straight| running| consecutively| back to back)?\b", streak, "event")
+    # V10: "closed lower 3 days in a row", "red like 2 days in a row", "up 6 days straight", "3 days in a row down"
+    ROW = r"(?:in a row|straight|running|consecutively|back to back|on the trot)"
+    t.each(rf"\b(?:has |have |had |is |was |been |it |that )*(?:close |finish |end |be |been |go |trade )?(?P<d>{UP}|{DOWN})(?: like| for)? (?P<num>\d+) (?:straight |consecutive |trade )?(?:day|session|close|time)s? {ROW}\b", streak, "event")
+    t.each(rf"\b(?P<num>\d+) (?:trade )?(?:day|session|close)s? {ROW}(?: of| that (?:are|were|close))? (?P<d>{UP}|{DOWN})\b", streak, "event")
     # "the decline has to be 4%": the size of a move the question already has (edits map it onto that condition)
     t.each(rf"\bthe (?P<d>decline|drop|fall|loss|selloff|gain|rise|rally|move)(?: (?:has to be|needs to be|should be|must be|is|of|to|at least|be))+ (?:{ATLEAST}|{MORETHAN} )?(?P<num>\d+(?:\.\d+)?) ?%(?: or more)?",
            lambda m: {"key": "move", "op": "<=" if m.group("d") in ("decline", "drop", "fall", "loss", "selloff") else ">=", "value": pct(m, m.group("d") in ("decline", "drop", "fall", "loss", "selloff")), "anchor": None}, "event")
@@ -393,7 +418,10 @@ def tag(text: str, known: list[str] | None = None) -> tuple[Norm, list[Mention]]
            lambda m: {"key": "from_open", "op": "<" if m.group("d") in ("bad", "rough", "weak", "red", "down") else ">", "value": 0.0, "size": "vague", "when": "morning"}, "event")
 
     # VIX, streaks, weekdays, VWAP
-    t.each(rf"\bvix (?:close|closing|closed|was|is|at|level|reading)?(?: (?:the )?(?:previous|yesterday)(?: day| session)?)? ?(?P<op>above|over|below|under|>|<|>=|<=|greater than|less than|higher than|lower than) (?P<num>\d+(?:\.\d+)?)(?: (?:the )?(?:previous|yesterday) (?:day|session))?",
+    t.each(rf"\b(?:the )?vix (?:(?:is|was|has|had|close[sd]?|closing|finish(?:es|ed)?|end(?:s|ed)?|sits|sat|at|level|reading|prints?|printed|stays?|running|trading|trades) ){0,2}(?:(?:the |that )?(?:previous|prior|yesterday|day before|friday|monday)(?: day| session)?'?s? )?"
+           rf"(?P<op>above|over|below|under|>|<|>=|<=|greater than|less than|higher than|lower than|north of|south of) (?P<num>\d+(?:\.\d+)?)(?: (?:the )?(?:previous|prior|yesterday) (?:day|session))?",
+           lambda m: {"key": "vix", "op": ">" if m.group("op") in ("above", "over", ">", ">=", "greater than", "higher than", "north of") else "<", "value": _f(m.group("num"))}, "event")
+    t.each(rf"\b(?:the )?vix (?:close|closing|closed|was|is|at|level|reading)?(?: (?:the )?(?:previous|yesterday)(?: day| session)?)? ?(?P<op>above|over|below|under|>|<|>=|<=|greater than|less than|higher than|lower than) (?P<num>\d+(?:\.\d+)?)(?: (?:the )?(?:previous|yesterday) (?:day|session))?",
            lambda m: {"key": "vix", "op": ">" if m.group("op") in ("above", "over", ">", ">=", "greater than", "higher than") else "<", "value": _f(m.group("num"))}, "event")
     t.each(r"\b(?:on |every |only on |just )?(?P<d>monday|tuesday|wednesday|thursday|friday)s?\b",
            lambda m: {"key": "weekday", "op": "=", "value": m.group("d")[:3].capitalize()}, "event")
@@ -405,11 +433,16 @@ def tag(text: str, known: list[str] | None = None) -> tuple[Norm, list[Mention]]
            lambda m: {"key": "unsupported_event", "what": m.group(0)}, "event")
 
     # ---- outcomes: what is counted
-    t.each(r"\b(?:fill|close) (?:the )?gap\b", lambda m: {"key": "touch_level", "level": "prev_close", "direction": None}, "outcome")
-    t.each(r"\b(?:trade|go|break|print|dip|get|fall|drop)s? (?:below|under) (?:the )?(?:previous|yesterday)(?: day)?(?:'s)? ?(?P<w>low|high)\b|\b(?:trade|go|break|print|get|rise|rally)s? (?:above|over) (?:the )?(?:previous|yesterday)(?: day)?(?:'s)? ?(?P<w2>high|low)\b|\bnew low below (?:the )?(?:previous|yesterday)(?: day)?(?:'s)? ?low\b",
+    t.each(r"\b(?:fill|close) (?:the |its |that |any )?gap\b|\bgap[- ]?fill\b|\b(?:the |that |a )?gap (?:get |is |was |got )?fill\b", lambda m: {"key": "touch_level", "level": "prev_close", "direction": None}, "outcome")
+    t.each(r"\bfill(?= (?:a |an |the |any |that |its )?(?:\d+(?:\.\d+)? ?% )?gap (?:up|down))", lambda m: {"key": "touch_level", "level": "prev_close", "direction": None}, "outcome")
+    if re.search(r"\bgap", s):  # V10: "spy gap up >.5%, how often does it fill same day"
+        t.each(r"\bfill(?: it| that)?(?= (?:the )?same day\b| (?:by|before|within|that|in|on) |[ ]?[?.,]|$)", lambda m: {"key": "touch_level", "level": "prev_close", "direction": None}, "outcome")
+    # (V10: "trade under yesterday's high" was read here as trading ABOVE the high. Only a low taken from above and a high
+    # taken from below are read by this pattern; the other two belong to the relation reader below, which knows the side.)
+    t.each(r"\b(?:trade|go|break|print|dip|get|fall|drop)s? (?:below|under) (?:the )?(?:previous|yesterday)(?: day)?(?:'s)? ?(?P<w>low)\b|\b(?:trade|go|break|print|get|rise|rally)s? (?:above|over) (?:the )?(?:previous|yesterday)(?: day)?(?:'s)? ?(?P<w2>high)\b|\bnew low below (?:the )?(?:previous|yesterday)(?: day)?(?:'s)? ?low\b",
            lambda m: {"key": "touch_level", "level": "prev_" + (m.group("w") or m.group("w2") or "low"), "direction": "down" if (m.group("w") or "low") == "low" and not m.group("w2") else "up"}, "outcome")
-    t.each(r"\b(?:get|gets|come|comes|go|goes|trade|trades|make it|bounce|recover)s? back (?:to|above|up to) (?:the |its )?(?P<w>open|previous close|yesterday's close)\b",
-           lambda m: {"key": "touch_level", "level": "open" if m.group("w") == "open" else "prev_close", "direction": "up"}, "outcome")
+    t.each(r"\b(?:get|gets|got|come|comes|go|goes|trade|trades|make it|made it|bounce|recover|rally|drop|fall|pull|sell off)s?(?: all the way)? back(?: up| down)? (?:to|above|up to|down to) (?:the |its |that |where it (?:close|finish) )?(?P<w>open|previous close|yesterday(?:'s)? close|previous day(?:'s)? close|yesterday|unchanged|flat on the day)\b",
+           lambda m: {"key": "touch_level", "level": "open" if m.group("w") == "open" else "prev_close", "direction": None if re.search(r"down", m.group(0)) else "up"}, "outcome")
     t.each(rf"\b(?:close|finish|end)s? (?:the day |the session )?(?:above|higher than|over) (?:the )?(?:previous|yesterday)(?: day)?(?:'s)? ?close\b|\b(?:close|finish|end)s? (?:the day )?(?:up|higher|green) (?:on the day|for the day) (?:vs|versus|from) (?:the )?(?:previous|yesterday)(?:'s)? close\b|\bfinish (?:the day )?above (?:the )?(?:previous|yesterday)(?:'s)? close\b",
            lambda m: {"key": "close_vs", "ref": "prev_close", "direction": "up"}, "outcome")
     t.each(rf"\b(?:close|finish|end)s? (?P<d>higher|lower|up|down|green|red) (?:on|for) the day\b",
@@ -420,7 +453,7 @@ def tag(text: str, known: list[str] | None = None) -> tuple[Norm, list[Mention]]
            lambda m: {"key": "close_vs", "ref": "prev_close", "direction": "up" if re.search(r"higher|up|green", m.group(0)) else "down", "next_session": True}, "outcome")
     t.each(rf"\b(?:close|finish|end)s? (?:the day |the session )?(?P<d>higher|lower|above|below|up|down|green|red)(?: than)? (?:(?:it|where it) (?:open|was at the open|started)|its open|the open|(?:the )?(?:day|session)'?s? open)\b",
            lambda m: {"key": "close_vs", "ref": "open", "direction": "up" if m.group("d") in ("higher", "above", "up", "green") else "down"}, "outcome")
-    t.each(rf"\b(?:close|closes|finish|finishes|end|ends|is|turns|stays) (?:the day |the session )?(?:still )?(?P<d>green|red|positive|negative|up on the day|down on the day)(?: for the day| on the day| at the close)?\b|\b(?:still )?(?:end|finish|close)s? (?:the day )?(?P<d2>green|red)\b",
+    t.each(rf"\b(?:close|closes|finish|finishes|end|ends|is|turns|stays) (?:the day |the session )?(?:still )?(?:in the )?(?P<d>green|red|positive|negative|up on the day|down on the day)(?: for the day| on the day| at the close)?\b|\b(?:still )?(?:end|finish|close)s? (?:the day )?(?:in the )?(?P<d2>green|red)\b",
            lambda m: {"key": "close_vs", "ref": "open", "direction": "up" if (m.group("d") or m.group("d2") or "").startswith(("green", "positive", "up")) else "down"}, "outcome")
     t.each(r"\b(?:close|closes|closed|finish|finishes|finished|end|ends|ended) (?P<d>higher|lower|up|down)\b(?! (?:than|from|vs|versus|on|for) )",
            lambda m: {"key": "close_vs", "ref": "prev_close", "direction": "up" if m.group("d") in ("higher", "up") else "down"}, "outcome")
@@ -428,14 +461,18 @@ def tag(text: str, known: list[str] | None = None) -> tuple[Norm, list[Mention]]
            lambda m: {"key": "close_vs", "ref": "auto", "direction": "up" if m.group("d") == "higher" else "down"}, "outcome")
     t.each(rf"\b(?:the )?(?P<at>\d\d?:\d\d|close) (?:close |price )?(?:is |was |ends? )?(?P<d>above|below|higher than|lower than) (?:the )?(?P<from>\d\d?:\d\d|open|entry) (?:price|close|level)?",
            lambda m: {"key": "close_vs", "ref": "start" if m.group("from") != "open" else "open", "direction": "up" if m.group("d") in ("above", "higher than") else "down", "from": m.group("from")}, "outcome")
-    t.each(rf"\b(?:touch|hit|reach|trade|rise|rally|go up|gain|climb|move up|run|pop|get to) (?:to |up )?(?P<sign>\+ ?)?(?P<num>\d+(?:\.\d+)?) ?%(?: (?:above|over|from|off) (?:the |its )?(?P<ref>open|entry|start|previous close))?(?: (?:intraday|at any point|at some point|during the day))?",
+    t.each(rf"\b(?:touch|hit|reach|trade|rise|rally|go up|gain|climb|move up|run|pop|get to) (?:to |up )?(?P<sign>\+ ?)?(?P<num>\d+(?:\.\d+)?) ?%(?! (?:below|under|lower))(?: (?:above|over|from|off) (?:the |its )?(?P<ref>open|entry|start|previous close))?(?: (?:intraday|at any point|at some point|during the day))?",
            lambda m: {"key": "touch", "value": _f(m.group("num")), "ref": m.group("ref") or "start"}, "outcome")
     t.each(rf"\b(?:touch|hit|reach|trade|drop|fall|decline|go down|sell off|dip|slide|move down) (?:to |down )?(?P<sign>- ?)?(?P<num>\d+(?:\.\d+)?) ?%(?: (?:below|under|from|off) (?:the |its )?(?P<ref>open|entry|start|previous close))?(?: (?:intraday|at any point|at some point|during the day))?",
            lambda m: {"key": "touch", "value": -_f(m.group("num")), "ref": m.group("ref") or "start"}, "outcome")
     t.each(rf"\b(?P<sign>[+-]) ?(?P<num>\d+(?:\.\d+)?) ?%(?: (?:above|below|from|off) (?:the |its )?(?P<ref>open|entry|start))?",
            lambda m: {"key": "touch", "value": _f(m.group("num")) * (-1 if m.group("sign") == "-" else 1), "ref": m.group("ref") or "start"}, "outcome")
-    t.each(r"\b(?:make|makes|set|sets|print|prints|hit|hits|put in|puts in|form|forms) (?:its |the |a )?(?:daily |intraday )?(?P<w>high|low|top|bottom)s?(?: of the day)?\b|\b(?P<w2>bottom|top)s? out\b|\b(?:the )?(?:high|low) of the day\b",
-           lambda m: {"key": "extreme_time", "which": "low" if (m.group("w") or m.group("w2") or m.group(0)) in ("low", "bottom") or "low" in m.group(0) else "high"}, "outcome")
+    EXT = r"(?:hods?|lods?|(?:daily |intraday |session |day ?'?s? )?(?:high|low|top|bottom)s?(?: of (?:the )?(?:day|session))?)"
+    t.each(rf"\b(?:make|makes|made|set|sets|print|prints|printed|hit|hits|put in|puts in|form|forms|post|posts|carve out|establish|establishes|reach|reaches|mark|marks) (?:its |the |a |their )?(?P<w>{EXT})\b"
+           rf"|\b(?:is |are |was |does |do )?(?:its |the |a )?(?P<w3>{EXT}) (?:of the day |for the day )?(?:is |are |was |gets? )?(?:usually |typically |normally |generally |most often |tend to be |tends to be )?(?:set|made|put in|printed|established|formed|posted|reached|come in|comes in|happen|happens|occur|occurs)\b"
+           rf"|\b(?P<w2>bottom|top)s? out\b|\b(?:the |its )?(?:high|low) of (?:the )?(?:day|session)\b|\b(?:hod|lod)\b",
+           lambda m: {"key": "extreme_time", "which": "low" if re.search(r"low|bottom|lod", (m.group("w") or m.group("w2") or m.group("w3") or m.group(0))) else "high"}, "outcome")
+    t.each(r"\bwhen\b(?= (?:does|do|did|is|are|was) )|\bwhat time(?: of (?:the )?day)?\b|\bat what time\b|\bwhat hour\b|\bwhich hour\b", lambda m: {"word": "when"}, "when")
     t.each(r"\b(?:biggest|largest|most|strongest) (?:moves?|movement|volatility|swings?)\b|\bmove (?:the )?most\b|\b(?:most|more) volatile\b|\bvolatility\b",
            lambda m: {"key": "abs_move"}, "outcome")
     t.each(r"\b(?:keep|keeps|kept|continue|continues|continued) (?:to )?(?:fall|drop|decline|slide|sell off|selloff|go down|going down|tank|dump|rise|rally|climb|gain|go up|going up|lower|higher)(?:ing)?\b|\bfollow[- ]?through\b|\bextend (?:the|its) (?:drop|decline|fall|losses|gains|rally)\b",
@@ -448,10 +485,100 @@ def tag(text: str, known: list[str] | None = None) -> tuple[Norm, list[Mention]]
     t.each(rf"\b(?:go|goes|move|moves) (?P<d>up|down|higher|lower)\b|\b(?P<d2>rise|fall|drop|rally|decline|climb|go green|go red)\b",
            lambda m: {"key": "direction", "direction": "up" if (m.group("d") or m.group("d2") or "") in ("up", "higher", "rise", "rally", "climb", "go green") else "down"}, "outcome")
     t.each(r"\b(?:the |its )?direction(?: of)?\b|\b(?:the |its )?(?:overall )?(?:day|session)(?:'s)? (?:direction|close|result)\b", lambda m: {"key": "direction_word"}, "outcome")
-    t.each(r"\b(?:open[- ]to[- ]close|open to close) (?:return|move|change)?\b", lambda m: {"key": "measure", "measure": "open_to_close"}, "outcome")
-    t.each(r"\b(?:close[- ]to[- ]close|daily) (?:return|move|change)\b", lambda m: {"key": "measure", "measure": "close_to_close"}, "outcome")
+    t.each(r"\bopen(?: ?- ?| )to(?: ?- ?| )close(?: (?:return|move|change))?\b", lambda m: {"key": "measure", "measure": "open_to_close"}, "outcome")
+    t.each(r"\b(?:close[- ]to[- ]close|daily) (?:return|move|change)\b|\bclose[- ]to[- ]close\b|\bclose ?- ?to ?- ?close\b", lambda m: {"key": "measure", "measure": "close_to_close"}, "outcome")
     t.each(r"\b(?:overnight) (?:return|move|change|gap)?\b", lambda m: {"key": "measure", "measure": "overnight"}, "outcome")
     t.each(r"\b(?:average|mean|median) (?:return|move|change|result)\b|\b(?:return|returns|performance|perform)\b", lambda m: {"key": "measure", "measure": "return"}, "outcome")
+
+    # ---- one price of the session against another level (V10): "takes out yesterday's high", "closes back under it",
+    # "opens below the previous close", "is above its 10:00 price", "finished more than 3% below where it finished the day
+    # before". A level is the previous session's high, low or close, the open, or the price at a time of day; the verb says
+    # which price of the session is held against it (its high or low for a touch, its close, its open, its price at a time).
+    clk = [x for x in t.mentions if x.kind == "clock"]
+    CLK = "|".join(sorted({re.escape(s[x.a:x.b]) for x in clk}, key=len, reverse=True)) or r"(?!x)x"
+    PREVW = r"(?:previous|yesterday|day before)(?:'s)?(?: ?(?:day|session)(?:'s)?)?"
+    LEVEL = (rf"(?:(?:the |its )?{PREVW} (?:high|low|close)|(?:the |its )?(?:friday|thursday|wednesday|tuesday|monday)(?: ?'s)? close|(?:the |its )?(?:high|low|close) (?:of|from) (?:the )?{PREVW}|where it (?:finish|close|end|settle) (?:the day before|yesterday|the previous (?:day|session))"
+             rf"|(?:its |the )?(?:{CLK}) (?:price|level|print|mark)|(?:the |its )?price (?:at|from) (?:{CLK})|where it (?:was|stood|trade|is|sat) at (?:{CLK})"
+             rf"|(?:the |its |today(?:'s)? )?open(?: price| print)?(?![a-z])|that (?:previous |same |yesterday )?(?:high|low|level|close|price|mark)|it(?![a-z' ]*\bis\b)(?= |$|[.,?]))")
+    ABOVE, BELOW = r"(?:above|over|higher than|north of|on top of|past)", r"(?:below|under|lower than|south of|beneath|underneath)"
+    PCTOF = r"(?:(?:more than|at least|over|by) )?(?:(?P<num>\d+(?:\.\d+)?) ?% (?:or more )?)?"
+    last_level: list = [None]
+
+    def level_of(txt: str, span: tuple) -> str | None:
+        c = next((x for x in clk if span[0] <= x.a and x.b <= span[1]), None)
+        if c is not None and re.search(r"price|level|print|mark|where it", txt):
+            lv = "at:" + ("09:30" if c.value["et"] == "open" else "16:00" if c.value["et"] == "close" else c.value["et"])
+        elif re.search(r"\bhigh\b", txt) and re.search(r"previous|yesterday|day before|that", txt):
+            lv = "prev_high" if not re.match(r"that", txt) or last_level[0] in (None, "prev_high") else last_level[0]
+        elif re.search(r"\blow\b", txt) and re.search(r"previous|yesterday|day before|that", txt):
+            lv = "prev_low" if not re.match(r"that", txt) or last_level[0] in (None, "prev_low") else last_level[0]
+        elif re.search(r"\bclose\b|finish|settle|\bend\b", txt) and re.search(r"previous|yesterday|day before|that|monday|tuesday|wednesday|thursday|friday", txt):
+            lv = "prev_close"  # "Friday's close", asked about Mondays, is the previous close
+        elif re.search(r"\bopen\b", txt):
+            lv = "open"
+        else:
+            lv = last_level[0]  # "it", "that level": the level named before
+        if lv:
+            last_level[0] = lv
+        return lv
+
+    def rel(a_feat: str, side_up, m):
+        lv = level_of(m.group("lvl"), (m.start("lvl"), m.end("lvl")))
+        if lv is None:
+            return None
+        up = side_up if isinstance(side_up, bool) else bool(re.fullmatch(ABOVE, m.groupdict().get("side") or ""))
+        if side_up == "by_level":  # a verb with no direction of its own: a high is taken out upward, a low downward
+            up = lv != "prev_low"
+        a_ = a_feat if a_feat != "touch" else ("high" if up else "low")
+        g = m.groupdict()
+        out = {"key": "rel", "rel": {"a": a_, "op": ">" if up else "<", "b": lv}}
+        if g.get("num"):
+            out["rel"]["pct"] = float(g["num"]) * (1 if up else -1)
+        return out
+
+    THRU = ("symbol", "clock")
+    cands: list = []
+
+    def cand(pat, fn, kind, role="", through=THRU, prio=0):
+        for m_ in re.finditer(pat, s):
+            cands.append((m_.start(), -(m_.end() - m_.start()), prio, m_, fn))
+
+    CLOSEV = r"(?:close|finish|end|settle|go out|end up|wind up|stay|hold)(?: the day| the session| a day| up| out| it)?(?: back)?(?: is| was| be| end up)?"
+    cand(rf"\b{CLOSEV} {PCTOF}(?P<side>{ABOVE}|{BELOW}) (?P<lvl>{LEVEL})", lambda m: rel("close", None, m), "rel", through=THRU)
+    cand(rf"\b(?:open|gap)(?: up| down)? {PCTOF}(?P<side>{ABOVE}|{BELOW}) (?P<lvl>{LEVEL})", lambda m: rel("open", None, m), "rel", through=THRU)
+    cand(rf"\b(?:is|was|be|been|sit|sits|trade|hold|stay|still|back|get|gets|got|come|comes)(?: it| the price| price)?(?: still| back| trade| up| down)* {PCTOF}(?P<side>{ABOVE}|{BELOW}) (?P<lvl>{LEVEL})",
+           lambda m: (lambda v: v and {**v, "state": True})(rel("state", None, m)), "rel", through=THRU, prio=1)
+    cand(rf"(?:\band |\bor |, )(?P<side>{ABOVE}|{BELOW}) (?P<lvl>{LEVEL})", lambda m: (lambda v: v and {**v, "state": True})(rel("state", None, m)), "rel", through=THRU, prio=2)
+    cand(rf"\bopen (?P<c>red|green|lower|higher|down|up|negative|positive)(?: (?:vs|versus|against|to|from|than|on) (?P<lvl>{LEVEL}))?(?! ?\d)",
+           lambda m: {"key": "rel", "rel": {"a": "open", "op": ">" if m.group("c") in ("green", "higher", "up", "positive") else "<", "b": "prev_close"}}, "rel", through=THRU)
+    cand(rf"\b(?:is|was|be|get|gets|got|turn|turns|go|goes|trade|sit|sits|stay|still|back)(?: back| still| trade)* (?P<c>green|red|positive|negative)(?: on the day)?(?= (?:by|at|as of|before) (?:{CLK}))",
+           lambda m: {"key": "rel", "state": True, "rel": {"a": "state", "op": ">" if m.group("c") in ("green", "positive") else "<", "b": "prev_close"}}, "rel", through=THRU)
+    UPV = (r"(?:take(?:s|n)? out|took out|break(?:s|ing)?(?: out)?(?: back)? (?:above|over|through|past)|broke(?: out)?(?: back)? (?:above|over|through|past)|clear(?:s|ed)?|poke(?:s|d)?(?: back)?(?: up)? (?:above|over|through)"
+           r"|trade(?: back)?(?: up)? (?:above|over|through)|push(?:es|ed)?(?: back)? (?:above|through|over|past)|exceed(?:s|ed)?|top(?:s|ped)?|pop(?:s|ped)? (?:above|over)|go(?:es)?(?: back)? (?:above|over|through|past)"
+           r"|went(?: back)? (?:above|over|through)|run(?:s)? (?:above|through|past)|pierce(?:s|d)?|rise above|rally (?:above|through|past|over)|climb (?:back )?(?:above|over)|reclaim|make(?:s)? (?:a )?new high above)")
+    DNV = (r"(?:break(?:s|ing)?(?: down)?(?: back)? (?:below|under)|broke(?: back)? (?:below|under)|lose|trade(?: back)?(?: down)? (?:below|under)|drop (?:back )?(?:below|under|through)|fall (?:back )?(?:below|under|through)"
+           r"|dip(?:s|ped)? (?:back )?(?:below|under)|undercut(?:s)?|go(?:es)?(?: back)? (?:below|under)|went(?: back)? (?:below|under)|slip(?:s|ped)? (?:back )?(?:below|under)|sink(?:s)? (?:below|under)|make(?:s)? (?:a )?new low below)")
+    cand(rf"\b{UPV} (?P<lvl>{LEVEL})", lambda m: rel("touch", "by_level" if re.match(r"take|took|clear|exceed|top|pierce|reclaim", m.group(0)) else True, m), "rel", through=THRU)
+    cand(rf"\b{DNV} (?P<lvl>{LEVEL})", lambda m: rel("touch", False, m), "rel", through=THRU)
+    cand(rf"\b(?:tag(?:s|ged)?|touch|hit|reach|test(?:s|ed)?|get(?:s)?(?: back)?(?: up| down)? to|got(?: back)? to|trade(?: back)?(?: up| down)? to|come(?:s)? back to|make it back to|back to) (?P<lvl>{LEVEL})",
+           lambda m: (lambda lv_: None if lv_ in (None, "prev_close", "open") or lv_.startswith("at:") else rel("touch", "by_level", m))(level_of(m.group("lvl"), (m.start("lvl"), m.end("lvl")))), "rel", through=THRU)
+
+    # in the order of the sentence, so that "it" and "that level" are the level named before them
+    for _a, _l, _p, m_, fn in sorted(cands, key=lambda c: (c[0], c[1], c[2])):
+        if "lvl" in m_.groupdict() and m_.group("lvl") and re.search(r"monday|tuesday|wednesday|thursday|friday", m_.group("lvl")):
+            t.mentions = [x for x in t.mentions if not (x.kind == "event" and x.value.get("key") == "weekday" and m_.start("lvl") <= x.a and x.b <= m_.end("lvl"))]
+        if not t.free(m_.start(), m_.end(), THRU):
+            continue
+        v_ = fn(m_)
+        if v_ is not None:
+            t.add("rel", v_, m_.start(), m_.end(), "", THRU)
+    # "the real thing or a head fake, meaning does it close above that high": the words before "meaning" are said again after it
+    for m_ in re.finditer(r"\b(?:meaning|i\.? ?e\.?|that is|in other words|aka|by which i mean|put differently)\b,?", s):
+        a0 = max([x.end() for x in re.finditer(r"[,;.?!]", s[:m_.start()].rstrip(" ,"))] or [0])
+        if t.free(a0, m_.end(), ()) and not re.search(r"\d", s[a0:m_.start()]):
+            t.add("gloss", {"word": s[a0:m_.end()]}, a0, m_.end(), "gloss")
+        elif t.free(m_.start(), m_.end(), ()):
+            t.add("gloss", {"word": m_.group(0)}, m_.start(), m_.end(), "gloss")
 
     # ---- when the measurement starts and ends
     t.each(r"\b(?:the )?rest of (?:the )?(?:[a-z]{2,5}(?: ?'?s)? )?(?:day|session|trade)\b|\bremainder of (?:the )?(?:[a-z]{2,5}(?: ?'?s)? )?(?:day|session)\b|\bremaining (?:session|day)\b|\bafter (?:the |that )?(?:candle|bar|first \d+ min) (?:close|closes|is done)\b|\bfrom there\b",
@@ -463,14 +590,17 @@ def tag(text: str, known: list[str] | None = None) -> tuple[Norm, list[Mention]]
     t.each(r"\b(?:in |within |during )(?:the )?first (?P<w>hour|half ?hour)(?! (?:candle|bar))(?: (?:after|of) (?:the )?(?:open|session|day))?",
            lambda m: {"anchor": "end_after_open", "minutes": 60 if m.group("w") == "hour" else 30}, "anchor", "end")
     nsess = lambda g, u: (int(_f(g)) if g and g[0].isdigit() else 1) * (5 if u.startswith("week") else 1)
-    t.each(r"\b(?:within|over) (?:the )?(?:next |following )?(?P<num>\d+|a|one) ?(?:trading )?(?P<u>days?|sessions?|weeks?)\b(?: (?:after|later|afterwards?))?|\bin (?:the )?(?:next|following) (?P<num2>\d+|a|one)? ?(?:trading )?(?P<u2>days?|sessions?|weeks?)\b",
+    t.each(r"\b(?:within|over) (?:the )?(?:next |following )?(?P<num>\d+|a|one) ?(?:trad(?:e|ing) )?(?P<u>days?|sessions?|weeks?)\b(?: (?:after|later|afterwards?))?|\bin (?:the )?(?:next|following) (?P<num2>\d+|a|one)? ?(?:trad(?:e|ing) )?(?P<u2>days?|sessions?|weeks?)\b",
            lambda m: {"anchor": "sessions", "n": nsess(m.group("num") or m.group("num2"), m.group("u") or m.group("u2")), "how": "within"}, "anchor", "end")
-    t.each(r"\b(?P<num>\d+|a|one) ?(?:trading )?(?P<u>days?|sessions?|weeks?) (?:later|afterwards?|on|out)\b|\b(?P<num3>\d+) ?(?:trading )?(?P<u3>days?|sessions?|weeks?) after\b|\bafter (?P<num2>\d+|a|one) (?:trading )?(?P<u2>days?|sessions?|weeks?)\b|\b(?P<num4>\d+|a|one) (?P<u4>weeks?) after\b",
+    t.each(r"\b(?P<num>\d+|a|one) ?(?:trad(?:e|ing) )?(?P<u>days?|sessions?|weeks?) (?:later|afterwards?|on|out)\b|\b(?P<num3>\d+) ?(?:trad(?:e|ing) )?(?P<u3>days?|sessions?|weeks?) after\b|\bafter (?P<num2>\d+|a|one) (?:trad(?:e|ing) )?(?P<u2>days?|sessions?|weeks?)\b|\b(?P<num4>\d+|a|one) (?P<u4>weeks?) after\b",
            lambda m: {"anchor": "sessions", "n": nsess(m.group("num") or m.group("num2") or m.group("num3") or m.group("num4"), m.group("u") or m.group("u2") or m.group("u3") or m.group("u4")), "how": "at"}, "anchor", "end")
+    t.each(r"\b(?P<num>\d+)[- ]?(?:trad(?:e|ing)[- ])?(?P<u>day|session|week)s?(?: forward| ahead| out)? (?:forward )?(?:return|move|change|performance)s?\b",
+           lambda m: {"anchor": "sessions", "n": nsess(m.group("num"), m.group("u")), "how": "at"}, "anchor", "end")
     t.each(r"\b(?:within|in|over) (?:the next |an |the )?(?P<num>\d+(?:\.\d+)?)? ?(?P<u>min|hour)s?(?: after| later| of (?:it|that))?\b",
            lambda m: {"anchor": "within", "minutes": int(_f(m.group("num") or 1) * (60 if m.group("u") == "hour" else 1))}, "anchor", "end")
-    t.each(r"\b(?:by|before|until|till|til|through) (?:the )?(?P<w>close|endofday|end of (?:the )?day|lunch|noon|midday|mid ?day)\b",
-           lambda m: {"anchor": "end_at", "at": "close" if m.group("w") in ("close", "endofday") or m.group("w").startswith("end") else "12:00", "words": m.group("w")}, "anchor", "end")
+    t.each(r"\b(?:by|before|until|till|til|through|into) (?:the )?(?P<w>close|close bell|bell|endofday|end of (?:the )?day|lunch|noon|midday|mid ?day)\b|(?<!close )\bto the (?P<w2>close bell|close|bell|endofday|end of (?:the )?day)\b",
+           lambda m: {"anchor": "end_at", "at": "close" if (m.group("w") or m.group("w2")) in ("close", "endofday", "bell", "close bell") or (m.group("w") or m.group("w2")).startswith("end") else "12:00",
+                      "words": m.group("w") or m.group("w2")}, "anchor", "end")
     t.each(r"\b(?:on )?the (?:day|session|trading day) (?:following|after)\b", lambda m: {"anchor": "next_session"}, "anchor", "end")
     t.each(r"\b(?:on |during |in )?the (?:previous|prior|preceding|last) (?:trade |trading )?(?:day|session)\b(?!'s| (?:close|open|high|low|return|move))", lambda m: {"anchor": "prev_session"}, "anchor", "condition")
     t.each(r"\b(?:the )?(?:next|following) (?:day|session|trading day)\b|\btomorrow\b", lambda m: {"anchor": "next_session"}, "anchor", "end")
@@ -479,7 +609,7 @@ def tag(text: str, known: list[str] | None = None) -> tuple[Norm, list[Mention]]
     t.each(r"\b(?:at|into|near|before) (?:the )?(?:close|closing bell|end of (?:the )?day|endofday)\b|\bat endofday\b", lambda m: {"anchor": "close"}, "anchor")
     t.each(r"\bintraday\b|\bduring the (?:day|session)\b|\bat any point\b|\bat some point\b|\bin one day\b|\bin a day\b|\bin a single day\b", lambda m: {"anchor": "intraday"}, "anchor")
     t.each(r"\b(?:yesterday|the day before|the previous (?:day|session))(?: ?'?s)?\b", lambda m: {"anchor": "yesterday"}, "anchor")
-    t.each(r"\btoday(?: ?'?s)?\b|\bthe (?:same|current) (?:day|session)\b", lambda m: {"anchor": "today"}, "anchor")
+    t.each(r"\btoday(?: ?'?s)?\b|\b(?:the |that |on the |on that )?(?:same|current) (?:day|session)\b|\bthat day\b", lambda m: {"anchor": "today"}, "anchor")
 
     # ---- option words (a sentence that has them is a strategy, read by the strategy readers)
     t.each(r"\b(?:call|put|option|contract|spread|straddle|strangle|condor|butterfly|premium|0 ?dte|\d+ ?dte|dte|atm|otm|itm|delta|expir\w*|weekl(?:y|ies)|takeprofit|stoploss|profit target|stop loss)\b",
@@ -494,8 +624,55 @@ def tag(text: str, known: list[str] | None = None) -> tuple[Norm, list[Mention]]
     t.each(r"\b(?:show|list|see|give)(?: me)? (?:all |every |only )?(?:the )?(?P<w>losing|winning|worst|best|biggest|red|green|up|down|failed|successful|missed)? ?(?:day|trade|session|one|date|time|instance|case|example)s?\b(?:(?: it| that| this) (?:happened|worked|failed|did not happen|didn't happen))?|\bthe days (?:it|that) (?:happened|worked|failed)\b|\bwhich (?:days|trades|dates)\b",
            lambda m: {"filter": (m.group("w") or "all")}, "explore", "explore")
 
+    # ---- the kind of question, read last and from its cue words. Until V10 these patterns were read first and claimed
+    # whatever stood between an auxiliary and an adverb: in "when VIX is above 25 how often does QQQ ..." the words
+    # "is above 25 how often" became the cue, and the VIX condition was never seen.
+    for kind, pat in KIND_PATTERNS:
+        for alt in _alternatives(pat):
+            for m in re.finditer(alt, s):
+                if t.free(m.start(), m.end(), ("symbol", "when")):
+                    t.add("kind", {"kind": kind}, m.start(), m.end(), "kind", ("symbol", "when"))
+                elif not any(x.kind == "kind" and x.value["kind"] == kind for x in t.mentions):
+                    oa, ob = n.span(m.start(), m.end())
+                    t.mentions.append(Mention("kind", {"kind": kind}, m.start(), m.start(), n.text[oa:ob], "kind"))  # said inside something else that was read: no span of its own
+    if not re.search(r"monday|tuesday|wednesday|thursday|friday|weekday|day of (?:the )?week|days of the week|which day|what day|\bmonth|by (?:the )?day\b|decile|break ?down|bucket", s):
+        t.mentions = [x for x in t.mentions if not (x.kind == "kind" and x.value["kind"] == "breakdown")]
+    # ---- how the answer should be shown ("just the count, and which years they pile up in", "a distribution in half-hour
+    # buckets would be ideal", "pls"): read, so that these words are not taken for part of the question
+    t.each(r"\b(?:just |only )?(?:the |a |an )?(?:count|tally|number|numbers|total|list|table|chart|plot|graph|distribution|histogram)\b(?: (?:of them|would be (?:ideal|nice|great)|is fine|please|pls))?"
+           r"|\bwhich years?(?: they| it)? ?(?:pile up in|cluster in|are they in|were they in)?\b|\bpile up in\b|\b(?:by|per|each) year\b|\byear by year\b|\bwould be (?:ideal|nice|great)\b|\b(?:pls|please|thanks|thank you|thx)\b"
+           r"|\b(?:using |use |on |with |from )?(?:the )?(?:1|one)?(?: ?- ?| )?min(?:ute)? (?:data|bars?)\b(?: ,? ?all of it)?|\ball of it\b|\b(?:the )?daily (?:data|bars?)\b|\b(?:in )?(?:eastern|new york|ny|et) time\b|\b(?:half(?: ?- ?| )hour|\d+(?: ?- ?| )?min|hourly) (?:bucket|bin|block|slice|window|interval|chunk)s?\b|\bbuckets?\b|\bprofile\b|\b(?:broken|break|split|separated?)(?: (?:it|that|this|them))? out\b"
+           r"|\busing (?:the )?(?:1|one)[- ]?min(?:ute)? (?:data|bars?)\b|\b(?:the )?regular session\b|\bto (?:the )?present\b|\bto (?:today|now|date)\b|\bgo(?:ing)? back as far as (?:you(?:'ve| have)? got|possible|it goes)\b|\bas far back as (?:you can|possible|it goes)\b",
+           lambda m: {"word": m.group(0)}, "output", "output")
     t.mentions.sort(key=lambda x: x.a)
     return n, t.mentions
+
+
+def _alternatives(pat: str) -> list[str]:
+    """The top-level alternatives of a pattern, so that each cue is looked for on its own (a long alternative that
+    overlaps a condition must not hide the short one after it)."""
+    out, depth, cur, i = [], 0, "", 0
+    while i < len(pat):
+        ch = pat[i]
+        if ch == "\\":
+            cur += pat[i:i + 2]
+            i += 2
+            continue
+        if ch == "[":
+            j = pat.index("]", i + 1)
+            cur += pat[i:j + 1]
+            i = j + 1
+            continue
+        depth += ch == "("
+        depth -= ch == ")"
+        if ch == "|" and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+        i += 1
+    out.append(cur)
+    return [x for x in out if x]
 
 
 # ---------------------------------------------------------------------------------------------------------------- frame
@@ -554,6 +731,8 @@ def _kind_of(ms: list[Mention], has_option: bool) -> str | None:
     kinds = [m.value["kind"] for m in ms if m.kind == "kind"]
     if has_option or "strategy" in kinds:
         return "strategy"
+    if any(m.kind == "outcome" and m.value.get("key") == "extreme_time" for m in ms) and (any(m.kind == "when" for m in ms) or "timing" in kinds) and "agreement" not in kinds:
+        return "timing"  # "when does SPY normally make its high": "normally" does not make it a how-often question
     for k in ("agreement", "timing", "breakdown", "movement", "frequency"):
         if k in kinds:
             return k
@@ -570,7 +749,10 @@ def read(text: str, known: list[str] | None = None, default_symbol: str = "SPY",
         m.used, m.role = True, role
         used.add(id(m))
 
-    has_option = any(m.kind in ("option",) for m in ms) or any(m.kind == "action" and m.value["word"] in ("buy", "sell", "short", "long") for m in ms)
+    from strata.ai import intent as I
+    # V10: "when does IWM put in its high" has the word "put" and is not a trade. A trade is a structure, an expiration or a
+    # strike word, or a verb of trading with an option word (intent.is_trade); a follow-up to a trade is one by its context.
+    has_option = I.is_trade(text) or (any(m.kind == "action" and m.value["word"] in ("buy", "sell", "short", "long") for m in ms) and not any(m.kind == "kind" for m in ms))
     kind = _kind_of(ms, has_option)
     frame: dict = {"kind": kind, "text": text, "assumptions": [], "conditions": [], "symbols": []}
     r = Reading(text, frame, ms, n)
@@ -582,11 +764,11 @@ def read(text: str, known: list[str] | None = None, default_symbol: str = "SPY",
     # "when VIX is above 30, how often does SPY ...": a symbol inside a condition is that condition's, not the subject
     inside = lambda m: any(e.kind == "event" and e.value.get("key") == "vix" and e.a <= m.a and m.b <= e.b for e in ms)
     syms = [m for m in syms if not inside(m)] or syms
-    stored = [m.value["symbol"] for m in syms if m.value["stored"]]
+    stored = [m.value["symbol"] for m in syms if m.value["stored"] and m.value["symbol"] != "VIX"]
     missing = [m.value["symbol"] for m in syms if not m.value["stored"]]
     frame["symbols"] = list(dict.fromkeys(stored))
     if missing and not stored:
-        r.flag = (f"No price history for {', '.join(dict.fromkeys(missing))} is stored, so nothing can be measured for it. Stored: {', '.join(known)}." +
+        r.flag = (f"No price history for {', '.join(dict.fromkeys(missing))} is stored, so nothing can be measured for it. Stored: {', '.join(k for k in known if not k.startswith('DEMO'))}." +
                   (" SPX itself is not stored; SPY tracks the same index." if "SPX" in missing else ""))
     frame["symbol"] = frame["symbols"][0] if frame["symbols"] else default_symbol
     frame["symbol_stated"] = bool(frame["symbols"])
@@ -637,12 +819,19 @@ def read(text: str, known: list[str] | None = None, default_symbol: str = "SPY",
     clocks = [m for m in ms if m.kind == "clock"]
 
     for m in events:
+        if m.value.get("key") == "unsupported_event" and re.search(r"\b(?:forget|never ?mind|skip|ignore|drop|scrap|without|leave out|aside from|instead of)\b[^.;,?]{0,18}$", n.norm[:m.a]):
+            use(m, "aside")  # V10: "ok forget opex": set aside by the message itself, not asked for
+            continue
         if m.value.get("key") == "unsupported_event":
             use(m, "condition")
             r.flag = (f"\"{m.text}\" cannot be tested: " + ("no calendar of real economic or earnings events is stored (the event dates in the sandbox are simulated)." if re.search(r"fomc|fed|cpi|nfp|jobs|earnings|opex|witching", m.value["what"]) else
                                                              "that indicator is not available in the question reader yet. It can be used in a strategy written in the rule editor."))
             return r
 
+    rels = [m for m in ms if m.kind == "rel"]
+    if rels and kind in ("frequency", "movement") and not any(m.kind == "outcome" and m.value.get("key") in ("touch", "extreme_time") for m in ms):
+        frame["kind"] = "frequency"
+        return _relation(r, rels, events, outcomes, anchors, clocks, use, ms)
     if kind == "agreement":
         return _agreement(r, events, outcomes, anchors, clocks, use)
     if kind == "timing":
@@ -716,6 +905,19 @@ def _frequency(r: Reading, kind: str, events, outcomes, anchors, clocks, use) ->
         out = primary[0]
         use(out, "outcome")
         f["outcome"] = {**out.value, "text": out.text}
+        nt = normalise(out.text).norm
+        if kind == "frequency" and out.value["key"] == "close_vs" and out.value.get("direction") in ("up", "down") and not out.value.get("next_session") \
+                and re.search(r"\b(?:green|red|positive|negative)\b", nt) and not re.search(r"open|previous|yesterday|on the day|for the day", nt):
+            # V10: "close green" names no reference: above the day's own open (the candle), or above the previous close (the
+            # day's change). Both are measured and shown, each named. Until V10 it was always the open, and a question about
+            # a green DAY was answered about a green candle.
+            d_ = out.value["direction"]
+            daily = any(m.value.get("key") in ("prev_return", "up_streak", "down_streak", "move") for m in events)
+            refs = ("prev_close", "open") if daily else ("open", "prev_close")
+            opts = [{"key": "close_vs", "ref": r_, "direction": d_, "text": out.text} for r_ in refs]
+            f["outcome"] = opts[0]
+            f["outcome_options"] = [{"label": describe_outcome(o_, "open"), "outcome": o_} for o_ in opts]
+            f["assumptions"].append({"slot": "outcome", "text": f"\"{out.text}\" can mean two things, so both are measured: " + "; ".join(x["label"] for x in f["outcome_options"]) + "."})
         for extra in primary[1:]:
             pass  # a second outcome stays unclaimed: reported below
     elif kind == "frequency" and vague and not f.get("outcome"):
@@ -735,8 +937,13 @@ def _frequency(r: Reading, kind: str, events, outcomes, anchors, clocks, use) ->
             v = dict(m.value)
             if v.get("key") in ("move", "prev_return"):
                 v["key"] = "day_return"  # counted on its own, the session's own move: until V9 a "prev_return" event counted the day after
-            f["outcome"] = {"key": "event", "event": v, "text": m.text}
-            events = [e for e in events if e is not m]
+            others = [e for e in events if e is not m]
+            if v.get("key") == "day_return" and not v.get("value") and others:
+                # V10: "after 2 down days in a row, odds of a green day": the session's close against the previous close
+                f["outcome"] = {"key": "close_vs", "ref": "prev_close", "direction": "up" if v.get("op") in (">", ">=") else "down", "text": m.text}
+            else:
+                f["outcome"] = {"key": "event", "event": v, "text": m.text}
+            events = others
     if kind == "movement":
         for m in measure:
             use(m, "outcome")
@@ -746,6 +953,12 @@ def _frequency(r: Reading, kind: str, events, outcomes, anchors, clocks, use) ->
         for m in [x for x in outcomes if x.value["key"] == "abs_move"]:
             use(m, "outcome")
             f["measure"] = "abs_move"
+        # V10: "how far does QQQ usually bounce after a bad open?" In a question about how far the price moves, "bounce"
+        # (recover, rebound) is that move after the event: the movement itself answers it. Said, so it can be corrected.
+        for m in [x for x in outcomes if x.value["key"] == "recover" and not x.used]:
+            if events:
+                use(m, "outcome")
+                f["assumptions"].append({"slot": "outcome", "text": f"\"{m.text}\" is measured as the price's move after that, to the end of the session: the average, how often it is up, and the typical high on the way."})
 
     f["conditions"] = _condition_events(r, events, use)
     _vague_sizes(r, f["conditions"])
@@ -828,6 +1041,18 @@ def _frequency(r: Reading, kind: str, events, outcomes, anchors, clocks, use) ->
         f["assumptions"].append({"slot": "start", "text": f"The {abs(o['value']):g}% is measured from " + ("the open of the session" if (f.get("start") in (None, "open")) else "where the price was when the condition was met") + "."})
     if o and (f.get("end") in (None, "close")) and not any(m.used and m.role == "end" for m in anchors + clocks) and kind == "frequency" and o.get("key") != "event":
         f["assumptions"].append({"slot": "end", "text": "It is counted until that session's close."})
+    if kind == "frequency" and not o:
+        # V10: the outcome said with "be": "do Tuesdays tend to be green", "is today usually up too", "how often is SPY green the next day"
+        bm = next((x for x in re.finditer(r"\b(?:be|is|are|was|were)(?: (?:spy|qqq|iwm|it|today|the day|the session|the (?:next|following) (?:day|session)))?(?: (?:usually|typically|generally|normally|also|more often|more likely))?"
+                                          r" (?P<d>green|red|up|down|positive|negative|higher|lower)\b(?! ?\d| (?:day|candle|bar|session|open|gap|streak|close)s?\b)(?P<nx> (?:the )?(?:next|following) (?:day|session))?", r.norm.norm)
+                   if not any(m.used and m.a < x.end() and x.start() < m.b and m.kind == "event" for m in r.mentions)), None)
+        if bm:
+            up = bm.group("d") in ("green", "up", "positive", "higher")
+            o = f["outcome"] = {"key": "close_vs", "ref": "prev_close", "direction": "up" if up else "down", "text": r.norm.text[r.norm.span(bm.start(), bm.end())[0]:r.norm.span(bm.start(), bm.end())[1]]}
+            f["assumptions"].append({"slot": "outcome", "text": f"\"{bm.group('d')}\" is counted as closing {'above' if up else 'below'} the previous close.", "alternative": "the close against the session's open"})
+            r.mentions.append(Mention("outcome", dict(o), bm.start(), bm.end(), o["text"], "outcome", True))
+            if bm.group("nx") or re.search(r"\b(?:next|following) (?:day|session)\b", r.norm.norm):
+                f["next_session"] = True
     # required slots
     if kind == "frequency":
         if not o:
@@ -837,30 +1062,59 @@ def _frequency(r: Reading, kind: str, events, outcomes, anchors, clocks, use) ->
                                      {"label": "rises 1% from the open at some point", "patch": {"outcome": {"key": "touch", "value": 1.0, "ref": "start"}}}]}
         elif o.get("key") in ("recover", "reverse", "continue"):
             word = o["text"]
-            fall = next((c for c in f["conditions"] if c.get("op") in ("<", "<=") or c.get("direction") == "down"), None)
+            fall = next((c for c in f["conditions"] if c.get("key") == "down_streak" or (c.get("key") != "up_streak" and (c.get("op") in ("<", "<=") or c.get("direction") == "down"))), None)
             if o["key"] == "reverse" and fc:
                 # reversing after a candle: the rest of the session goes the other way. One reading, said.
                 f["outcome"] = {"key": "close_vs", "ref": "start", "direction": "opposite", "text": word}
                 f["assumptions"].append({"slot": "outcome", "text": f"\"{word}\" is read as: from the candle's close to the session's close, the price moves the other way from the candle."})
+            elif o["key"] in ("reverse", "continue") and DAY_PART.search(r.norm.norm) and not any(c.get("key") in ("first_candle", "from_open", "change", "vwap", "vwap_cross", "rel") for c in f["conditions"]):
+                # V10: "does SPY tend to reverse during lunch?" The move over that part of the day against the move of the
+                # day up to it. The hours a word like "lunch" stands for are stated, and can be said differently.
+                dp = DAY_PART.search(r.norm.norm)
+                key = "lunch" if re.match(r"lunch|mid", dp.group("p")) else "afternoon" if dp.group("p").startswith("afternoon") else "last"
+                mins, a_, b_, win, before = PARTS[key]
+                same = o["key"] == "continue"
+                f["conditions"].append({"key": "first_candle", "minutes": mins, "direction": "any", "text": dp.group(0), "part": {"window": win, "before": before}})
+                f["outcome"] = {"key": "close_vs", "ref": "start", "direction": "same" if same else "opposite", "text": word}
+                f["start"], f["end"] = a_, b_
+                f["assumptions"] = [x for x in f["assumptions"] if x.get("slot") != "end"]
+                f["assumptions"].append({"slot": "outcome", "text": f"\"{dp.group('p')}\" is read as {win}, and \"{word}\" as: the price moves {'the same way as' if same else 'the other way from'} "
+                                                                    f"{before}. Say other times to change them."})
+                r.mentions.append(Mention("anchor", {"anchor": "day_part", "part": key}, dp.start(), dp.end(), dp.group(0), "start", True))
             elif not f["conditions"]:
                 r.clarify = {"slot": "outcome", "text": f"\"{word.capitalize()}\" after what? For example \"after a 1% down day\" or \"after it falls 1% from the open\"."}
             else:
                 d = ("up" if fall else "down") if o["key"] != "continue" else ("down" if fall else "up")
-                opts = readings_of(f["conditions"], d)
+                opts = readings_of(f["conditions"], d, o["key"])
                 f["outcome"] = {**opts[0][1], "text": word}
                 f["outcome_options"] = [{"label": lab, "outcome": {**oc, "text": word}} for lab, oc in opts]
                 f["assumptions"].append({"slot": "outcome", "text": f"\"{word}\" can mean more than one thing, so each is measured: " + "; ".join(lab for lab, _ in opts) + "."})
         # an X% move with no anchor and an outcome that needs the same session: ask which
     if kind == "movement" and not f["conditions"] and not f.get("measure"):
         f["measure"] = "abs_move" if re.search(r"how much|move|range", r.text.lower()) else None
+    if kind == "movement" and str(f.get("end")).startswith("sessions:") and f.get("start") in (None, "open") and (f.get("outcome") or {}).get("key") == "end_return" \
+            and any(c.get("key") in ("prev_return", "up_streak", "down_streak", "vix", "move") for c in f["conditions"]):
+        # V10: "where is it a week later": from the close of the day the condition was met (close to close), not from the next open
+        f["outcome"] = {**f["outcome"], "ref": "prev_close"}
     _claim_leftovers(r)
     return r
 
 
-def readings_of(conds: list[dict], d: str) -> list[tuple[str, dict]]:
+# a part of the day named by a word, as (minutes of the session before it, its start, its end, what it is, what came before)
+DAY_PART = re.compile(r"\b(?:(?:during|over|at|around|through|in|into|by) )?(?:the )?(?P<p>lunch(?:time| ?hours?| ?break| lull)?|midday|mid-day|afternoons?|last hour|final hour|power hour)\b")
+PARTS = {"lunch": (120, "11:30", "13:30", "11:30 to 13:30 New York time", "the morning's move (the open to 11:30)"),
+         "afternoon": (150, "12:00", "close", "12:00 New York time to the close", "the morning's move (the open to 12:00)"),
+         "last": (330, "15:00", "close", "15:00 New York time to the close", "the day's move up to then (the open to 15:00)")}
+
+
+def readings_of(conds: list[dict], d: str, word: str = "recover") -> list[tuple[str, dict]]:
     """What "recover" (d="up") or "keep falling" (d="down") can mean after these conditions, most usual first."""
     keys = {c.get("key") for c in conds}
     above = "above" if d == "up" else "below"
+    if "gap" in keys and word == "continue":
+        # V10: "does a 1% gap up keep going": it ends the day further in the gap's direction (never "the gap fills")
+        return [(f"it closes {above} its open", {"key": "close_vs", "ref": "open", "direction": d}),
+                (f"it closes {above} the previous close", {"key": "close_vs", "ref": "prev_close", "direction": d})]
     if "gap" in keys:
         return [("it trades back to the previous close (the gap fills)", {"key": "touch_level", "level": "prev_close", "direction": d}),
                 (f"it closes {above} the previous close", {"key": "close_vs", "ref": "prev_close", "direction": d}),
@@ -936,6 +1190,8 @@ def _timing(r: Reading, events, outcomes, anchors, clocks, use, ms) -> Reading:
             meas = meas or "abs_move"
         elif m.value["key"] == "measure":
             use(m, "measure")
+    if meas in (None, "abs_move") and re.search(r"\brange\b|\bhigh (?:minus|-|to) low\b|\bhigh[- ]low\b", r.norm.norm):
+        meas = "range"  # V10: "which hour has the biggest average high minus low": the range, not the move from start to end
     f["measure"] = meas or "abs_move"
     if not meas:
         f["assumptions"].append({"slot": "measure", "text": "Measured as the average size of the move in each part of the session."})
@@ -953,6 +1209,11 @@ def _timing(r: Reading, events, outcomes, anchors, clocks, use, ms) -> Reading:
     for m in anchors:
         if m.value.get("anchor") in ("intraday", "open", "close"):
             use(m, "measure")
+    f["conditions"] = [c for c in f["conditions"] if not (c.get("key") == "first_candle" and c.get("direction") in (None, "any"))]  # "the first half hour" named in passing is not a condition
+    for x in re.finditer(r"\b(?:than )?(?:the )?(?:first|last|opening|closing|final|middle)(?: (?:one|hour|half ?hour|\d+ min|part|stretch))?\b|\b(?:range|high minus low|high - low)(?: ?- ?wise)?\b|\b(?:biggest|largest|widest|smallest|tightest)\b", r.norm.norm):
+        if not any(m.a < x.end() and x.start() < m.b for m in r.mentions if m.used):
+            oa_, ob_ = r.norm.span(x.start(), x.end())
+            r.mentions.append(Mention("focus", {"word": x.group(0)}, x.start(), x.end(), r.norm.text[oa_:ob_], "focus", True))
     _claim_leftovers(r, also=("anchor",))
     return r
 
@@ -968,17 +1229,29 @@ def _breakdown(r: Reading, events, outcomes, anchors, clocks, use, ms) -> Readin
         if m.value["key"] == "measure":
             use(m, "measure")
             meas = m.value["measure"]
+        elif m.value["key"] == "close_vs" and m.value.get("direction") in ("up", "down"):
+            # V10: a share of days ("is Monday or Friday more likely to close red?"). A colour word names no reference: it is
+            # counted against the previous close, and the answer gives the count against the day's own open as well.
+            use(m, "measure")
+            up = m.value["direction"] == "up"
+            named = re.search(r"open|previous|yesterday", normalise(m.text).norm)
+            ref = (m.value.get("ref") if named else "prev_close") or "prev_close"
+            meas = ("close>" if up else "close<") + ("open" if ref == "open" else "prev_close")
+            if not named:
+                f["assumptions"].append({"slot": "measure", "text": f"\"{m.text}\" is counted as closing {'above' if up else 'below'} the previous close; the count against the day's own open is given too."})
         elif m.value["key"] == "close_vs":
             use(m, "measure")
-            meas = "close>open" if m.value.get("ref") == "open" and m.value.get("direction") == "up" else meas
         elif m.value["key"] in ("direction_word",):
             use(m, "measure")
     # the weekday names are the breakdown, not a condition
     wk = [m for m in events if m.value.get("key") == "weekday"]
     for m in wk:
         use(m, "by")
-    if len(wk) == 1:
-        f["focus"] = wk[0].value["value"]  # "is Monday a bad day": the answer is about Monday, against the other days
+    days = list(dict.fromkeys(m.value["value"] for m in wk))
+    if len(days) == 1:
+        f["focus"] = days[0]  # "is Monday a bad day": the answer is about Monday, against the other days
+    elif len(days) >= 2:
+        f["focus"] = days  # "Monday or Friday": those two, side by side
     f["measure"] = meas or "open_to_close"
     if not meas:
         f["assumptions"].append({"slot": "measure", "text": "\"Best\" is measured as the average move from the open to the close."})
@@ -989,6 +1262,134 @@ def _breakdown(r: Reading, events, outcomes, anchors, clocks, use, ms) -> Readin
         use(m, "measure")
     _claim_leftovers(r)
     return r
+
+
+def _relation(r: Reading, rels, events, outcomes, anchors, clocks, use, ms) -> Reading:
+    """How often one price of the session stands above or below another level (profile.relation_frequency).
+
+    The LAST relation of the sentence is what is counted; those before it are conditions ("pokes above yesterday's high in
+    the first hour and then closes back under it"). After "and when it does" or "of those days" the sentence asks a
+    second question about the sessions where the first held: that one is kept as `then`. Conditions known by the open (the
+    previous session's move, the gap, the weekday, the VIX, a streak) are applied as in every profile."""
+    f = r.frame
+    s_ = r.norm.norm
+    # "... how often does it finish green?" among relations is one more: the close against the previous close when the
+    # sentence measures everything else against it ("opens red vs yesterday's close"), against the open otherwise
+    vs_prev = any(m.value["rel"]["b"] == "prev_close" for m in rels)
+    for m in outcomes:
+        if m.value.get("key") == "close_vs" and m.value.get("direction") in ("up", "down") and not m.value.get("next_session"):
+            ref = "prev_close" if (m.value.get("ref") == "prev_close" or (vs_prev and re.search(r"green|red|positive|negative", m.text.lower()))) else "open" if m.value.get("ref") == "open" else None
+            if ref:
+                m.kind, m.value = "rel", {"key": "rel", "rel": {"a": "close", "op": ">" if m.value["direction"] == "up" else "<", "b": ref}}
+    for m in outcomes:
+        if m.value.get("key") == "touch_level" and m.value.get("level") in ("prev_high", "prev_low"):
+            m.kind, m.value = "rel", {"key": "rel", "rel": {"a": "high" if m.value["level"] == "prev_high" else "low", "op": ">" if m.value["level"] == "prev_high" else "<", "b": m.value["level"]}}
+    rels = sorted([m for m in ms if m.kind == "rel"], key=lambda m: m.a)
+    outcomes = [m for m in outcomes if m.kind == "outcome"]
+    for i_, m in enumerate(rels):
+        if i_ and (m.value.get("state") or m.value["rel"]["a"] == "state") and re.search(r"\bor\s*$", s_[rels[i_ - 1].b:m.a]) and not any(m.a <= c.a < m.b + 14 for c in clocks):
+            m.value = {"key": "rel", "rel": {**m.value["rel"], "a": rels[i_ - 1].value["rel"]["a"]}}  # "close above that high or back under it"
+    for m in rels:
+        m.used, m.role = True, "rel"
+    rv = [dict(m.value) for m in rels]
+
+    def clause(m) -> tuple[int, int]:
+        a = max([x.end() for x in re.finditer(r"[,;.?]| and then | then | and | but | when | if ", s_[:m.a])] or [0])
+        b = min([m.b + x.start() for x in re.finditer(r"[,;.?]| and then | then | and | but ", s_[m.b:])] or [len(s_)])
+        return a, b
+
+    for m, v in zip(rels, rv):
+        a, b = clause(m)
+        rel_ = v["rel"] = dict(v["rel"])
+        inside = [c for c in clocks if a <= c.a < b and not (m.a <= c.a and c.b <= m.b)]
+        win = next((x for x in anchors if a <= x.a < b and x.value.get("anchor") in ("end_after_open", "end_at")), None)
+        for c in clocks:  # a clock that is part of the level ("its 10:00 price") is read
+            if m.a <= c.a and c.b <= m.b:
+                use(c, "level")
+        if rel_["a"] == "close":
+            for c in inside:
+                if str(c.value.get("et")) >= "15:50" or c.value.get("et") == "close":
+                    use(c, "at")  # "the 15:59 close": the close, said with its time
+        if v.get("state") or rel_["a"] == "state":
+            if inside:
+                use(inside[0], "at")
+                rel_["a"] = "at:" + inside[0].value["et"]
+            elif win is not None:
+                use(win, "at")
+                rel_["a"] = "at:" + (_hhmm(570 + win.value["minutes"]) if win.value["anchor"] == "end_after_open" else win.value["at"] if win.value["at"] != "close" else "16:00")
+            elif re.search(r"\bat (?:noon|midday|mid ?day|lunch(?:time)?)\b", s_[a:b]):
+                nm = re.search(r"\bat (?:noon|midday|mid ?day|lunch(?:time)?)\b", s_[a:b])
+                rel_["a"] = "at:12:00"
+                oa_, ob_ = r.norm.span(a + nm.start(), a + nm.end())
+                r.mentions.append(Mention("clock", {"et": "12:00", "stated": r.norm.text[oa_:ob_]}, a + nm.start(), a + nm.end(), r.norm.text[oa_:ob_], "at", True))
+            else:
+                rel_["a"] = "close" if re.search(r"\b(?:by|at|into) (?:the )?(?:close|endofday|bell)\b", s_[a:b]) else None
+        elif rel_["a"] in ("high", "low"):
+            pre = lambda c: s_[max(0, c.a - 12):c.a]  # noqa: E731
+            if inside and re.search(r"\b(?:at|as of)\s*$", pre(inside[0])) and re.match(r"(?:trade|is|was|sit|stay|hold)\b", s_[m.a:m.b]):
+                use(inside[0], "at")  # "trading above yesterday's high at 10": where it stands then, not whether it got there
+                rel_["a"] = "at:" + inside[0].value["et"]
+            elif inside and re.search(r"\b(?:before|by|until|till|prior to)\s*$", pre(inside[0])):
+                use(inside[0], "by")
+                rel_["a"] += "_by:" + inside[0].value["et"]
+            elif inside and re.search(r"\b(?:after|from|past)\s*$", pre(inside[0])):
+                use(inside[0], "from")
+                rel_["a"] += "_from:" + inside[0].value["et"]
+            elif win is not None:
+                use(win, "by")
+                rel_["a"] += "_by:" + (_hhmm(570 + win.value["minutes"]) if win.value["anchor"] == "end_after_open" else win.value["at"] if win.value["at"] != "close" else "16:00")
+    if any(v["rel"]["a"] is None for v in rv):
+        bad = next(m for m, v in zip(rels, rv) if v["rel"]["a"] is None)
+        r.clarify = {"slot": "when", "text": f"At what time should \"{bad.text}\" hold? For example \"at 10:00\" or \"at the close\".", "options": []}
+    # "does it close above that high or back under it": two ways of saying one outcome
+    if len(rv) >= 2 and re.search(r"^\s*or\b", s_[rels[-2].b:rels[-1].a]) and rv[-1]["rel"]["a"] == rv[-2]["rel"]["a"] and rv[-1]["rel"]["b"] == rv[-2]["rel"]["b"]:
+        rv, rels = rv[:-1], rels[:-1]
+    two = None
+    for i in range(1, len(rels)):
+        if re.search(r"\b(?:when|if|whenever) (?:it|that) (?:does|happens|did)\b|\bof those\b|\bon those (?:day|session)\b|\bin (?:that|those) cases?\b|\bhow many (?:of them )?(?:then )?(?:finish|close|end)", s_[rels[i - 1].b:rels[i].a + 12]):
+            two = i
+    conds = _condition_events(r, events, use)
+    desc = lambda v: {"key": "rel", "rel": {k: x for k, x in v["rel"].items()}}  # noqa: E731
+    if two is not None:
+        f["conditions"] = conds + [{**desc(v), "text": m.text} for m, v in zip(rels[:two - 1], rv[:two - 1])]
+        f["outcome"] = {**desc(rv[two - 1]), "text": rels[two - 1].text}
+        f["then"] = {**desc(rv[-1]), "text": rels[-1].text}
+    else:
+        f["conditions"] = conds + [{**desc(v), "text": m.text} for m, v in zip(rels[:-1], rv[:-1])]
+        f["outcome"] = {**desc(rv[-1]), "text": rels[-1].text}
+    for m in outcomes:
+        if m.value.get("key") in ("direction", "direction_word", "measure", "recover", "reverse", "continue") or (m.value.get("key") == "close_vs" and any(v["rel"]["a"] == "close" for v in rv)):
+            use(m, "outcome")  # the words of the relation itself ("closes ... back", "the real thing")
+    for m in anchors:
+        if m.value.get("anchor") in ("intraday", "yesterday", "today", "day", "rest", "prev_session"):
+            use(m, "window")
+    f["start"], f["end"] = "open", "close"
+    _claim_leftovers(r)
+    return r
+
+
+FEATURE_WORDS = {"open": "the open", "close": "the close", "prev_close": "the previous close", "prev_high": "the previous session's high", "prev_low": "the previous session's low"}
+
+
+def _clock_words(t: str) -> str:
+    return "the open" if t == "09:30" else "the close" if t == "16:00" else f"{t} New York time"
+
+
+def describe_rel(rel: dict) -> str:
+    """One relation in plain words: "it trades above the previous session's high before 10:30 New York time"."""
+    a, b, up = str(rel.get("a")), str(rel.get("b")), rel.get("op") in (">", ">=")
+    lvl = FEATURE_WORDS.get(b) or (f"its price at {_clock_words(b[3:])}" if b.startswith("at:") else b)
+    side = ("above" if up else "below")
+    by = f"{abs(float(rel['pct'])):g}% or more " if rel.get("pct") else ""
+    if a == "close":
+        return f"it closes {by}{side} {lvl}"
+    if a == "open":
+        return f"it opens {by}{side} {lvl}"
+    if a.startswith("at:"):
+        return f"it is {by}{side} {lvl} at {_clock_words(a[3:])}"
+    kind, _, tm = a.partition(":")
+    when = " at some point" if not tm else f" before {_clock_words(tm)}" if kind.endswith("_by") else f" after {_clock_words(tm)}"
+    return f"it trades {by}{side} {lvl}{when}"
 
 
 def _claim_leftovers(r: Reading, also: tuple = ()) -> None:
@@ -1030,6 +1431,10 @@ def describe_condition(c: dict) -> str:
         if not vals and not v:
             return "the previous session closed " + ("down" if op in ("<", "<=") else "up")
         return f"the previous session {'fell' if op in ('<', '<=') else 'rose'} {size} or more"
+    if k == "day_return":
+        if not vals and not v:
+            return "it closed " + ("below" if op in ("<", "<=") else "above") + " the previous close"
+        return f"it {'fell' if op in ('<', '<=') else 'rose'} {size} or more on the day (close against the previous close)"
     if k == "gap":
         if not vals and not v:
             return "it opened " + ("below" if op in ("<", "<=") else "above") + " the previous close"
@@ -1058,6 +1463,8 @@ def describe_condition(c: dict) -> str:
         return f"the previous session {'fell' if op in ('<', '<=') else 'rose'} {abs(v):g}% or more from its open to its close"
     if k in ("up_streak", "down_streak"):
         return f"{v:g} or more {'up' if k == 'up_streak' else 'down'} sessions in a row"
+    if k == "rel":
+        return describe_rel(c.get("rel") or {})
     if k == "vwap":
         return f"the price is {'above' if op == '>' else 'below'} VWAP"
     if k == "vwap_cross":
@@ -1078,6 +1485,8 @@ def describe_outcome(o: dict | None, start: str = "open") -> str:
         d = o.get("direction")
         if d == "opposite":
             return "the rest of the session moves the other way from the candle"
+        if d == "same":
+            return "the rest of the session moves the same way as the candle"
         return f"it closes {'above' if d == 'up' else 'below'} {ref}"
     if k == "touch":
         ref = "its open" if o.get("ref") == "open" else "the previous session's close" if o.get("ref") == "prev_close" else "where it started" if start not in ("open",) else "its open"
@@ -1089,13 +1498,31 @@ def describe_outcome(o: dict | None, start: str = "open") -> str:
                 "open": "it gets back to the session's open"}.get(o.get("level"), "it reaches the level")
     if k == "event":
         return describe_condition(o.get("event") or {})
+    if k == "rel":
+        return describe_rel(o.get("rel") or {})
     if k == "end_return":
         return "where it ends up"
     return o.get("text") or ""
 
 
+ZONE_WORDS = {60: "Central", 120: "Mountain", 180: "Pacific", -300: "London"}
+
+
 def describe(frame: dict) -> str:
-    """The frame as one plain sentence: what will be measured. Shown above every answer."""
+    """The frame as one plain sentence: what will be measured. Shown above every answer. A time is said in New York time
+    and, when the question was asked in another zone (`zone`, minutes behind New York), in that zone too (V10)."""
+    s = _describe(frame)
+    z = frame.get("zone")
+    if s and z in ZONE_WORDS:
+        def local(m: re.Match) -> str:
+            t = int(m.group(1)) * 60 + int(m.group(2)) - int(z)
+            h, mi = (t // 60) % 24, t % 60
+            return f"{m.group(0)} ({((h + 11) % 12) + 1}:{mi:02d} {'AM' if h < 12 else 'PM'} {ZONE_WORDS[z]})"
+        s = re.sub(r"\b(\d{1,2}):(\d\d) New York time", local, s)
+    return s
+
+
+def _describe(frame: dict) -> str:
     k = frame.get("kind")
     sym = frame.get("symbol") or "SPY"
     syms = frame.get("symbols") or [sym]
@@ -1111,10 +1538,22 @@ def describe(frame: dict) -> str:
             tail = (f" {nn} session{'s' if nn != 1 else ''} later (at the close)" if frame.get("at_end") or (frame.get("outcome") or {}).get("key") == "close_vs" else
                     f" within {nn} session{'s' if nn != 1 else ''}")
         if o.get("key") == "event":
+            if conds:
+                return f"On {who}, when {conds}: how often {describe_outcome(o)}{per}."
             return f"How often {describe_outcome(o)} on {who}{per}."
+        if o.get("key") == "rel":
+            then = f"; and on the sessions where it does, how often {describe_rel(frame['then']['rel'])}" if frame.get("then") else ""
+            return f"On {who}{(', when ' + conds) if conds else ''}: how often {describe_rel(o['rel'])}{then}{per}."
         if frame.get("next_session"):
             return f"On {who}, after sessions where {conds or 'nothing in particular'}: how often the next session {describe_outcome(o).removeprefix('it ')}{tail}{per}."
-        return f"On {who}{(', when ' + conds) if conds else ''}: how often {describe_outcome(o, frame.get('start') or 'open')}{tail}{per}."
+        part = next((c.get("part") for c in frame.get("conditions") or [] if c.get("key") == "first_candle" and c.get("part")), None)
+        if part and o.get("direction") in ("opposite", "same"):
+            others = _describe_conditions([c for c in frame.get("conditions") or [] if not c.get("part")])
+            return (f"On {who}{(', when ' + others) if others else ''}: how often the move from {part['window']} goes {'the other way from' if o['direction'] == 'opposite' else 'the same way as'} "
+                    f"{part['before']}{per}.")
+        also = [x.get("label") for x in options_of(frame)[1:] if x.get("label")]
+        both = (" (measured separately as well: " + "; ".join(also) + ")") if also else ""
+        return f"On {who}{(', when ' + conds) if conds else ''}: how often {describe_outcome(o, frame.get('start') or 'open')}{tail}{both}{per}."
     if k == "agreement":
         if frame.get("predictor") == "prev_direction":
             return f"On {who}: how often the session goes the same way as the previous session{(', when ' + conds) if conds else ''}{per}."
@@ -1124,15 +1563,27 @@ def describe(frame: dict) -> str:
         return f"On {who}: how often the direction of {cl} matches {sc}{(', when ' + conds) if conds else ''}{per}."
     if k == "movement":
         st, en = frame.get("start") or "open", frame.get("end") or "close"
-        span = f"from {'the open' if st == 'open' else st} to {'the close' if en == 'close' else en}"
+        span = f"from {'the open' if st == 'open' else 'the moment the condition is met' if st == 'signal' else st} to {'the close' if en == 'close' else en}"
+        if str(en).startswith("sessions:"):
+            nn = int(str(en).split(":")[1])
+            frm = "that session's close" if (frame.get("outcome") or {}).get("ref") == "prev_close" else "the next open" if st == "open" else st
+            span = f"over the next {nn} session{'s' if nn != 1 else ''} (from {frm} to the close {nn} session{'s' if nn != 1 else ''} later)"
+        elif str(en).startswith("minutes:"):
+            span = f"over the next {str(en).split(':')[1]} minutes"
         return f"On {who}{(', after ' + conds) if conds else ''}: how the price moved {span}{per}."
     if k == "timing":
-        what = {"high_time": "when the session's high was made", "low_time": "when the session's low was made", "abs_move": "how much the price moves"}[frame.get("measure") or "abs_move"]
+        what = {"high_time": "when the session's high was made", "low_time": "when the session's low was made", "abs_move": "how much the price moves (start to end of each part)",
+                "range": "how wide the range is (high minus low)"}[frame.get("measure") or "abs_move"]
         return f"On {who}: {what}, in {frame.get('bucket') or 30}-minute parts of the session{(', when ' + conds) if conds else ''}{per}."
     if k == "breakdown":
         what = {"open_to_close": "the average move from open to close", "close_to_close": "the average close-to-close move", "close>open": "how often it closes above its open",
+                "close<open": "how often it closes below its open", "close>prev_close": "how often it closes above the previous close", "close<prev_close": "how often it closes below the previous close",
                 "return": "the average move from open to close"}.get(frame.get("measure") or "open_to_close", "the average move")
-        return f"On {who}: {what}, by {'weekday' if frame.get('by') == 'weekday' else 'month'}{(', when ' + conds) if conds else ''}{per}."
+        foc = frame.get("focus")
+        foc = [foc] if isinstance(foc, str) else list(foc or [])
+        names = {"Mon": "Mondays", "Tue": "Tuesdays", "Wed": "Wednesdays", "Thu": "Thursdays", "Fri": "Fridays"}
+        which = (", " + " against ".join(names.get(x, x) for x in foc)) if len(foc) >= 2 and frame.get("by") == "weekday" else ""
+        return f"On {who}: {what}, by {'weekday' if frame.get('by') == 'weekday' else 'month'}{which}{(', when ' + conds) if conds else ''}{per}."
     return ""
 
 
@@ -1181,6 +1632,25 @@ def cond_expr(c: dict) -> tuple[str, str] | None:
     return None
 
 
+def options_of(frame: dict) -> list[dict]:
+    """The readings of an outcome that are measured. With a horizon in sessions ("is it higher 5 days later") there is one:
+    the close N sessions after the day the condition was met, against that day's close, labelled as that. (Found by the V10
+    held-out audit: a figure labelled "the next session closes above its own open" was the close five sessions later.)"""
+    opts = list(frame.get("outcome_options") or [])
+    en = str(frame.get("end") or "")
+    if opts and en.startswith("sessions:"):
+        nn = int(en.split(":")[1])
+        keep = [o for o in opts if (o.get("outcome") or {}).get("ref") == "prev_close"][:1] or opts[:1]
+        up = (keep[0].get("outcome") or {}).get("direction") != "down"
+        return [{**keep[0], "label": f"it closes {'above' if up else 'below'} the close of the day the condition was met, {nn} session{'s' if nn != 1 else ''} later"}]
+    return opts
+
+
+def unexpressible(frame: dict) -> list[dict]:
+    """The conditions of a frame that the study engine has no expression for (study_draft would have to leave them out)."""
+    return [c for c in frame.get("conditions") or [] if c.get("key") != "weekday" and not (c.get("key") == "first_candle" and c.get("direction") == "any") and cond_expr(c) is None]
+
+
 def expand(frame: dict) -> list[tuple[str, dict]]:
     """A frame with several values for one slot (sizes of a vague condition, candle lengths, symbols) as plain frames."""
     out = [("", frame)]
@@ -1203,7 +1673,7 @@ def expand(frame: dict) -> list[tuple[str, dict]]:
                     nxt.append(((lab + ", " if lab else "") + f"{mm}-minute candle", f2))
             out = nxt
     if frame.get("outcome_options"):
-        out = [((lab + ", " if lab else "") + o["label"], {**fr, "outcome": o["outcome"]}) for lab, fr in out for o in frame["outcome_options"]]
+        out = [((lab + ", " if lab else "") + o["label"], {**fr, "outcome": o["outcome"]}) for lab, fr in out for o in options_of(frame)]
     syms = frame.get("symbols") or []
     if len(syms) > 1:
         out = [((lab + ", " if lab else "") + s, {**fr, "symbol": s, "symbols": [s]}) for lab, fr in out for s in syms]
@@ -1223,6 +1693,10 @@ def study_draft(frame: dict):
         e = cond_expr(c)
         if e:
             conds.append(DraftCondition(expr=e[0], text=e[1]))
+        else:
+            # Found by the V10 held-out audit: "when it is below the open at 12:00: how often it closes above its open" was
+            # counted on every session, because this condition has no study expression and was left out without a word.
+            raise ValueError(f"the study engine cannot apply the condition: {describe_condition(c)}")
     start = frame.get("start") or "open"
     entry = None if start == "signal" else ("open" if start in ("open", "09:30") else start)
     o = frame.get("outcome") or {}
@@ -1279,7 +1753,14 @@ def study_draft(frame: dict):
         base = 570 if entry in (None, "open") else int(entry[:2]) * 60 + int(entry[3:])
         st.horizon_kind, st.horizon_time = "time", _hhmm(min(base + mins, 960))
     elif isinstance(end, str) and end.startswith("sessions:"):
-        st.horizon_kind, st.horizon_sessions = "sessions", int(end.split(":")[1])
+        nn = int(end.split(":")[1])
+        if o.get("ref") == "prev_close" and k in ("end_return", "close_vs", None):
+            # "N sessions later", counted from the day the condition was met: from that day's close (the observation
+            # session's previous close) to the close N sessions after it, which is N - 1 sessions after the observation session
+            st.reference = "prev_close"
+            nn -= 1
+        if nn >= 1:
+            st.horizon_kind, st.horizon_sessions = "sessions", nn
     p = frame.get("period") or [None, None]
     title = describe(frame).rstrip(".")[:120]
     d = Draft(kind="study", title=title, symbol=frame.get("symbol") or "SPY", symbol_stated=bool(frame.get("symbol_stated")), conditions=conds, weekdays=weekdays,
@@ -1343,17 +1824,34 @@ def to_route(r: Reading) -> dict:
     k = f.get("kind")
     if k == "agreement":
         return {"action": "investigate", "plan": agreement_plan(f), "frame": f}
+    if k == "frequency" and (f.get("outcome") or {}).get("key") == "rel":
+        return {"action": "profile", "frame": f}
     if k in ("frequency", "movement"):
+        lost = unexpressible(f)
+        if lost:
+            # a condition the study engine has no expression for (a price against a level at a time): the relation engine
+            # applies it when the outcome is a close against the open or the previous close; otherwise it is said, not dropped
+            o_ = f.get("outcome") or {}
+            if k == "frequency" and o_.get("key") == "close_vs" and o_.get("ref") in ("open", "prev_close") and o_.get("direction") in ("up", "down") and f.get("end") in (None, "close") \
+                    and not f.get("next_session") and not f.get("outcome_options") and all(c.get("key") == "rel" for c in lost) and not any(c.get("values") or c.get("minutes_options") for c in f.get("conditions") or []):
+                # the frame itself is rewritten (in place: the callers keep this same frame as the reading that ran)
+                f["outcome"] = {"key": "rel", "rel": {"a": "close", "op": ">" if o_["direction"] == "up" else "<", "b": o_["ref"]}, "text": o_.get("text") or ""}
+                f["start"] = "open"
+                return {"action": "profile", "frame": f}
+            return {"action": "clarify", "text": ("I read the condition \"" + "\", \"".join(describe_condition(c) for c in lost[:2]) + "\", but it cannot be combined with this measurement yet, so nothing was run. "
+                                                  "It can be used in a question of the form \"when ..., how often does it close above its open?\".")}
         parts = expand(f)
-        if f.get("outcome", {}).get("direction") == "opposite":
+        if f.get("outcome", {}).get("direction") in ("opposite", "same"):
             # "reverses after a red opening candle": the rest of the session against the candle's direction
             parts2 = []
+            same = f["outcome"]["direction"] == "same"
             for lab, fr in parts:
                 c = next((c for c in fr["conditions"] if c.get("key") == "first_candle"), None)
                 dirs = [c["direction"]] if c and c.get("direction") in ("up", "down") else ["up", "down"]
                 for d_ in dirs:
-                    fr2 = {**fr, "conditions": [({**x, "direction": d_} if x is c else x) for x in fr["conditions"]], "outcome": {"key": "close_vs", "ref": "start", "direction": "down" if d_ == "up" else "up"}}
-                    parts2.append(((lab + ", " if lab else "") + f"{'up' if d_ == 'up' else 'down'} candle", fr2))
+                    fr2 = {**fr, "conditions": [({**x, "direction": d_} if x is c else x) for x in fr["conditions"]], "outcome": {"key": "close_vs", "ref": "start", "direction": d_ if same else ("down" if d_ == "up" else "up")}}
+                    named = (c or {}).get("part")
+                    parts2.append(((lab + ", " if lab else "") + (f"after {'an up' if d_ == 'up' else 'a down'} {'morning' if 'morning' in named['before'] else 'day so far'}" if named else f"{'up' if d_ == 'up' else 'down'} candle"), fr2))
             parts = parts2
         if len(parts) == 1:
             return {"action": "new", "draft": study_draft(parts[0][1]), "frame": f}
@@ -1431,7 +1929,11 @@ def strategy_coverage(text: str, draft, known: list[str]) -> list[str]:
             a, b = n.span(mm.start(), mm.end())
             missing.append(n.text[a:b])
     # an exit that was stated but is not in the draft
-    ex = re.search(r"\b(?:sell|sold|selling|exit|exiting|out|get out|close (?:it|them|the position|out)|hold (?:it |them )?(?:til|till|until|to|through)|take profits?|tp|sl|stop)\b[^.;]{0,30}", low)
+    # (a structure that is opened by selling it - a credit spread, a short put, a condor - says "sell" for its ENTRY)
+    from strata.ai.intent import SHORT_PREMIUM
+    sold_open = draft.structure in SHORT_PREMIUM
+    ex = next((m for m in re.finditer(r"\b(?:sell|sold|selling|exit|exiting|out|get out|close (?:it|them|the position|out)|hold (?:it |them )?(?:til|till|until|to|through)|take profits?|tp|sl|stop)\b[^.;]{0,30}\w*", low)
+               if not (sold_open and re.match(r"sell|sold|selling", m.group(0)))), None)
     has_exit = bool(draft.exit_time or draft.hold_minutes or draft.hold_sessions or draft.premium_target_pct or draft.premium_stop_pct or draft.underlying_target_pct or draft.underlying_stop_pct
                     or draft.exit_conditions or draft.hold_to_expiration or getattr(draft, "partials", None) or draft.underlying_target_abs or draft.underlying_stop_abs)
     if ex and not has_exit:
